@@ -1,0 +1,535 @@
+<!DOCTYPE HTML>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, touch-action:none, interactive-widget:overlays-content" />
+        <title>AI Canvas</title>
+        <link rel="stylesheet" type="text/css" href="canvas.css" />
+        <style>
+/* We have this inlined during dev b/c the stylesheet won't refresh on tablet. :-/ */
+body {
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+    height:100%;
+    height:100vh;
+    background-color: rgb(128,128,128);
+    user-select: none;
+}
+#main, #cnv, #ui, #node-drag-overlay, #gnv {
+    position: absolute;
+    left:0; top:0; right:0; bottom:0;
+    width:100vw; height:100vh;
+    user-select: none;
+}
+#gnv {
+    pointer-events: all;
+}
+#console {
+    display: none;
+    box-sizing: border-box;
+    position:absolute;
+    left:calc( 80vw - 10px );
+    top:calc( 80vh - 10px );
+    width:20vw;
+    height:10vh;
+    border:1px solid red;
+    font-size:14px;
+    color:red;
+    text-align: right;
+    overflow: hidden;
+    z-index: 1000000;
+    pointer-events:none;
+    white-space: pre-wrap;
+}
+
+#air-input {
+    position: absolute;
+    left: 0; top: 0;
+    width: 1rem; height: 1rem;
+    overflow: visible;
+    --size: 100px;
+}
+#air-input > .ring::before {
+    content: " ";
+    position: absolute;
+    left:calc( ( -0.3 * var(--size) ) - 0px );
+    top:calc( ( -0.3 * var(--size) ) - 0px );
+    width:calc( var(--size) + 0px );
+    height:calc( var(--size) + 0px );
+    border-radius: calc( 0.5 * ( var(--size) + 0px ) );
+    border: 1px solid black;
+    box-sizing: border-box;
+}
+#air-input > .ring::after {
+    content: " ";
+    position: absolute;
+    left:0;
+    top:0;
+    --insize: calc( ( 0.4 * var(--size) ) + 2px );
+    width:var(--insize);
+    height:var(--insize);
+    border-radius: calc( 0.5 * var(--insize) );
+    border: 1px solid black;
+    box-sizing: border-box;
+}
+#air-input > .ring {
+    position: absolute;
+    left:calc( -0.5 * var(--size) );
+    top:calc( -0.5 * var(--size) );
+    width:var(--size);
+    height:var(--size);
+    border-radius: calc( 0.5 * var(--size) );
+    border: calc( 0.3 * var(--size)) solid rgba(255,255,255,0.5);
+    box-sizing: border-box;
+    background-color: transparent;
+}
+
+#cnv { pointer-events: none; }
+#ui {
+    --dark:rgb(40,40,40);
+    --low-mid:rgb(80,80,80);
+    --mid:rgb(120,120,120);
+    --white:rgb(240,240,240);
+    pointer-events: none;
+    user-select: none;
+}
+
+#node-drag-overlay {
+    pointer-events: none;
+}
+
+#ui > div, #ui > button {
+    pointer-events: none;
+}
+#ui > button.fullscreen {
+    position: absolute;
+    left:1rem; top:1rem;
+    width:7rem;
+}
+#ui > button.undo {
+    position: absolute;
+    left:1rem; bottom:1rem;
+    width:5rem;
+}
+#ui > button.redo {
+    position: absolute;
+    left:7rem; bottom:1rem;
+    width:5rem;
+}
+
+#ui > button {
+    background-color: var(--dark);
+    color: var(--white);
+    border: 0;
+    border-radius: 1rem;
+    display: block;
+    box-sizing: border-box;
+    margin: auto;
+    padding: 0.25rem;
+}
+
+#gen-controls {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: center;
+    font-size: 10px;
+    color: var(--white);
+    position:absolute;
+    left:9rem;
+    top:1rem;
+    width:70vw;
+}
+#gen-controls > .img2img, #gen-controls > .lineart { display: none; }
+#gen-controls.img2img > .img2img, #gen-controls.lineart > .lineart { display:inline-block; }
+#gen-controls > button,
+#gen-controls > select,
+#gen-controls > input[type="text"],
+#gen-controls > input[type="number"] {
+    font-size:6px;
+    background-color: var(--dark);
+    color:var(--white);
+    border:0;
+    width: 3rem;
+    height:1rem;
+    margin-right:0.5rem;
+    margin-left:0.25rem;
+}
+#gen-controls > input[type="text"]:focus {
+    outline: none;
+}
+#gen-controls > input[type="text"] {
+    padding-left:0.25rem;
+    width:15rem;
+}
+#gen-controls > input[type="number"]::-webkit-inner-spin-button {
+    /* -webkit-appearance:none; */
+    width:4px;
+    background-color: black;
+}
+
+#ui > input, #paint-controls > input {
+    pointer-events: none;
+}
+#paint-controls {
+    position: absolute;
+    left:1rem; top:5rem;
+    width: 10rem;
+    padding: 1rem;
+    gap: 1rem;
+    height: calc( 100vh - 10rem );
+    box-sizing: border-box;
+    pointer-events: none !important;
+    display: flex;
+    flex-direction: row;
+    justify-content: space-evenly;
+    flex-wrap: wrap;
+    align-items: center;
+}
+#paint-controls > .color-well {
+    width: 3.1rem;
+    height: 3.1rem;
+    border-radius: 1.55rem;
+    border:1px solid white;
+    box-sizing: border-box;
+    margin-top:1rem;
+}
+.color-wheel {
+    position:absolute;
+    left:0; top:0; width:100vw; height:100vh;
+    background-color: rgba(0,0,0,0.5);
+    overflow: hidden;
+    --size:256px;
+}
+.color-wheel > div.base-color {
+    position:absolute;
+    width:var(--size); height:var(--size);
+    left: calc( 50vw - (var(--size) / 2) );
+    top: calc( 50vh - (var(--size) / 2) );
+    background-color: red;
+    border-radius: 1rem;
+}
+.color-wheel > img.upper-slot {
+    position:absolute;
+    width:var(--size); height:calc( var(--size) / 2 );
+    left: calc( 50vw - (var(--size) / 2) );
+    top: calc( 50vh - (var(--size) / 2) );
+    mix-blend-mode: saturation;
+    opacity: 1;
+}
+.color-wheel > img.lower-slot {
+    position:absolute;
+    width:var(--size); height:calc( var(--size) / 2 );
+    left: calc( 50vw - (var(--size) / 2) );
+    top: 50vh;
+    mix-blend-mode: luminosity;
+}
+.color-wheel > img.base {
+    position:absolute;
+    width:var(--size); height:var(--size);
+    left: calc( 50vw - (var(--size) / 2) );
+    top: calc( 50vh - (var(--size) / 2) );
+    border-radius: 1rem;
+}
+.color-wheel > .color-preview {
+    position:absolute;
+    width:calc( var(--size) / 3 ); height:calc( var(--size) / 3 );
+    left: calc( 50vw - ( var(--size) / 6 ) );
+    top: calc( 50vh - ( var(--size) / 6 ) );
+    border-radius: calc( var(--size) / 6 );
+    box-shadow: 0 0 2px 2px black;
+    background-color: red;
+    box-sizing: border-box;
+}
+.color-wheel > div.nubs-overlay {
+    position:absolute;
+    width:var(--size); height:var(--size);
+    left: calc( 50vw - (var(--size) / 2) );
+    top: calc( 50vh - (var(--size) / 2) );
+}
+.nubs-overlay > .color-nub {
+    position:absolute;
+    left:0; top:0;
+    width:calc( var(--size)*0.05 );
+    height:calc( var(--size)*0.05 );
+    border-radius:calc( var(--size)*0.025 );
+    background-color: white;
+    box-shadow: 0 0 2px 2px black;
+}
+#paint-controls > .palette {
+    width:3.1rem;
+    height:11.1rem;
+    display: grid;
+    grid-template-rows: repeat(9,1fr);
+    grid-template-columns: repeat(3,1fr);
+    gap: 0.09rem;
+}
+#paint-controls > .palette > .color {
+    width:1rem;
+    height:1rem;
+    border: 1px solid black;
+    box-sizing: border-box;
+    border-radius: 0.25rem;
+}
+#paint-controls > .palette > .eraser {
+    width:3.1rem;
+    height:1rem;
+    border: 3px dashed black;
+    box-sizing: border-box;
+    border-radius: 0.25rem;
+    grid-column-start: 1;
+    grid-column-end: span 3;
+    background-color: transparent;
+}
+#paint-controls > input[type="range"].brush-size,
+#paint-controls > input[type="range"].brush-opacity,
+#paint-controls > input[type="range"].brush-blur {
+    display: inline-block;
+    position: static;
+    height:10rem;
+    appearance: slider-vertical;
+    width:1rem;
+    margin:0;
+}
+
+#layers-column {
+    position: absolute;
+    right:0; top:0;
+    width:15rem;
+    box-sizing: border-box;
+    height: 100vh;
+    pointer-events: none !important;
+    overflow-y: scroll;
+    padding:0; margin: 0;
+    margin-top:1rem;
+    text-align: center;
+}
+#layers-column > button {
+    /* position: sticky; */
+    background-color: var(--dark);
+    color: var(--white);
+    border: 0;
+    border-radius: 1rem;
+    display: block;
+    box-sizing: border-box;
+    margin: auto;
+    padding: 0.25rem;
+}
+
+#layers-column > .files {
+    width:calc( 100% - 2rem );
+    display: flex;
+    flex-direction: row;
+    padding:1rem;
+    gap:1rem;
+    justify-content: stretch;
+    align-items: stretch;
+}
+#layers-column > .files > button {
+    box-sizing: border-box;
+    height:1.5rem;
+    border-radius: 1rem;
+    background-color: var(--dark);
+    color: var(--white);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    line-height: 0;
+    flex-grow: 1;
+    border: 0;
+    margin: 0;
+}
+#layers-column > button {
+    width:calc( 100% - 2rem );
+    margin-bottom: 1rem;
+}
+#layers-column > button, #layers-column > div {
+    pointer-events: none;
+}
+#layers-column > .layer {
+    position: relative;
+    margin:1rem;
+    padding:1rem;
+    box-sizing: border-box;
+    border-radius: 1rem;
+    background-color: var(--dark);
+    box-shadow: 0 0 0.5rem 0 rgba(0,0,0,0.5);
+    border:1px solid transparent;
+}
+
+.layer.active > button.paint,
+.layer.active > button.duplicate,
+.layer.active > button.delete,
+.layer.active > button.lineart,
+.layer.active > button.merge {
+    display: flex;
+}
+
+.layer > button.paint,
+.layer > button.visibility,
+.layer > button.duplicate,
+.layer > button.lineart,
+.layer > button.delete,
+.layer > button.merge {
+    display: none;
+    position: absolute;
+    height: 1.5rem;
+    width: 1.5rem;
+    border-radius: 0.5rem;
+    background-color: var(--low-mid);
+    box-shadow: 0 0 0.5rem 0 rgb(0,0,0);
+    color: var(--white);
+    border: 0;
+    box-sizing: border-box;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    line-height: 0;
+    text-align: center;
+}
+.layer > button.paint {
+    right: 0.5rem;
+    bottom: 0.5rem;
+}
+.layer > button.merge.enabled {
+    opacity: 1.0;
+}
+.layer > button.merge {
+    opacity: 0.25;
+    right: 0.5rem;
+    bottom: 0.5rem;
+}
+.layer > button.visibility.visible {
+    opacity:1.0;
+}
+.layer > button.visibility {
+    display: flex;
+    opacity: 0.25;
+    left: 0.5rem;
+    top: 0.5rem;
+}
+.layer > button.duplicate {
+    left: 2.5rem;
+    top: 0.5rem;
+}
+.layer > button.lineart {
+    left: 4.5rem;
+    top: 0.5rem;
+}
+.layer > button.delete {
+    right: 0.5rem;
+    top: 0.5rem;
+}
+.layer.active > input[type="range"].opacity {
+    display: block;
+}
+.layer > input[type="range"].opacity {
+    display: none;
+    width:calc( 100% - 3rem );
+    left:0.5rem; bottom:0.5rem;
+}
+input[type="range"] {
+    background-color: transparent;
+    margin:0; padding:0;
+    position: absolute;
+    -webkit-appearance: none;
+    outline:none;
+}
+input[type="range"]::-webkit-slider-thumb,
+input[type="range"]::-moz-range-thumb {
+    -webkit-appearance: none;
+    height:10px;
+    width:10px;
+    border-radius: 5px;
+    background-color: var(--white);
+    border:0;
+}
+input[type="range"].vertical::-webkit-slider-runnable-track,
+input[type="range"].vertical::-moz-range-track {
+    background-color: var(--low-mid);
+    height:100%;
+    width: 12px;
+    border-radius: 6px;
+}
+input[type="range"]::-webkit-slider-runnable-track,
+input[type="range"]::-moz-range-track {
+    background-color: var(--low-mid);
+    height: 12px;
+    width:100%;
+    border-radius: 6px;
+}
+input[type="range"]:focus {
+    outline:none;
+}
+#layers-column > .layer > canvas {
+    margin: auto;
+    max-width: calc( 100% - 2rem );
+    max-height: 10vw;
+    box-shadow: 0 0 1rem 0 black;
+}
+#layers-column > .layer.active {
+    box-shadow: 0 0 0.5rem 0 rgba(0,0,0,0.5);
+    border:1px solid var(--white);
+}
+.nodes-holder {
+    position:absolute;
+    left:-0.5rem;
+    top:10%;
+    width:1rem;
+    height:80%;
+    display:flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap:1rem;
+}
+.nodes-holder > .link-node {
+    position: relative;
+    width:0.8rem;
+    height:0.8rem;
+    background-color: var(--white);
+    border-radius: 0.8rem;
+    overflow: visible;
+    box-sizing: border-box;
+}
+.node-link-nub {
+    box-sizing: border-box;
+    position: absolute;
+    width:0.8rem;
+    height:0.8rem;
+    background-color: var(--white);
+    border-radius: 0.8rem;
+    pointer-events: none;
+}
+.node-link-terminal {
+    box-sizing: border-box;
+    position:absolute;
+    border-top-left-radius:1rem;
+    border:2px solid transparent;
+    border-left:2px solid var(--white);
+    border-top:2px solid var(--white);
+    pointer-events: none;
+}
+.node-link-base {
+    box-sizing: border-box;
+    position:absolute;
+    border-bottom-left-radius:1rem;
+    border:2px solid transparent;
+    border-left:2px solid var(--white);
+    border-bottom:2px solid var(--white);
+    pointer-events: none;
+}
+        </style>
+    </head>
+    <body>
+
+        <script type="text/javascript">
+            const scr = document.body.appendChild( document.createElement( "script" ) );
+            scr.src = "canvas.js?v=" + parseInt( 100000000 * Math.random() );
+        </script>
+
+    </body>
+</html>
