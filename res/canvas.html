@@ -14,6 +14,7 @@ body {
     height:100%;
     height:100vh;
     background-color: rgb(128,128,128);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     user-select: none;
 }
 #main, #cnv, #ui, #node-drag-overlay, #gnv {
@@ -175,7 +176,6 @@ body {
 #paint-controls {
     position: absolute;
     left:1rem; top:5rem;
-    width: 10rem;
     padding: 1rem;
     gap: 1rem;
     height: calc( 100vh - 10rem );
@@ -186,6 +186,32 @@ body {
     justify-content: space-evenly;
     flex-wrap: wrap;
     align-items: center;
+}
+#paint-controls > .paint-controls-label {
+    display: block;
+    color: var(--white);
+    border: 0;
+    border-radius: 1rem;
+    box-sizing: border-box;
+    margin: 1rem auto;
+    padding: 0.25rem;
+    text-align: center;
+}
+#paint-controls > .paint-controls-button {
+    display: block;
+    background-color: var(--dark);
+    color: var(--white);
+    border: 0;
+    border-radius: 1rem;
+    box-sizing: border-box;
+    margin: 1rem auto;
+    padding: 0.25rem;
+}
+#paint-controls.mask > .color-well,
+#paint-controls.mask > .color-wheel,
+#paint-controls.mask > .palette
+{
+    display: none;
 }
 #paint-controls > .color-well {
     width: 3.1rem;
@@ -303,7 +329,6 @@ body {
     overflow-y: scroll;
     padding:0; margin: 0;
     margin-top:1rem;
-    text-align: center;
 }
 #layers-column > button {
     /* position: sticky; */
@@ -333,14 +358,14 @@ body {
     background-color: var(--dark);
     color: var(--white);
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     justify-content: center;
     align-items: center;
-    text-align: center;
     line-height: 0;
     flex-grow: 1;
     border: 0;
     margin: 0;
+    text-align: center;
 }
 #layers-column > button {
     width:calc( 100% - 2rem );
@@ -352,7 +377,7 @@ body {
 #layers-column > .layer {
     position: relative;
     margin:1rem;
-    padding:1rem;
+    padding:0.5rem;
     box-sizing: border-box;
     border-radius: 1rem;
     background-color: var(--dark);
@@ -391,16 +416,16 @@ body {
     text-align: center;
 }
 .layer > button.paint {
-    right: 0.5rem;
-    bottom: 0.5rem;
+    right: 0.2rem;
+    bottom: 0.2rem;
 }
 .layer > button.merge.enabled {
     opacity: 1.0;
 }
 .layer > button.merge {
     opacity: 0.25;
-    right: 0.5rem;
-    bottom: 0.5rem;
+    right: 0.2rem;
+    bottom: 0.2rem;
 }
 .layer > button.visibility.visible {
     opacity:1.0;
@@ -408,20 +433,20 @@ body {
 .layer > button.visibility {
     display: flex;
     opacity: 0.25;
-    left: 0.5rem;
-    top: 0.5rem;
+    left: 0.2rem;
+    top: 0.2rem;
 }
 .layer > button.duplicate {
-    left: 2.5rem;
-    top: 0.5rem;
+    left: calc( 0.2rem + ( 1.7rem * 1 ) );
+    top: 0.2rem;
 }
 .layer > button.lineart {
-    left: 4.5rem;
-    top: 0.5rem;
+    left: calc( 0.2rem + ( 1.7rem * 2 ) );
+    top: 0.2rem;
 }
 .layer > button.delete {
-    right: 0.5rem;
-    top: 0.5rem;
+    right: 0.15rem;
+    top: 0.2rem;
 }
 .layer.active > input[type="range"].opacity {
     display: block;
@@ -465,9 +490,9 @@ input[type="range"]:focus {
     outline:none;
 }
 #layers-column > .layer > canvas {
-    margin: auto;
-    max-width: calc( 100% - 2rem );
-    max-height: 10vw;
+    max-height: 4rem;
+    max-width: 4rem;
+    margin-left:0.5rem;
     box-shadow: 0 0 1rem 0 black;
 }
 #layers-column > .layer.active {

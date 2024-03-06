@@ -10,7 +10,8 @@
   The color wheel is usable, if not perfect. Have eyedropper too, no blend tho.
   Next:
     lineart is done and working, even with alpha stuff
-    - next up is gen layer masking (basically for inpainting). hmm.
+    - next up is inpainting. Send image + mask to api, or as 1 if needed. Use WebUI inpaint to grab API call
+
 
       Doesn't this also need something like visible -> img2img?
         No, we'll do layergroup -> img2img and ->lineart; but hold off on layergroups for now
@@ -38,6 +39,7 @@ gnv.id = "gnv";
 let W = 0, H = 0;
 let currentImage = null,
   //currentArtCanvas = null,
+  selectedLayer = null,
   selectedPaintLayer = null,
   selectedGenLayer = null;
 
@@ -56,8 +58,16 @@ function recordHistoryEntry( entry ) {
   document.querySelector( "button.redo" ).style.opacity = 0.25;
   if( history.length > uiSettings.maxUndoSteps ) {
     const entry = history.shift();
-    //entry.cleanup?.(); //no evident need for this?
+    entry.cleanup?.();
   }
+}
+function clearUndoHistory() {
+  for( const entry of history )
+    entry.cleanup?.();
+  history.length = 0;
+  for( const entry of redoHistory )
+    entry.cleanup?.();
+  redoHistory.length = 0;
 }
 function undo() {
   if( history.length === 0 ) {
@@ -247,7 +257,7 @@ function moveDrag({ rect, start, current, ending, starting, element }) {
   
       linkedNodes.push( nodeLink );
 
-      if( selectedGenLayer ) selectLayer( selectedGenLayer.layerButton, selectedGenLayer );
+      if( selectedLayer.layerType === "generative" ) selectLayer( selectedLayer.layerButton, selectedLayer );
   
     }
     currentDraggingNode = null;
@@ -299,9 +309,18 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
 
     canvas: document.createElement("canvas"),
     context: null,
+
+    maskCanvas: document.createElement( "canvas" ),
+    maskContext: null,
+    maskInitialized: false,
+
     glTexture: null,
     textureChanged: false,
     textureChangedRect: {x:0,y:0,w:lw,h:lh},
+
+    glMask: null,
+    maskChanged: false,
+    maskChangedRect: {x:0,y:0,w:lw,h:lh},
 
     layerButton: null,
     mergeButton: null,
@@ -310,6 +329,14 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
   newLayer.canvas.width = lw;
   newLayer.canvas.height = lh;
   newLayer.context = newLayer.canvas.getContext( "2d" );
+
+  newLayer.maskCanvas.width = lw;
+  newLayer.maskCanvas.height = lh;
+  newLayer.maskContext = newLayer.maskCanvas.getContext( "2d" );
+  //opacify the mask
+  newLayer.maskContext.fillStyle = "rgb(255,255,255)";
+  newLayer.maskContext.fillRect( 0,0,lw,lh );
+
   if( nextSibling ) {
     const index = layersStack.layers.indexOf( nextSibling );
     layersStack.layers.splice( index+1, 0, newLayer );
@@ -332,6 +359,24 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
         srcFormat = gl.RGBA,
         srcType = gl.UNSIGNED_BYTE;
       gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, newLayer.canvas );
+    }
+  }
+
+  {
+    //create the layer's mask
+    newLayer.glMask = gl.createTexture();
+    gl.activeTexture( gl.TEXTURE0 + 1 );
+    gl.bindTexture( gl.TEXTURE_2D, newLayer.glMask ); 
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST );
+    gl.texParameteri( gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST );
+    {
+      const mipLevel = 0,
+        internalFormat = gl.RGBA,
+        srcFormat = gl.RGBA,
+        srcType = gl.UNSIGNED_BYTE;
+      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, newLayer.maskCanvas );
     }
   }
 
@@ -439,42 +484,7 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
       const deleteButton = document.createElement( "button" );
       deleteButton.classList.add( "delete" );
       deleteButton.textContent = "🗑";
-      registerUIElement( deleteButton, { onclick: async () => {
-
-        //if this layer is selected, unselect it
-        if( selectedGenLayer === newLayer ) selectedGenLayer = null;
-        if( selectedPaintLayer === newLayer ) selectedPaintLayer = null;
-
-        //delete from layer stack
-        const index = layersStack.layers.indexOf( newLayer );
-        layersStack.layers.splice( index, 1 );
-        //remember the layer's parent and sibling in the DOM
-        const domSibling = newLayer.layerButton.nextElementSibling,
-          domParent = newLayer.layerButton.parentElement;
-        //remove button from DOM
-        domParent.removeChild( newLayer.layerButton );
-        
-        //add an undo entry
-        const historyEntry = {
-          index,
-          newLayer,
-          domSibling,
-          undo: () => {
-            //insert into the layer stack
-            layersStack.layers.splice( historyEntry.index, 0, historyEntry.newLayer );
-            //insert into the DOM
-            domParent.insertBefore( historyEntry.newLayer.layerButton, historyEntry.domSibling );
-          },
-          redo: () => {
-            //delete from the layer stack
-            layersStack.layers.splice( historyEntry.index, 1 );
-            //remove button from DOM
-            domParent.removeChild(  historyEntry.newLayer.layerButton );
-          }
-        }
-        recordHistoryEntry( historyEntry );
-
-      } } );
+      registerUIElement( deleteButton, { onclick: () => deleteLayer( newLayer ) } );
       layerButton.appendChild( deleteButton );
     }
 
@@ -672,6 +682,47 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
   
 }
 
+async function deleteLayer( layer ) {
+
+  //if this layer is selected, unselect it
+  if( selectedLayer === layer ) selectedLayer = null;
+
+  //delete from layer stack
+  const index = layersStack.layers.indexOf( layer );
+  layersStack.layers.splice( index, 1 );
+  //remember the layer's parent and sibling in the DOM
+  const domSibling = layer.layerButton.nextElementSibling,
+    domParent = layer.layerButton.parentElement;
+  //remove button from DOM
+  domParent.removeChild( layer.layerButton );
+  
+  //add an undo entry
+  const historyEntry = {
+    index,
+    newLayer: layer,
+    domParent,
+    domSibling,
+    undo: () => {
+      //insert into the layer stack
+      layersStack.layers.splice( historyEntry.index, 0, historyEntry.newLayer );
+      //insert into the DOM
+      historyEntry.domParent.insertBefore( historyEntry.newLayer.layerButton, historyEntry.domSibling );
+    },
+    redo: () => {
+      //delete from the layer stack
+      layersStack.layers.splice( historyEntry.index, 1 );
+      //remove button from DOM
+      historyEntry.domParent.removeChild(  historyEntry.newLayer.layerButton );
+    },
+    cleanup: () => {
+      //layer won't be coming back.
+      gl.deleteTexture( layer.glTexture );
+      gl.deleteTexture( layer.glMask );
+    }
+  }
+  recordHistoryEntry( historyEntry );
+
+}
 
 function addLayerNodes( layer ) {
 
@@ -736,12 +787,29 @@ function addLayerNodes( layer ) {
 }
 
 
+function initializeLayerMask( layer, state ) {
+  if( state === "transparent" ) {
+    layer.maskContext.clearRect( 0,0,layer.w,layer.h );
+  }
+  if( state === "opaque" ) {
+    layer.maskContext.fillStyle = "rgb(255,255,255)";
+    layer.maskContext.fillRect( 0,0,layer.w,layer.h );
+  }
+  layer.maskChanged = true;
+  layer.maskChangedRect.x = 0;
+  layer.maskChangedRect.y = 0;
+  layer.maskChangedRect.w = layer.w;
+  layer.maskChangedRect.h = layer.h;
+
+  layer.layerButton.appendChild( layer.maskCanvas );
+
+  layer.maskInitialized = true;
+}
 
 function selectLayer( layerButton, layer ) {
   if( layer.layerType === "generative" ) {
-    selectedPaintLayer = null;
-    selectedGenLayer = layer;
-    uiControls.hidePaintControls();
+    selectedLayer = layer;
+    uiControls.showMaskControls();
     uiControls.showGenControls();
     const genControls = document.querySelector( "#gen-controls" );
     //update gen controls for img2img
@@ -757,8 +825,7 @@ function selectLayer( layerButton, layer ) {
     }
   }
   if( layer.layerType === "paint" ) {
-    selectedPaintLayer = layer;
-    selectedGenLayer = null;
+    selectedLayer = layer;
     uiControls.showPaintControls();
     uiControls.hideGenControls();
     //enable or disable the merge button
@@ -881,8 +948,8 @@ Info: ${info}`;
       }
       //layer ordering not implemented. Might be the wrong way to do it.
       //visibleLayers.sort( (a,b)=>a.layerOrder-b.layerOrder );
-      if( selectedPaintLayer && painter.active && painter.queue.length > 1 ) {
-        visibleLayers.splice( visibleLayers.indexOf( selectedPaintLayer )+1, 0, paintPreviewLayer );
+      if( selectedLayer && painter.active && painter.queue.length > 1 ) {
+        visibleLayers.splice( visibleLayers.indexOf( selectedLayer )+1, 0, paintPreviewLayer );
       } else {
         visibleLayers.push( paintPreviewLayer );
       }
@@ -892,17 +959,19 @@ Info: ${info}`;
       for( const layer of visibleLayers ) {
 
         //eraser preview requires real layer undrawn
-        if( layer === selectedPaintLayer &&
+        if( layer === selectedLayer &&
             uiSettings.brush === "erase" &&
             painter.active &&
             painter.queue.length > 1 )
           continue;
 
         if( layer === paintPreviewLayer ) {
-          if( uiSettings.brush === "paint" )
-            layer.opacity = uiSettings.brushOpacity;
+          if( uiSettings.brush === "paint" ) {
+            if( uiSettings.mask === false ) layer.opacity = uiSettings.brushOpacity;
+            if( uiSettings.mask === true ) layer.opacity = 0.5;
+          }
           if( uiSettings.brush === "erase" )
-            layer.opacity = selectedPaintLayer.opacity;
+            layer.opacity = selectedLayer.opacity;
         } 
 
 
@@ -952,11 +1021,31 @@ Info: ${info}`;
           layer.textureChanged = false;
         }
 
+        //bind the layer's mask
+        gl.activeTexture( gl.TEXTURE0 + 1 );
+        gl.bindTexture( gl.TEXTURE_2D, layer.glMask );
+        if( layer.maskChanged ) {
+          //re-upload the layer's mask when it's changed
+          const mipLevel = 0,
+          internalFormat = gl.RGBA,
+          srcFormat = gl.RGBA,
+          srcType = gl.UNSIGNED_BYTE;
+          gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.maskCanvas );
+          layer.maskChanged = false;
+        }
+
+
         //set the layer's alpha
         gl.uniform1f( glState.alphaInputIndex, layer.opacity );
+        let maskVisibility = 0.0;
+        if( uiSettings.mask === true && painter.active === true )
+          maskVisibility = 0.5;
+        gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
 
         //set the uniform to point at texture zero
         gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
+        //set the uniform to point at texture one
+        gl.uniform1i( gl.getUniformLocation( glState.program, "imgMask" ), 1 );
         {
           //and draw our triangles
           const primitiveType = gl.TRIANGLES,
@@ -1095,13 +1184,17 @@ function setupGL( testImageTexture ) {
     precision highp float;
     
     uniform sampler2D img;
+    uniform sampler2D imgMask;
     uniform float alpha;
+    uniform float mask;
     in vec2 uv;
     out vec4 outColor;
     
     void main() {
       vec4 lookup = texture(img,uv);
-      lookup.a *= alpha;
+      vec4 maskLookup = texture(imgMask,uv);
+      lookup.a *= alpha * maskLookup.a;
+      lookup.rgb += vec3(1.0,1.0,1.0) * mask;
       outColor = lookup;
       if( uv.x < 0.001 || uv.x > 0.999 || uv.y < 0.001 || uv.y > 0.999 ) {
         outColor = vec4( 0.0,0.0,0.0,1.0 );
@@ -1143,6 +1236,7 @@ function setupGL( testImageTexture ) {
     glState.vertexBuffer = xyBuffer;
 
     glState.alphaInputIndex = gl.getUniformLocation( program, "alpha" );
+    glState.alphaMaskIndex = gl.getUniformLocation( program, "mask" );
 
     //set up a data-descriptor
     const vao = gl.createVertexArray();
@@ -1241,6 +1335,7 @@ let uiSettings = {
     const {r,g,b} = uiSettings.paint;
     return `rgb(${r},${g},${b})`;
   },
+  mask: false,
   brush: "paint",
   pressureEnabled: true,
   //brushEngine: "pencil",
@@ -1263,7 +1358,17 @@ const uiControls = {
   },
   showPaintControls: () => {
     document.querySelector( "#paint-controls" ).style.display = "block";
+    document.querySelector( "#paint-controls" ).classList.remove( "mask" );
+    document.querySelector( ".paint-controls-label" ).textContent = "Paint";
     uiControls.paintControlElements.forEach( e => e.uiActive = true );
+    uiSettings.mask = false;
+  },
+  showMaskControls: () => {
+    document.querySelector( "#paint-controls" ).style.display = "block";
+    document.querySelector( "#paint-controls" ).classList.add( "mask" );
+    document.querySelector( ".paint-controls-label" ).textContent = "Mask";
+    uiControls.paintControlElements.forEach( e => e.uiActive = true );
+    uiSettings.mask = true;
   },
 
   genControlElements: [],
@@ -1301,86 +1406,117 @@ function setupUI() {
     const paintControls = document.createElement( "div" );
     paintControls.id = "paint-controls";
     ui.appendChild( paintControls );
+
+    //the mode label
+    {
+      const modeLabel = document.createElement( "div" );
+      modeLabel.className = "paint-controls-label";
+      modeLabel.textContent = "Paint";
+      paintControls.appendChild( modeLabel );
+    }
+    //the brush selector
+    {
+      const paintButton = document.createElement( "button" );
+      paintButton.className = "paint-controls-button";
+      paintButton.textContent = "Brush";
+      registerUIElement( paintButton, { onclick: () => { uiSettings.brush = "paint" } } );
+      paintControls.appendChild( paintButton );
+      uiControls.paintControlElements.push( paintButton );
+    }
+    //the erase selector
+    {
+      const eraseButton = document.createElement( "button" );
+      eraseButton.className = "paint-controls-button";
+      eraseButton.textContent = "Erase";
+      registerUIElement( eraseButton, { onclick: () => { uiSettings.brush = "erase" } } );
+      paintControls.appendChild( eraseButton );
+      uiControls.paintControlElements.push( eraseButton );
+    }
   
-    //the brushsize slider
-    const brushSizeSlider = document.createElement("input");
-    brushSizeSlider.type = "range";
-    brushSizeSlider.classList.add( "brush-size" );
-    brushSizeSlider.classList.add( "vertical" );
-    brushSizeSlider.value = uiSettings.brushSize;
-    brushSizeSlider.min = 0.1;
-    brushSizeSlider.max = 128;
-    brushSizeSlider.step = "any";
-    brushSizeSlider.setAttribute( "orient", "vertical" );
-    brushSizeSlider.orient = "vertical";
-    brushSizeSlider.style.appearance = "slider-vertical";
-    const updateSize = ( {rect,current} ) => {
-      let {x,y} = current;
-      x -= rect.left; y -= rect.top;
-      x /= rect.width; y /= rect.height;
-      x = Math.max( 0, Math.min( 1, x ) );
-      y = Math.max( 0, Math.min( 1, y ) );
-      const p = 1 - y;
-      brushSizeSlider.value = parseFloat(brushSizeSlider.min) + (parseFloat(brushSizeSlider.max) - parseFloat(brushSizeSlider.min))*p;
-      uiSettings.brushSize = parseFloat(brushSizeSlider.value);
-    };
-    registerUIElement( brushSizeSlider, { ondrag: updateSize } );
-    uiControls.paintControlElements.push( brushSizeSlider );
-    paintControls.appendChild( brushSizeSlider );
-  
+    {
+      //the brushsize slider
+      const brushSizeSlider = document.createElement("input");
+      brushSizeSlider.type = "range";
+      brushSizeSlider.classList.add( "brush-size" );
+      brushSizeSlider.classList.add( "vertical" );
+      brushSizeSlider.value = uiSettings.brushSize;
+      brushSizeSlider.min = 0.1;
+      brushSizeSlider.max = 128;
+      brushSizeSlider.step = "any";
+      brushSizeSlider.setAttribute( "orient", "vertical" );
+      brushSizeSlider.orient = "vertical";
+      brushSizeSlider.style.appearance = "slider-vertical";
+      const updateSize = ( {rect,current} ) => {
+        let {x,y} = current;
+        x -= rect.left; y -= rect.top;
+        x /= rect.width; y /= rect.height;
+        x = Math.max( 0, Math.min( 1, x ) );
+        y = Math.max( 0, Math.min( 1, y ) );
+        const p = 1 - y;
+        brushSizeSlider.value = parseFloat(brushSizeSlider.min) + (parseFloat(brushSizeSlider.max) - parseFloat(brushSizeSlider.min))*p;
+        uiSettings.brushSize = parseFloat(brushSizeSlider.value);
+      };
+      registerUIElement( brushSizeSlider, { ondrag: updateSize } );
+      uiControls.paintControlElements.push( brushSizeSlider );
+      paintControls.appendChild( brushSizeSlider );
+    }
     
-    //the brush opacity slider
-    const brushOpacity = document.createElement("input");
-    brushOpacity.type = "range";
-    brushOpacity.classList.add( "brush-opacity" );
-    brushOpacity.classList.add( "vertical" );
-    brushOpacity.value = uiSettings.brushOpacity;
-    brushOpacity.min = 0;
-    brushOpacity.max = 1;
-    brushOpacity.step = 1/256;
-    brushOpacity.setAttribute( "orient", "vertical" );
-    brushOpacity.orient = "vertical";
-    brushOpacity.style.appearance = "slider-vertical";
-    const updateOpacity = ( {rect,current} ) => {
-      let {x,y} = current;
-      x -= rect.left; y -= rect.top;
-      x /= rect.width; y /= rect.height;
-      x = Math.max( 0, Math.min( 1, x ) );
-      y = Math.max( 0, Math.min( 1, y ) );
-      const p = 1 - y;
-      brushOpacity.value = parseFloat(brushOpacity.min) + (parseFloat(brushOpacity.max) - parseFloat(brushOpacity.min))*p;
-      uiSettings.brushOpacity = parseFloat(brushOpacity.value);
-    };
-    registerUIElement( brushOpacity, { ondrag: updateOpacity } );
-    uiControls.paintControlElements.push( brushOpacity );
-    paintControls.appendChild( brushOpacity );
-  
-    //the brush opacity slider
-    const brushBlur = document.createElement("input");
-    brushBlur.type = "range";
-    brushBlur.classList.add( "brush-blur" );
-    brushBlur.classList.add( "vertical" );
-    brushBlur.value = uiSettings.brushBlur;
-    brushBlur.min = 0;
-    brushBlur.max = 10;
-    brushBlur.step = "any";
-    brushBlur.setAttribute( "orient", "vertical" );
-    brushBlur.orient = "vertical";
-    brushBlur.style.appearance = "slider-vertical";
-    const updateBlur = ( {rect,current} ) => {
-      let {x,y} = current;
-      x -= rect.left; y -= rect.top;
-      x /= rect.width; y /= rect.height;
-      x = Math.max( 0, Math.min( 1, x ) );
-      y = Math.max( 0, Math.min( 1, y ) );
-      const p = 1 - y;
-      brushBlur.value = parseFloat(brushBlur.min) + (parseFloat(brushBlur.max) - parseFloat(brushBlur.min))*p;
-      uiSettings.brushBlur = parseFloat(brushBlur.value);
-    };
-    registerUIElement( brushBlur, { ondrag: updateBlur } );
-    uiControls.paintControlElements.push( brushBlur );
-    paintControls.appendChild( brushBlur );
-    
+    {
+      //the brush opacity slider
+      const brushOpacity = document.createElement("input");
+      brushOpacity.type = "range";
+      brushOpacity.classList.add( "brush-opacity" );
+      brushOpacity.classList.add( "vertical" );
+      brushOpacity.value = uiSettings.brushOpacity;
+      brushOpacity.min = 0;
+      brushOpacity.max = 1;
+      brushOpacity.step = 1/256;
+      brushOpacity.setAttribute( "orient", "vertical" );
+      brushOpacity.orient = "vertical";
+      brushOpacity.style.appearance = "slider-vertical";
+      const updateOpacity = ( {rect,current} ) => {
+        let {x,y} = current;
+        x -= rect.left; y -= rect.top;
+        x /= rect.width; y /= rect.height;
+        x = Math.max( 0, Math.min( 1, x ) );
+        y = Math.max( 0, Math.min( 1, y ) );
+        const p = 1 - y;
+        brushOpacity.value = parseFloat(brushOpacity.min) + (parseFloat(brushOpacity.max) - parseFloat(brushOpacity.min))*p;
+        uiSettings.brushOpacity = parseFloat(brushOpacity.value);
+      };
+      registerUIElement( brushOpacity, { ondrag: updateOpacity } );
+      uiControls.paintControlElements.push( brushOpacity );
+      paintControls.appendChild( brushOpacity );
+    }
+
+    {
+      //the brush opacity slider
+      const brushBlur = document.createElement("input");
+      brushBlur.type = "range";
+      brushBlur.classList.add( "brush-blur" );
+      brushBlur.classList.add( "vertical" );
+      brushBlur.value = uiSettings.brushBlur;
+      brushBlur.min = 0;
+      brushBlur.max = 10;
+      brushBlur.step = "any";
+      brushBlur.setAttribute( "orient", "vertical" );
+      brushBlur.orient = "vertical";
+      brushBlur.style.appearance = "slider-vertical";
+      const updateBlur = ( {rect,current} ) => {
+        let {x,y} = current;
+        x -= rect.left; y -= rect.top;
+        x /= rect.width; y /= rect.height;
+        x = Math.max( 0, Math.min( 1, x ) );
+        y = Math.max( 0, Math.min( 1, y ) );
+        const p = 1 - y;
+        brushBlur.value = parseFloat(brushBlur.min) + (parseFloat(brushBlur.max) - parseFloat(brushBlur.min))*p;
+        uiSettings.brushBlur = parseFloat(brushBlur.value);
+      };
+      registerUIElement( brushBlur, { ondrag: updateBlur } );
+      uiControls.paintControlElements.push( brushBlur );
+      paintControls.appendChild( brushBlur );
+    }
+
     //the color palette
     const colorPalette = document.createElement( "div" );
     colorPalette.classList.add( "palette" );
@@ -1452,7 +1588,7 @@ function setupUI() {
 
       if( genControls.classList.contains( "img2img" ) ) {
         //lets find the image
-        const layer = selectedGenLayer;
+        const layer = selectedLayer;
         for( const link of linkedNodes ) {
           if( link.destinationNode.isNode === "img2img" &&
               link.destinationLayer === layer ) {
@@ -1472,7 +1608,7 @@ function setupUI() {
 
       if( genControls.classList.contains( "lineart" ) ) {
         //lets find the source lineart canvas
-        const layer = selectedGenLayer;
+        const layer = selectedLayer;
         for( const link of linkedNodes ) {
           if( link.destinationNode.isNode === "lineart" &&
               link.destinationLayer === layer ) {
@@ -1503,12 +1639,12 @@ function setupUI() {
       console.log( "Doing: ", api, img2img, denoise, usingLineart, prompt );
       const p = prompt.value;
       const img = await getImageA1111( { api, prompt:p, img2img, denoise } );
-      selectedGenLayer.context.drawImage( img, 0, 0 );
-      selectedGenLayer.textureChanged = true;
-      selectedGenLayer.textureChangedRect.x = 0;
-      selectedGenLayer.textureChangedRect.y = 0;
-      selectedGenLayer.textureChangedRect.w = selectedGenLayer.w;
-      selectedGenLayer.textureChangedRect.h = selectedGenLayer.h;
+      selectedLayer.context.drawImage( img, 0, 0 );
+      selectedLayer.textureChanged = true;
+      selectedLayer.textureChangedRect.x = 0;
+      selectedLayer.textureChangedRect.y = 0;
+      selectedLayer.textureChangedRect.w = selectedLayer.w;
+      selectedLayer.textureChangedRect.h = selectedLayer.h;
     }});
     uiControls.genControlElements.push( gen );
     genControls.appendChild( gen );
@@ -1695,7 +1831,6 @@ function setupUI() {
     const addLayerButton = document.createElement( "button" );
     addLayerButton.textContent = "Add Paint Layer";
     registerUIElement( addLayerButton, { onclick: () => {
-      const selectedLayer = selectedPaintLayer || selectedGenLayer;
       if( selectedLayer ) addCanvasLayer( "paint", selectedLayer.w, selectedLayer.h, selectedLayer );
       else addCanvasLayer( "paint" );
     } } );
@@ -1704,7 +1839,6 @@ function setupUI() {
     const addGenLayerButton = document.createElement( "button" );
     addGenLayerButton.textContent = "Add Generative Layer";
     registerUIElement( addGenLayerButton, { onclick: () => {
-      const selectedLayer = selectedPaintLayer || selectedGenLayer;
       if( selectedLayer ) addCanvasLayer( "generative", selectedLayer.w, selectedLayer.h, selectedLayer );
       else addCanvasLayer( "generative" );
     } } );
@@ -1945,11 +2079,22 @@ function exportPNG() {
   const {w,h} = layersStack.layers[0];
   ctx.clearRect( 0, 0, w, h );
 
+  const maskingCanvas = layersStack.layers[ 0 ].maskContext,
+    maskingContext = layersStack.layers[ 0 ].maskContext;
   for( let i=1; i<layersStack.layers.length; i++ ) {
     const layer = layersStack.layers[i];
     if( layer.visible && layer.opacity > 0 ) {
-      //TODO: orient the layer with its coordinates relative to the export bounding box
-      ctx.drawImage( layer.canvas, 0, 0 );
+      //TODO: orient the layer with its coordinates relative to the export bounding box. Have code elsewhere if I didn't delete it.
+      if( layer.maskInitialized === false ) {
+        ctx.drawImage( layer.canvas, 0, 0 );
+      }
+      else if( layer.maskInitialized === true ) {
+        maskingContext.globalCompositeOperation = "copy";
+        maskingContext.drawImage( layer.maskCanvas, 0, 0 );
+        maskingContext.globalCompositeOperation = "source-in";
+        maskingContext.drawImage( layer.canvas, 0, 0 );
+        ctx.drawImage( maskingCanvas, 0, 0 );
+      }
     }
   }
 
@@ -1968,20 +2113,22 @@ function saveJSON() {
   const uiSettingsSave = JSON.parse( JSON.stringify( uiSettings ) );
   const layersSave = [];
   for( const layer of layersStack.layers ) {
-    if( layer.type === "paint-preview" ) continue;
+    if( layer.layerType === "paint-preview" ) continue;
     console.log( layer );
     //drop the canvas, context, glTexture... linkNodes??? ...Yeah. Those don't save right now.
     const {
       visible, layerType, opacity, w, h,
       topLeft, topRight, bottomLeft, bottomRight,
-      textureChanged, textureChangedRect
+      /* textureChanged, textureChangedRect,
+      maskChanged, maskChangedRect, maskInitialized, */
     } = layer;
     const saveImageDataURL = layer.canvas.toDataURL();
+    let saveMaskDataURL = null;
+    if( layer.maskInitialized ) saveMaskDataURL = layer.maskCanvas.toDataURL();
     layersSave.push( {
       visible, layerType, opacity, w, h,
       topLeft, topRight, bottomLeft, bottomRight,
-      textureChanged, textureChangedRect,
-      saveImageDataURL
+      saveImageDataURL, saveMaskDataURL
     } );
   }
 
@@ -2033,7 +2180,12 @@ function loadJSON() {
         })
         uiSettings.nodeSnappingDistance = Math.min( innerWidth, innerHeight ) * 0.04; //~50px on a 1080p screen
       
-        layersStack.layers.length = 1;
+        for( const layer of layersStack.layers ) {
+          if( layer.layerType === "paint-preview" ) continue;
+          deleteLayer( layer );
+        }
+        clearUndoHistory();
+        
         for( const layer of layersSave ) {
           const newLayer = await addCanvasLayer( layer.layerType, layer.w, layer.h );
           console.log( "Got new layer: ", newLayer );
@@ -2043,10 +2195,20 @@ function loadJSON() {
             newLayer.textureChanged = true;
           }
           img.src = layer.saveImageDataURL;
+
+          if( layer.saveMaskDataURL !== null ) {
+            const mask = new Image();
+            mask.onload = () => {
+              initializeLayerMask( newLayer, "transparent" );
+              newLayer.maskContext.drawImage( mask, 0, 0 );
+              newLayer.maskChanged = true;
+            }
+            mask.src = layer.saveMaskDataURL;
+          }
+
           const {
             visible, layerType, opacity, w, h,
             topLeft, topRight, bottomLeft, bottomRight,
-            textureChanged, textureChangedRect
           } = layer;
           newLayer.visible = visible;
           newLayer.layerType = layerType;
@@ -2211,7 +2373,8 @@ const startHandler = p => {
                 cursor.mode = "zoom";
             }
         }
-        else if( p.pointerType !== "touch" && selectedPaintLayer ) {
+        else if( p.pointerType !== "touch" && ( selectedLayer.layerType === "paint" ||
+          ( selectedLayer.layerType === "generative" && uiSettings.mask === true ) ) ) {
           beginPaint();
         }
     }
@@ -2350,9 +2513,9 @@ const stopHandler = p => {
         }
         if( painter.active === true ) {
             painter.active = false;
-            if( selectedPaintLayer ) {
+            if( selectedLayer.layerType === "paint" || ( selectedLayer.layerType === "generative" && uiSettings.mask === true ) ) {
               if( true ) {
-                finalizePaint( layersStack.layers[0], selectedPaintLayer );
+                finalizePaint( layersStack.layers[0], selectedLayer );
               }
               if( false ) {
                 paintPointsToLayer( painter.queue, selectedPaintLayer );
@@ -2609,13 +2772,50 @@ function beginPaint() {
   painter.queue.length = 0;
   painter.active = true;
 
+  if( uiSettings.mask === true ) {
+    //starting masking
+    if( selectedLayer.maskInitialized === false ) {
+      //all that matters is the alpha.
+      if( uiSettings.brush === "paint" ) {
+        //if we're starting painting with a positive stroke, clear the mask
+        initializeLayerMask( selectedLayer, "transparent" );
+      }
+      if( uiSettings.brush === "erase" ) {
+        //if we're starting with erase, solidify the mask (defaults to this anyway tho)
+        initializeLayerMask( selectedLayer, "opaque" );
+      }
+    }
+  }
+  else if( uiSettings.mask === false ) {
+    //solidify the preview's mask
+    const preview = layersStack.layers[0];
+    preview.maskContext.fillStyle = "rgb(255,255,255)";
+    preview.maskContext.globalCompositeOperation = "copy";
+    preview.maskContext.fillRect( 0,0,preview.w,preview.h );
+    //reupload preview mask
+    preview.maskChanged = true;
+    preview.maskChangedRect.x = 0;
+    preview.maskChangedRect.y = 0;
+    preview.maskChangedRect.w = preview.w;
+    preview.maskChangedRect.h = preview.h;
+  }
+
   //when erasing, copy active layer to preview
   if( uiSettings.brush === "erase" ) {
     const ptx = layersStack.layers[0].context;
     ptx.save();
-    ptx.clearRect( 0,0,selectedPaintLayer.w,selectedPaintLayer.h );
-    ptx.globalCompositeOperation = "copy";
-    ptx.drawImage( selectedPaintLayer.canvas, 0, 0 );
+    ptx.clearRect( 0,0,selectedLayer.w,selectedLayer.h );
+    if( uiSettings.mask === true ) {
+      //when erasing the mask, the preview's alpha needs to perfectly match the mask
+      //(this means white shadowing where we have mask but no image)
+      ptx.globalCompositeOperation = "copy";
+      ptx.drawImage( selectedLayer.maskCanvas, 0, 0 );
+      ptx.globalCompositeOperation = "source-atop";
+      ptx.drawImage( selectedLayer.canvas, 0, 0 );
+    } else {
+      ptx.globalCompositeOperation = "copy";
+      ptx.drawImage( selectedLayer.canvas, 0, 0 );
+    }
     ptx.restore();
   }
 
@@ -2651,7 +2851,8 @@ function beginPaint() {
     context.clearRect( 0,0,w,h );
     paintCanvases.firstPaint = true;
     if( uiSettings.brushEngine !== "blend" ) {
-      context.fillStyle = uiSettings.paintColor;
+      if( uiSettings.mask === false ) context.fillStyle = uiSettings.paintColor;
+      if( uiSettings.mask === true ) context.fillStyle = "rgb(255,255,255)";
       context.fillRect( 0,0,w,h );
       context.globalCompositeOperation = "destination-in";
       context.drawImage( paintCanvases.tip.canvas, 0, 0 );
@@ -2662,14 +2863,13 @@ function beginPaint() {
   if( uiSettings.brushEngine === "blend" ) {
     const {canvas,context} = paintCanvases.blendSource;
     //distended shape not yet implemented
-    const w = canvas.width = selectedPaintLayer.canvas.width;
-    const h = canvas.height = selectedPaintLayer.canvas.height;
-    context.drawImage( selectedPaintLayer.canvas, 0, 0 );
+    const w = canvas.width = selectedLayer.canvas.width;
+    const h = canvas.height = selectedLayer.canvas.height;
+    context.drawImage( selectedLayer.canvas, 0, 0 );
   }
 
 }
 function finalizePaint( strokeLayer, paintLayer ) {
-  const ctx = paintLayer.context;
 
   const mr = paintCanvases.modRect;
 
@@ -2681,45 +2881,76 @@ function finalizePaint( strokeLayer, paintLayer ) {
     mh = Math.min( 1024, mr.h*1.5 );
 
   //get data for our affected region
-  if( paintLayer.layerType === "paint" ) {
-    oldCanvasData = ctx.getImageData( mx, my, mw, mh );
+  if( uiSettings.mask === true ) {
+    oldCanvasData = paintLayer.maskContext.getImageData( mx, my, mw, mh );
+  } else {
+    oldCanvasData = paintLayer.context.getImageData( mx, my, mw, mh );
   }
+
+  let ctx;
+  if( uiSettings.mask === true ) ctx = paintLayer.maskContext;
+  if( uiSettings.mask === false ) ctx = paintLayer.context;
 
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
   ctx.globalAlpha = uiSettings.brushOpacity;
   if( uiSettings.brush === "erase" ) {
-    //eraser has a copy of the paint layer
+    //paint preview has a copy of the paint layer, and for masking, its alpha exactly matches the paint layer.
     ctx.globalAlpha = 1.0;
     ctx.globalCompositeOperation = "copy";
   }
   ctx.drawImage( strokeLayer.canvas, 0, 0 );
+  if( uiSettings.mask === true && uiSettings.brush === "erase" ) {
+    //fill the mask with white after erasing though, only preserving its alpha channel
+    ctx.fillStyle = "rgb(255,255,255)";
+    ctx.globalCompositeOperation = "source-atop";
+    ctx.fillRect( 0,0,paintLayer.w,paintLayer.h );
+  }
   ctx.restore();
 
   //get our new data and record an undo event
-  if( paintLayer.layerType === "paint" ) {
-    const newCanvasData = ctx.getImageData( mx, my, mw, mh );
+  {
+    let newCanvasData;
+    if( uiSettings.mask === true ) newCanvasData = paintLayer.maskContext.getImageData( mx, my, mw, mh );
+    else newCanvasData = paintLayer.context.getImageData( mx, my, mw, mh );
     const historyEntry = {
+      mask: uiSettings.mask,
       paintLayer,
       oldCanvasData,
       newCanvasData,
       x: mx, y: my,
       w: mw, h: mh,
       undo: () => {
-        historyEntry.paintLayer.context.putImageData( historyEntry.oldCanvasData, historyEntry.x, historyEntry.y );
-        historyEntry.paintLayer.textureChanged = true;
-        historyEntry.paintLayer.textureChangedRect.x = historyEntry.x;
-        historyEntry.paintLayer.textureChangedRect.y = historyEntry.y;
-        historyEntry.paintLayer.textureChangedRect.w = historyEntry.w;
-        historyEntry.paintLayer.textureChangedRect.h = historyEntry.h;
+        let changedRect;
+        if( historyEntry.mask ) {
+          historyEntry.paintLayer.maskContext.putImageData( historyEntry.oldCanvasData, historyEntry.x, historyEntry.y );
+          historyEntry.paintLayer.maskChanged = true;
+          changedRect = historyEntry.paintLayer.maskChangedRect;
+        } else {
+          historyEntry.paintLayer.context.putImageData( historyEntry.oldCanvasData, historyEntry.x, historyEntry.y );
+          historyEntry.paintLayer.textureChanged = true;
+          changedRect = historyEntry.paintLayer.textureChangedRect;
+        }
+        changedRect.x = historyEntry.x;
+        changedRect.y = historyEntry.y;
+        changedRect.w = historyEntry.w;
+        changedRect.h = historyEntry.h;
       },
       redo: () => {
-        historyEntry.paintLayer.context.putImageData( historyEntry.newCanvasData, historyEntry.x, historyEntry.y );
-        historyEntry.paintLayer.textureChanged = true;
-        historyEntry.paintLayer.textureChangedRect.x = historyEntry.x;
-        historyEntry.paintLayer.textureChangedRect.y = historyEntry.y;
-        historyEntry.paintLayer.textureChangedRect.w = historyEntry.w;
-        historyEntry.paintLayer.textureChangedRect.h = historyEntry.h;
+        let changedRect;
+        if( historyEntry.mask ) {
+          historyEntry.paintLayer.maskContext.putImageData( historyEntry.newCanvasData, historyEntry.x, historyEntry.y );
+          historyEntry.paintLayer.maskChanged = true;
+          changedRect = historyEntry.paintLayer.maskChangedRect;
+        } else {
+          historyEntry.paintLayer.context.putImageData( historyEntry.newCanvasData, historyEntry.x, historyEntry.y );
+          historyEntry.paintLayer.textureChanged = true;
+          changedRect = historyEntry.paintLayer.textureChangedRect;
+        }
+        changedRect.x = historyEntry.x;
+        changedRect.y = historyEntry.y;
+        changedRect.w = historyEntry.w;
+        changedRect.h = historyEntry.h;
       }
     }
     recordHistoryEntry( historyEntry );
@@ -2728,12 +2959,21 @@ function finalizePaint( strokeLayer, paintLayer ) {
   //clear the preview
   strokeLayer.context.clearRect( 0,0, strokeLayer.w, strokeLayer.h );
 
-  //flag the paintlayer for GPU upload
-  paintLayer.textureChanged = true;
-  paintLayer.textureChangedRect.x = mr.x;
-  paintLayer.textureChangedRect.y = mr.y;
-  paintLayer.textureChangedRect.w = mr.w;
-  paintLayer.textureChangedRect.h = mr.h;
+  if( uiSettings.mask === true ) {
+    //flag the mask for GPU upload
+    paintLayer.maskChanged = true;
+    paintLayer.maskChangedRect.x = mr.x;
+    paintLayer.maskChangedRect.y = mr.y;
+    paintLayer.maskChangedRect.w = mr.w;
+    paintLayer.maskChangedRect.h = mr.h;
+  } else {
+    //flag the paintlayer for GPU upload
+    paintLayer.textureChanged = true;
+    paintLayer.textureChangedRect.x = mr.x;
+    paintLayer.textureChangedRect.y = mr.y;
+    paintLayer.textureChangedRect.w = mr.w;
+    paintLayer.textureChangedRect.h = mr.h;
+  }
 
   //flag the previewlayer for GPU upload
   strokeLayer.textureChanged = true;
@@ -2850,13 +3090,14 @@ function applyPaintStroke( points, layer ) {
       //LOL this is stupidly wrong, but it's *exactly* what Infinite Painter implemented. And it works great there. :-)
       ctx.rotate( Math.atan2( tiltY, tiltX ) );
       ctx.scale( tiltScale, 1 ); //pencil tilt shape
-      ctx.translate( (tw/2) / tiltScale, 1 );
+      ctx.translate( (tw/2) * ( 1 - (1/tiltScale) ), 0 );
 
       //opacity is applied at the brush-level while erasing??? Hmm.
       //if( uiSettings.brush === "erase" ) ctx.globalAlpha = p * uiSettings.brushOpacity;
 
       ctx.globalAlpha = p; //pencil pressure darkness
       //Okay... So here, for 
+      console.log( "Offset: ", -tw/2, " Tilt: ", tiltScale );
       ctx.drawImage( blend, -tw/2, -th/2, tw, th );
       ctx.restore();
 
