@@ -9,8 +9,11 @@
   Next, I should start using it.
   The color wheel is usable, if not perfect. Have eyedropper too, no blend tho.
   Next:
-    lineart is done and working, even with alpha stuff
-    - next up is inpainting. Send image + mask to api, or as 1 if needed. Use WebUI inpaint to grab API call
+    layer transforms
+    (done)- in rendering
+    (done)- in painting
+    - in blending
+    - in exporting
 
 
       Doesn't this also need something like visible -> img2img?
@@ -679,6 +682,84 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
   }
 
   return newLayer;
+  
+}
+
+function composeLayers( destinationLayer, layers, layer0WidthPixels ) {
+  let minX = Infinity, minY = Infinity,
+    maxX = -Infinity, maxY = -Infinity;
+  for( const layer of layers ) {
+    for( const p of ["topLeft","topRight","bottomLeft","bottomRight"] ) {
+      minX = Math.min(minX,layer[p][0]);
+      minY = Math.min(minY,layer[p][1]);
+      maxX = Math.max(maxX,layer[p][0]);
+      maxY = Math.max(maxY,layer[p][1]);
+    }
+  }
+
+  minX = parseInt( minX );
+  minY = parseInt( minY );
+  maxX = parseInt( maxX ) + 1;
+  maxY = parseInt( maxY ) + 1;
+
+  console.log( minX, minY, maxX, maxY );
+
+  //get the actual width of layer 0
+  let pixelScale;
+  {
+    const layer = layers[ 0 ],
+      dx = layer.topRight[0] - layer.topLeft[0],
+      dy = layer.topRight[1] - layer.topLeft[1],
+      d = Math.sqrt( dx**2 + dy**2 );
+    pixelScale = layer0WidthPixels / d;
+
+  }
+  const width = parseInt( ( maxX - minX ) * pixelScale ),
+    height = parseInt( ( maxY - minY ) * pixelScale );
+
+  console.log( width, height );
+
+  destinationLayer.canvas.width = width;
+  destinationLayer.canvas.height = height;
+  
+  const ctx = destinationLayer.context;
+  ctx.save();
+  //translate so our minXY is at 0
+  ctx.translate( -minX, -minY );
+  //draw our layers
+  for( const layer of layers ) {
+      const [x,y] = layer.topLeft,
+        [x2,y2] = layer.topRight;
+      const dx = x2-x, dy=y2-y;
+      const l = Math.sqrt( dx*dx + dy*dy );
+      ctx.save();
+      ctx.translate( x, y );
+      ctx.rotate( Math.atan2( dy, dx ) );
+      ctx.scale( l / layer.w, l / layer.h );
+      ctx.globalAlpha = layer.opacity;
+      if( layer.maskInitialized === true ) {
+        //if our layer is masked, clip it
+        destinationLayer.maskCanvas.width = layer.w;
+        destinationLayer.maskCanvas.height = layer.h;
+        const maskingContext = destinationLayer.maskContext;
+        maskingContext.save();
+        maskingContext.globalCompositeOperation = "copy";
+        maskingContext.drawImage( layer.maskCanvas, 0, 0 );
+        maskingContext.globalCompositeOperation = "source-in";
+        maskingContext.drawImage( layer.canvas, 0, 0 );
+        maskingContext.restore();
+        ctx.drawImage( destinationLayer.maskCanvas, 0, 0 );
+      }
+      else if( layer.maskInitialized === false ) {
+        ctx.drawImage( layer.canvas, 0, 0 );
+      }
+      /* ctx.lineWidth = 1.0;
+      ctx.strokeStyle = "black";
+      ctx.strokeRect( 0, 0, layer.canvas.width, layer.canvas.height ); */
+      ctx.restore();
+  }
+
+  ctx.restore();
   
 }
 
@@ -2079,6 +2160,72 @@ function keyHandler( e , state ) {
     if( ! ["F5","F12"].includes( e.key ) )
       e.preventDefault?.();
     keys[ e.key ] = state;
+    if( e.key === "ArrowRight" && selectedLayer ) {
+      console.log( "here" );
+      //let's move the layer right a bit
+      for( const point of [ selectedLayer.bottomLeft, selectedLayer.bottomRight, selectedLayer.topLeft, selectedLayer.topRight ] ) {
+        point[0] += 10;
+      }
+    }
+    if( e.key === "ArrowLeft" && selectedLayer ) {
+      //let's move the layer right a bit
+      for( const point of [ selectedLayer.bottomLeft, selectedLayer.bottomRight, selectedLayer.topLeft, selectedLayer.topRight ] ) {
+        point[0] -= 10;
+      }
+    }
+    if( e.key === "ArrowDown" && selectedLayer ) {
+      //let's rotate the layer a bit
+      const origin = selectedLayer.topLeft;
+      const da = 0.1;
+      for( const point of [ selectedLayer.bottomLeft, selectedLayer.bottomRight, selectedLayer.topRight ] ) {
+        const dx = point[0] - origin[0],
+          dy = point[1] - origin[1],
+          dist = Math.sqrt( dx**2 + dy**2 ),
+          ang = Math.atan2( dy, dx ),
+          newAng = ang + da,
+          newX = origin[0] + dist * Math.cos( newAng ),
+          newY = origin[1] + dist * Math.sin( newAng );
+        point[0] = newX;
+        point[1] = newY;
+      }
+    }
+    if( e.key === "ArrowUp" && selectedLayer ) {
+      //let's counter-rotate the layer a bit
+      const origin = selectedLayer.topLeft;
+      const da = -0.1;
+      for( const point of [ selectedLayer.bottomLeft, selectedLayer.bottomRight, selectedLayer.topRight ] ) {
+        const dx = point[0] - origin[0],
+          dy = point[1] - origin[1],
+          dist = Math.sqrt( dx**2 + dy**2 ),
+          ang = Math.atan2( dy, dx ),
+          newAng = ang + da,
+          newX = origin[0] + dist * Math.cos( newAng ),
+          newY = origin[1] + dist * Math.sin( newAng );
+        point[0] = newX;
+        point[1] = newY;
+      }
+    }
+    if( (e.key === "1" || e.key === "2") && selectedLayer ) {
+      //let's upscale the layer a bit
+      const origin = [0,0];
+      //should actually recompute these using lw and lh, not my calculated distance or something
+      const points = [ selectedLayer.topLeft, selectedLayer.bottomLeft, selectedLayer.bottomRight, selectedLayer.topRight ];
+      for( const point of points ) {
+        origin[0] += point[0];
+        origin[1] += point[1];
+      }
+      origin[0] /=4;
+      origin[1] /=4;
+      const scale = (e.key === "1") ? 1.1 : 0.9;
+      for( const point of points ) {
+        const dx = point[0] - origin[0],
+          dy = point[1] - origin[1],
+          newX = dx * scale,
+          newY = dy * scale;
+        point[0] = origin[0] + newX;
+        point[1] = origin[1] + newY;
+      }
+    }
     //console.log( ":" + e.key + ":" );
     //console.log( `Set ${e.code} to ${state}` );
 }
@@ -2111,7 +2258,18 @@ function exportPNG() {
   const {w,h} = layersStack.layers[0];
   ctx.clearRect( 0, 0, w, h );
 
-  const maskingCanvas = layersStack.layers[ 0 ].maskContext,
+  const layersToDraw = [];
+  for( const layer of layersStack.layers ) {
+    if( layer.layerType === "paint-preview" ) continue;
+    if( layer.visibility === false ) continue;
+    layersToDraw.push( layer );
+  }
+
+  const layer0WidthPixels = layersToDraw[0].w;
+
+  composeLayers( layersStack.layers[0], layersToDraw, layer0WidthPixels );
+
+  /* const maskingCanvas = layersStack.layers[ 0 ].maskContext,
     maskingContext = layersStack.layers[ 0 ].maskContext;
   for( let i=1; i<layersStack.layers.length; i++ ) {
     const layer = layersStack.layers[i];
@@ -2121,14 +2279,16 @@ function exportPNG() {
         ctx.drawImage( layer.canvas, 0, 0 );
       }
       else if( layer.maskInitialized === true ) {
+        maskingContext.save();
         maskingContext.globalCompositeOperation = "copy";
         maskingContext.drawImage( layer.maskCanvas, 0, 0 );
         maskingContext.globalCompositeOperation = "source-in";
         maskingContext.drawImage( layer.canvas, 0, 0 );
+        maskingContext.restore();
         ctx.drawImage( maskingCanvas, 0, 0 );
       }
     }
-  }
+  } */
 
   const imgURL = layersStack.layers[0].canvas.toDataURL();
   
@@ -2405,8 +2565,8 @@ const startHandler = p => {
                 cursor.mode = "zoom";
             }
         }
-        else if( p.pointerType !== "touch" && ( selectedLayer.layerType === "paint" ||
-          ( selectedLayer.layerType === "generative" && uiSettings.mask === true ) ) ) {
+        else if( p.pointerType !== "touch" && ( selectedLayer?.layerType === "paint" ||
+          ( selectedLayer?.layerType === "generative" && uiSettings.mask === true ) ) ) {
           beginPaint();
         }
     }
@@ -2798,7 +2958,14 @@ function beginPaint() {
   paintCanvases.modRect.w = 0;
   paintCanvases.modRect.h = 0;
 
-  console.error( "beginPaint() needs to redim the paintPreviewLayer to match the target layer.")
+  const preview = layersStack.layers[0];
+  preview.w = preview.canvas.width = preview.maskCanvas.width = selectedLayer.w;
+  preview.h = preview.canvas.height = preview.maskCanvas.height = selectedLayer.h;
+
+  for( const p of ["topLeft","topRight","bottomLeft","bottomRight"] ) {
+    preview[p][0] = selectedLayer[p][0];
+    preview[p][1] = selectedLayer[p][1];
+  }
 
   //reset and activate the painter
   painter.queue.length = 0;
@@ -3018,51 +3185,58 @@ function finalizePaint( strokeLayer, paintLayer ) {
 function applyPaintStroke( points, layer ) {
   if( points.length < 2 ) return;
   //for now, not slerping vectors, just a line from a to b
-  let [bx,by,b_,bp,btx,bty] = points[ points.length-1 ],
-    [ax,ay,a_,ap,atx,aty] = points[ points.length-2 ];
+  let [bx,by,b_,bPressure,bTiltX,bTiltY] = points[ points.length-1 ],
+    [ax,ay,a_,aPressure,aTiltX,aTiltY] = points[ points.length-2 ];
 
   //transform our basis points  
   getTransform();
 
-  //Get our canvas coordinate system
-  let [x,y] = transformPoint( layer.topLeft ),
-    [x2,y2] = transformPoint( layer.topRight ),
-    [x3,y3] = transformPoint( layer.bottomLeft );
-  x2 -= x; y2 -= y;
-  x3 -= x; y3 -= y;
-  const vxl = Math.sqrt( x2*x2 + y2*y2 ),
-    vyl = Math.sqrt( x3*x3 + y3*y3 );
-  const scale = layer.w / vxl;
-  x2 /= vxl; y2 /= vxl;
-  x3 /= vyl; y3 /= vyl;
+  let [canvasOriginX,canvasOriginY] = layer.topLeft,
+    [xLegX,xLegY] = layer.topRight,
+    [yLegX,yLegY] = layer.bottomLeft;
+  xLegX -= canvasOriginX; xLegY -= canvasOriginY;
+  yLegX -= canvasOriginX; yLegY -= canvasOriginY;
+  const lengthXLeg = Math.sqrt( xLegX*xLegX + xLegY*xLegY ),
+    lengthYLeg = Math.sqrt( yLegX*yLegX + yLegY*yLegY );
+  xLegX /= lengthXLeg; xLegY /= lengthXLeg;
+  yLegX /= lengthYLeg; yLegY /= lengthYLeg;
 
-  let [otax,otay] = transformPoint( [ax,ay,1] ),
-    [otbx,otby] = transformPoint( [bx,by,1] );
-  otax -= x; otay -= y;
-  let tax = otax*x2 + otay*y2,
-    tay = otax*x3 + otay*y3;
-  tax *= scale;
-  tay *= scale;
-  otbx -= x; otby -= y;
-  let tbx = otbx*x2 + otby*y2,
-    tby = otbx*x3 + otby*y3;
-  tbx *= scale;
-  tby *= scale;
+  let [globalTransformAx,globalTransformAy] = [ax,ay],
+    [globalTransformBx,globalTransformBy] = [bx,by];
+  //we have points in the same global coordinate system as our canvas.
+
+  //transform from canvas origin
+  globalTransformAx -= canvasOriginX;
+  globalTransformAy -= canvasOriginY;
+  globalTransformBx -= canvasOriginX;
+  globalTransformBy -= canvasOriginY;
+
+  //cast to canvas space by projecting on legs
+  //this isn't right, is it? You need the untransform?
+  //matrix inversion works, but there's an obvious other way, right?
+  let canvasTransformAx = globalTransformAx*xLegX + globalTransformAy*xLegY,
+    canvasTransformAy = globalTransformAx*yLegX + globalTransformAy*yLegY;
+  canvasTransformAx *= layer.w / lengthXLeg;
+  canvasTransformAy *= layer.h / lengthYLeg;
+  let canvasTransformBx = globalTransformBx*xLegX + globalTransformBy*xLegY,
+    canvasTransformBy = globalTransformBx*yLegX + globalTransformBy*yLegY;
+  canvasTransformBx *= layer.w / lengthXLeg;
+  canvasTransformBy *= layer.h / lengthYLeg;
 
   //ta[xy] and tb[xy] are the two point coordinates on our canvas where we're painting.
   
   //count our paint pixels
   const pixelSpacing = Math.max( 1, uiSettings.brushBlur );
-  const lineLength = Math.max( 2, parseInt( Math.sqrt( (tax-tbx)**2 + (tay-tby)**2 ) / pixelSpacing ) + 1 );
+  const lineLength = Math.max( 2, parseInt( Math.sqrt( (canvasTransformAx-canvasTransformBx)**2 + (canvasTransformAy-canvasTransformBy)**2 ) / pixelSpacing ) + 1 );
 
   const pencilDistentionScale = uiSettings.brushTiltScaleAdd;
 
   //update / expand our paint bounds rectangle
   const mr = paintCanvases.modRect;
-  mr.x = parseInt( Math.min( mr.x, tax - uiSettings.brushSize - uiSettings.brushBlur, tbx - uiSettings.brushSize - uiSettings.brushBlur ) );
-  mr.y = parseInt( Math.min( mr.y, tay - uiSettings.brushSize - uiSettings.brushBlur, tby - uiSettings.brushSize - uiSettings.brushBlur ) );
-  mr.x2 = parseInt( Math.max( mr.x2, tax + uiSettings.brushSize + uiSettings.brushBlur, tbx + uiSettings.brushSize + uiSettings.brushBlur ) );
-  mr.y2 = parseInt( Math.max( mr.y2, tay + uiSettings.brushSize + uiSettings.brushBlur, tby + uiSettings.brushSize + uiSettings.brushBlur ) );
+  mr.x = parseInt( Math.min( mr.x, canvasTransformAx - uiSettings.brushSize - uiSettings.brushBlur, canvasTransformBx - uiSettings.brushSize - uiSettings.brushBlur ) );
+  mr.y = parseInt( Math.min( mr.y, canvasTransformAy - uiSettings.brushSize - uiSettings.brushBlur, canvasTransformBy - uiSettings.brushSize - uiSettings.brushBlur ) );
+  mr.x2 = parseInt( Math.max( mr.x2, canvasTransformAx + uiSettings.brushSize + uiSettings.brushBlur, canvasTransformBx + uiSettings.brushSize + uiSettings.brushBlur ) );
+  mr.y2 = parseInt( Math.max( mr.y2, canvasTransformAy + uiSettings.brushSize + uiSettings.brushBlur, canvasTransformBy + uiSettings.brushSize + uiSettings.brushBlur ) );
   mr.w = mr.x2 - mr.x;
   mr.h = mr.y2 - mr.y;
 
@@ -3083,18 +3257,19 @@ function applyPaintStroke( points, layer ) {
     for( let i=0; i<lineLength; i++ ) {
 
       //So slow :-| but not optimizing (plus, we're clamped to two points now)
-      const f = i/lineLength, fi = 1 - f;
-      let lx = tbx*f + tax*fi,
-      ly = tby*f + tay*fi,
-      p = bp*f + ap*fi,
-      tiltX = btx*f + atx*fi,
-      tiltY = bty*f + aty*fi,
-      tiltScale = 1 + (( Math.sqrt( tiltX**2 + tiltY**2 ) / 127 )**2) * pencilDistentionScale;
-      //lx and ly are the two points on our canvas where we're blitting the paint-image.
+      const linePortionRemaining = i/lineLength,
+        linePortionAdvanced = 1 - linePortionRemaining;
+      let paintX = canvasTransformBx*linePortionRemaining + canvasTransformAx*linePortionAdvanced,
+        paintY = canvasTransformBy*linePortionRemaining + canvasTransformAy*linePortionAdvanced,
+        paintPressure = bPressure*linePortionRemaining + aPressure*linePortionAdvanced,
+        paintTiltX = bTiltX*linePortionRemaining + aTiltX*linePortionAdvanced,
+        paintTiltY = bTiltY*linePortionRemaining + aTiltY*linePortionAdvanced,
+        tiltScale = 1 + (( Math.sqrt( paintTiltX**2 + paintTiltY**2 ) / 127 )**2) * pencilDistentionScale;
+      //paintX and paintY are the two points on our canvas where we're blitting the paint-image.
       if( uiSettings.pressureEnabled === false ) {
-        p = 1;
-        tiltX = 0;
-        tiltY = 0;
+        paintPressure = 1;
+        paintTiltX = 0;
+        paintTiltY = 0;
         tiltScale = 1;
       }
 
@@ -3109,7 +3284,7 @@ function applyPaintStroke( points, layer ) {
         context.clearRect( 0, 0, w, h );
         context.globalCompositeOperation = "copy";
         context.globalAlpha = 1.0;
-        context.drawImage( paintCanvases.blendSource.canvas, -lx - w/2, -ly - h/2 );
+        context.drawImage( paintCanvases.blendSource.canvas, -paintX - w/2, -paintY - h/2 );
         //mask with tip
         context.globalAlpha = 1.0;
         context.globalCompositeOperation = "destination-in";
@@ -3118,16 +3293,15 @@ function applyPaintStroke( points, layer ) {
       }
 
       ctx.save();
-      ctx.translate( lx, ly );
-      //LOL this is stupidly wrong, but it's *exactly* what Infinite Painter implemented. And it works great there. :-)
-      ctx.rotate( Math.atan2( tiltY, tiltX ) );
+      ctx.translate( paintX, paintY );
+      ctx.rotate( Math.atan2( paintTiltY, paintTiltX ) );
       ctx.scale( tiltScale, 1 ); //pencil tilt shape
       ctx.translate( (tw/2) * ( 1 - (1/tiltScale) ), 0 );
 
       //opacity is applied at the brush-level while erasing??? Hmm.
       //if( uiSettings.brush === "erase" ) ctx.globalAlpha = p * uiSettings.brushOpacity;
 
-      ctx.globalAlpha = p; //pencil pressure darkness
+      ctx.globalAlpha = paintPressure; //pencil pressure darkness
       //Okay... So here, for 
       ctx.drawImage( blend, -tw/2, -th/2, tw, th );
       ctx.restore();
