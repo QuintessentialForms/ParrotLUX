@@ -1038,7 +1038,7 @@ Info: ${info}`;
         //set the layer's alpha
         gl.uniform1f( glState.alphaInputIndex, layer.opacity );
         let maskVisibility = 0.0;
-        if( uiSettings.mask === true && painter.active === true )
+        if( uiSettings.mask === true && layer.maskInitialized )
           maskVisibility = 0.5;
         gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
 
@@ -1194,7 +1194,9 @@ function setupGL( testImageTexture ) {
       vec4 lookup = texture(img,uv);
       vec4 maskLookup = texture(imgMask,uv);
       lookup.a *= alpha * maskLookup.a;
-      lookup.rgb += vec3(1.0,1.0,1.0) * mask;
+      if( lookup.a < 0.01 ) {
+        lookup = vec4( 1.0,1.0,1.0, mask * maskLookup.a );
+      }
       outColor = lookup;
       if( uv.x < 0.001 || uv.x > 0.999 || uv.y < 0.001 || uv.y > 0.999 ) {
         outColor = vec4( 0.0,0.0,0.0,1.0 );
@@ -1586,12 +1588,12 @@ function setupUI() {
        img2img = null,
        denoise = 0;
 
+      //try to set img2img
       if( genControls.classList.contains( "img2img" ) ) {
         //lets find the image
-        const layer = selectedLayer;
         for( const link of linkedNodes ) {
           if( link.destinationNode.isNode === "img2img" &&
-              link.destinationLayer === layer ) {
+              link.destinationLayer === selectedLayer ) {
             //found the link!
             const sourceLayer = link.sourceLayer;
             const sourceCanvas = sourceLayer.canvas;
@@ -1600,6 +1602,21 @@ function setupUI() {
             img2img = sourceCanvas.toDataURL();
             denoise = document.querySelector("input.denoise").value*1;
           }
+        }
+      }
+
+      //try to set inpainting
+      let inpaint = false,
+        inpaintFill = "original",
+        inpaintZoomed = false;
+      if( api === "img2img" ) {
+        if( selectedLayer.maskInitialized ) {
+          inpaint = true;
+          //default
+          //inpaint = "original";
+          const inpaintZoomedChecked = !!(document.querySelector( "input.inpaintZoomed" ).checked);
+          if( inpaintZoomedChecked ) inpaintZoomed = true;
+          else inpaintZoomed = false;
         }
       }
 
@@ -1638,7 +1655,7 @@ function setupUI() {
 
       console.log( "Doing: ", api, img2img, denoise, usingLineart, prompt );
       const p = prompt.value;
-      const img = await getImageA1111( { api, prompt:p, img2img, denoise } );
+      const img = await getImageA1111( { api, prompt:p, img2img, denoise, inpaint, inpaintFill, inpaintZoomed } );
       selectedLayer.context.drawImage( img, 0, 0 );
       selectedLayer.textureChanged = true;
       selectedLayer.textureChangedRect.x = 0;
@@ -1732,6 +1749,21 @@ function setupUI() {
       denoiseHolder.appendChild( document.createTextNode("Denoise") );
       denoiseHolder.appendChild( denoiseSlider );
       genControls.appendChild( denoiseHolder );
+    }
+    if( false ){
+      //inpainting zoomed check
+      const inpaintZoomed = document.createElement( "input" );
+      inpaintZoomed.type = "checkbox"
+      inpaintZoomed.classList.add( "inpaintZoomed" );
+      //inpaintZoomed.checked = false;
+      registerUIElement( inpaintZoomed, { onclick: () => { inpaintZoomed.checked = !inpaintZoomed.checked; } } );
+      uiControls.genControlElements.push( inpaintZoomed );
+      const inpaintZoomedHolder = document.createElement( "div" );
+      inpaintZoomedHolder.classList.add( "img2img" );
+      inpaintZoomedHolder.style = "position:relative; width:auto;";
+      inpaintZoomedHolder.appendChild( document.createTextNode("Inpaint Zoomed") );
+      inpaintZoomedHolder.appendChild( inpaintZoomed );
+      genControls.appendChild( inpaintZoomedHolder );
     }
     {
       //controlnet lineart slider
@@ -3097,7 +3129,6 @@ function applyPaintStroke( points, layer ) {
 
       ctx.globalAlpha = p; //pencil pressure darkness
       //Okay... So here, for 
-      console.log( "Offset: ", -tw/2, " Tilt: ", tiltScale );
       ctx.drawImage( blend, -tw/2, -th/2, tw, th );
       ctx.restore();
 
@@ -3658,7 +3689,7 @@ Map
 */
 
 
-async function getImageA1111( {api="txt2img", prompt, seed=-1, sampler="DPM++ SDE", steps=4, cfg=1, width=1024, height=1024, CADS=false, img2img=null, denoise=0.8 } ) {
+async function getImageA1111( {api="txt2img", prompt, seed=-1, sampler="DPM++ SDE", steps=4, cfg=1, width=1024, height=1024, CADS=false, img2img=null, denoise=0.8, inpaint=false, inpaintZoomed=false, inpaintZoomedPadding=32, inpaintFill="original" } ) {
   //apisSettings.a1111.setPrompt(prompt + " <lora:lcm-lora-sdxl:1>");
   //apisSettings.a1111.setPrompt(prompt + " <lora:sdxl_lightning_4step_lora:1>");
   let apiTag = "/sdapi/v1/txt2img";
@@ -3675,6 +3706,12 @@ async function getImageA1111( {api="txt2img", prompt, seed=-1, sampler="DPM++ SD
     console.log( "Doing img2img API call." );
     apisSettings.a1111.setImg2Img( img2img );
     apisSettings.a1111.setDenoisingStrength( denoise );
+    if( inpaint === true ) {
+      console.log( "Doing inpainting API call, with inpaintZoomed: ", inpaintZoomed );
+      apisSettings.a1111.setInpaintFullRes( (inpaintZoomed === true) ? 1 : 0 ),
+      apisSettings.a1111.setInpaintFullResPad( inpaintZoomedPadding ),
+      apisSettings.a1111.setInpaintFill( inpaintFill ); //"fill", "original", "latent noise", "latent nothing"
+    }
   }
   if( CADS ) apisSettings.a1111.CADS.enable();
   else apisSettings.a1111.CADS.disable();
@@ -3730,6 +3767,9 @@ const apisSettings = {
       setSize: (w,h) => { apis[apisSettings.a1111.apiKey].width=w; apis[apisSettings.a1111.apiKey].height=h; },
       setImg2Img: img2img => { apis[apisSettings.a1111.apiKey].init_images[0] = img2img; },
       setDenoisingStrength: denoise => { apis[apisSettings.a1111.apiKey].denoising_strength = denoise; },
+      setInpaintFullRes: fullRes => { apis[apisSettings.a1111.apiKey].inpaint_full_res = fullRes; },
+      setInpaintFullResPad: fullResPad => { apis[apisSettings.a1111.apiKey].inpaint_full_res_padding = fullResPad; },
+      setInpaintFill: fill => { apis[apisSettings.a1111.apiKey].inpaint_fill = ({"fill":0,"original":1,"latent noise":2,"latent nothing":3})[fill] },
       setControlNet: ( { enabled=true, slot=0, lineart=null, lineartStrength=0.8, model="sai_xl_sketch_256lora [cd3389b1]" } ) => {
         const configs = [
           apis.a1111img2img.alwayson_scripts.ControlNet.args[slot],
@@ -3744,6 +3784,10 @@ const apisSettings = {
       },
       
       CADS: {
+        enable: () => {},
+        disable: () => {}
+      },
+      CADS_original: {
           enable: () => apis[apisSettings.a1111.apiKey].alwayson_scripts.CADS.args[0] = true,
           disable: () => apis[apisSettings.a1111.apiKey].alwayson_scripts.CADS.args[0] = false
       },
@@ -3774,6 +3818,89 @@ const apis = {
     "low_vram": false
   },
   a1111img2img: {
+    "alwayson_scripts": {
+      "ControlNet": {
+        "args": [
+          {
+            "advanced_weighting" : null,
+            "batch_images" : "",
+            "control_mode" : "Balanced",
+            "enabled" : false,
+            "guidance_end" : 1,
+            "guidance_start" : 0,
+            "hr_option" : "Both",
+            "image" :
+            {
+                "image" : null,
+                "mask" : null,
+            }
+            ,
+            "inpaint_crop_input_image" : false,
+            "input_mode" : "simple",
+            "is_ui" : true,
+            "loopback" : false,
+            "low_vram" : false,
+            "model" : "sai_xl_sketch_256lora [cd3389b1]",
+            "module" : "none",
+            "output_dir" : "",
+            "pixel_perfect" : true,
+            "processor_res" : -1,
+            "resize_mode" : "Crop and Resize",
+            "save_detected_map" : true,
+            "threshold_a" : -1,
+            "threshold_b" : -1,
+            "weight" : 0.8
+          }
+        ]
+      },
+    },
+    "batch_size": 1,
+    "cfg_scale": 1,
+    "comments": {},
+    "denoising_strength": 0.74,
+    "disable_extra_networks": false,
+    "do_not_save_grid": false,
+    "do_not_save_samples": false,
+    "height": 1024,
+    "image_cfg_scale": 1.5,
+    "init_images": [
+      "base64image placeholder"
+    ],
+    "initial_noise_multiplier": 1,
+    "inpaint_full_res": 0,
+    "inpaint_full_res_padding": 32,
+    "inpainting_fill": 1,
+    "inpainting_mask_invert": 0,
+    "mask_blur": 4,
+    "mask_blur_x": 4,
+    "mask_blur_y": 4,
+    "n_iter": 1,
+    "negative_prompt": "",
+    "override_settings": {},
+    "override_settings_restore_afterwards": true,
+    "prompt": "",
+    "resize_mode": 0,
+    "restore_faces": false,
+    "s_churn": 0,
+    "s_min_uncond": 0,
+    "s_noise": 1,
+    "s_tmax": null,
+    "s_tmin": 0,
+    "sampler_name": "DPM++ SDE",
+    "script_args": [],
+    "script_name": null,
+    "seed": 1930619812,
+    "seed_enable_extras": true,
+    "seed_resize_from_h": -1,
+    "seed_resize_from_w": -1,
+    "steps": 4,
+    "styles": [],
+    "subseed": 3903236052,
+    "subseed_strength": 0,
+    "tiling": false,
+    "width": 1024
+  },
+  a1111img2img_original: {
     "alwayson_scripts": {
       "API payload": {
         "args": []
@@ -4055,6 +4182,78 @@ const apis = {
     "width": 1024
   },
   a1111txt2img: {
+      "alwayson_scripts": {
+        "ControlNet": {
+          "args": [
+            {
+              "advanced_weighting": null,
+              "batch_images": "",
+              "control_mode": "Balanced",
+              "enabled": false,
+              "guidance_end": 1,
+              "guidance_start": 0,
+              "hr_option": "Both",
+              "image": null,
+              "inpaint_crop_input_image": false,
+              "input_mode": "simple",
+              "is_ui": true,
+              "loopback": false,
+              "low_vram": false,
+              "model": "None",
+              "module": "none",
+              "output_dir": "",
+              "pixel_perfect": false,
+              "processor_res": -1,
+              "resize_mode": "Crop and Resize",
+              "save_detected_map": true,
+              "threshold_a": -1,
+              "threshold_b": -1,
+              "weight": 1
+            }
+          ]
+        }
+      },
+      "batch_size": 1,
+      "cfg_scale": 7,
+      "comments": {},
+      "disable_extra_networks": false,
+      "do_not_save_grid": false,
+      "do_not_save_samples": false,
+      "enable_hr": false,
+      "height": 1024,
+      "hr_negative_prompt": "",
+      "hr_prompt": "",
+      "hr_resize_x": 0,
+      "hr_resize_y": 0,
+      "hr_scale": 2,
+      "hr_second_pass_steps": 0,
+      "hr_upscaler": "Latent",
+      "n_iter": 1,
+      "negative_prompt": "",
+      "override_settings": {},
+      "override_settings_restore_afterwards": true,
+      "prompt": "a spaceship with a warpdrive on a trading card, straight and centered in the screen, vertical orientation",
+      "restore_faces": false,
+      "s_churn": 0,
+      "s_min_uncond": 0,
+      "s_noise": 1,
+      "s_tmax": null,
+      "s_tmin": 0,
+      "sampler_name": "DPM++ 3M SDE Exponential",
+      "script_args": [],
+      "script_name": null,
+      "seed": 3718586839,
+      "seed_enable_extras": true,
+      "seed_resize_from_h": -1,
+      "seed_resize_from_w": -1,
+      "steps": 50,
+      "styles": [],
+      "subseed": 4087077444,
+      "subseed_strength": 0,
+      "tiling": false,
+      "width": 1024
+    },
+  a1111txt2img_original: {
       "alwayson_scripts": {
         "API payload": {
           "args": []
