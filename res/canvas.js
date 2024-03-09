@@ -9,11 +9,13 @@
   Next, I should start using it.
   The color wheel is usable, if not perfect. Have eyedropper too, no blend tho.
   Next:
-    layer transforms
+    
+    Blending. :-|
+
     (done)- in rendering
     (done)- in painting
     - in blending
-    - in exporting
+    (done)- in exporting
 
 
       Doesn't this also need something like visible -> img2img?
@@ -763,6 +765,35 @@ function composeLayers( destinationLayer, layers, layer0WidthPixels ) {
   
 }
 
+function flagLayerTextureChanged( layer, rect=null ) {
+  layer.textureChanged = true;
+  if( rect === null ) {
+    layer.textureChangedRect.x = 0;
+    layer.textureChangedRect.y = 0;
+    layer.textureChangedRect.w = layer.w;
+    layer.textureChangedRect.h = layer.h;
+  } else {
+    layer.textureChangedRect.x = rect.x;
+    layer.textureChangedRect.y = rect.y;
+    layer.textureChangedRect.w = rect.w;
+    layer.textureChangedRect.h = rect.h;
+  }
+}
+function flagLayerMaskChanged( layer, rect=null ) {
+  layer.maskChanged = true;
+  if( rect === null ) {
+    layer.maskChangedRect.x = 0;
+    layer.maskChangedRect.y = 0;
+    layer.maskChangedRect.w = layer.w;
+    layer.maskChangedRect.h = layer.h;
+  } else {
+    layer.maskChangedRect.x = rect.x;
+    layer.maskChangedRect.y = rect.y;
+    layer.maskChangedRect.w = rect.w;
+    layer.maskChangedRect.h = rect.h;
+  }
+}
+
 async function deleteLayer( layer ) {
 
   //if this layer is selected, unselect it
@@ -1037,22 +1068,34 @@ Info: ${info}`;
 
       getTransform();
 
+      continueLayers:
       for( const layer of visibleLayers ) {
 
         //eraser preview requires real layer undrawn
         if( layer === selectedLayer &&
-            uiSettings.brush === "erase" &&
-            painter.active &&
-            painter.queue.length > 1 )
-          continue;
+            ( uiSettings.activeTool === "paint" || uiSettings.activeTool === "mask" ) &&
+            ( uiSettings.toolsSettings.paint.mode === "erase" || uiSettings.toolsSettings.paint.mode === "blend" ) && 
+            !( uiSettings.activeTool === "mask" && uiSettings.toolsSettings.paint.mode === "erase" ) &&
+              painter.active && painter.queue.length > 1 ) {
+              //if we're erasing or blending, we do opacity at the brush-level. :-/
+              //That means you can "paint into the fog", a fundamentally different brush experience. Oh well.
+              //Might have to change it for painting too to be consistent...
+              console.log( "Skipping" );
+              continue continueLayers;
+            }
 
         if( layer === paintPreviewLayer ) {
-          if( uiSettings.brush === "paint" ) {
-            if( uiSettings.mask === false ) layer.opacity = uiSettings.brushOpacity;
-            if( uiSettings.mask === true ) layer.opacity = 0.5;
+          if( uiSettings.activeTool === "paint" ) {
+            layer.opacity = uiSettings.toolsSettings.paint.modeSettings.all.brushOpacity;
+            //If we're erasing, we draw this at full opacity, and draw the under-layer at 1-brushOpacity
+            if( ( uiSettings.toolsSettings.paint.mode === "erase" || uiSettings.toolsSettings.paint.mode === "blend" ) &&
+                painter.active && painter.queue.length > 1 ) {
+              layer.opacity = selectedLayer.opacity;
+            }
           }
-          if( uiSettings.brush === "erase" )
-            layer.opacity = selectedLayer.opacity;
+          if( uiSettings.activeTool === "mask" ) {
+            layer.opacity = 0.5;
+          }
         } 
 
 
@@ -1119,7 +1162,7 @@ Info: ${info}`;
         //set the layer's alpha
         gl.uniform1f( glState.alphaInputIndex, layer.opacity );
         let maskVisibility = 0.0;
-        if( uiSettings.mask === true && layer.maskInitialized )
+        if( layer === selectedLayer && uiSettings.activeTool === "mask" && layer.maskInitialized && painter.active && painter.queue.length )
           maskVisibility = 0.5;
         gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
 
@@ -1413,6 +1456,54 @@ function endAirInput( p ) {
 
 let uiSettings = {
   maxUndoSteps: 20,
+
+  activeTool: "paint",
+  toolsSettings: {
+    "generate": {},
+    "paint": {
+      mode: "brush", //brush | erase | blend
+      modeSettings: {
+        "all": {
+          brushTips: ["res/img/brushes/tip-pencil01.png"],
+          brushTipsImages: [],
+          brushAspectRatio: 1.0,
+          brushTiltScale: 4,
+          brushTiltMinAngle: 0.25, //~23 degrees
+          brushSize: 14,
+          brushOpacity: 1,
+          brushBlur: 0,
+          brushSpacing: 0.1,
+          pressureOpacityCurve: pressure => pressure,
+          pressureScaleCurve: pressure => 1,
+        },
+        "brush": {
+          colorMode: "hsl",
+          colorModes: {
+            hsl: {
+              h:0.5, s:0.5, l:0.5,
+              get colorStyle() {
+                const {h,s,l} = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
+                const [r,g,b] = hslToRgb( h,s,l );
+                return `rgb(${r},${g},${b})`;
+              },
+            }
+          },
+        },
+        "blend": {
+          blendBlur: 0,
+          reblendSpacing: 0.05,
+          reblendAlpha: 0.1,
+        },
+        "erase": {
+
+        }
+      },
+    },
+    "mask": {
+      maskColor: "rgb(255,255,255)", //might make configurable or change eventually, but not implemented yet
+    },
+  },
+
   paint: { r:200,g:220,b:240 },
   get paintColor(){
     const {r,g,b} = uiSettings.paint;
@@ -1422,7 +1513,7 @@ let uiSettings = {
   brush: "paint",
   pressureEnabled: true,
   //brushEngine: "pencil",
-  brushEngine: "pencil",
+  brushEngine: "blend",
   brushTiltScaleAdd: 20.0,
   brushSize: 14,
   brushOpacity: 1,
@@ -1432,6 +1523,23 @@ let uiSettings = {
   nodeSnappingDistance: Math.min( innerWidth, innerHeight ) * 0.04, //~50px on a 1080p screen
 
 }
+
+const loadedBrushTipsImages = {};
+function loadBrushTipsImages() {
+  uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages.length = 0;
+  for( const url of uiSettings.toolsSettings.paint.modeSettings.all.brushTips ) {
+    if( loadedBrushTipsImages[ url ] )
+      uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages.push( loadedBrushTipsImages[ url ] )
+    else {
+      const img = new Image();
+      img.src = url;
+      loadedBrushTipsImages[ url ] = img;
+      uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages.push( img );
+    }
+  }
+}
+
+loadBrushTipsImages();
 
 const uiControls = {
   paintControlElements: [],
@@ -1444,14 +1552,15 @@ const uiControls = {
     document.querySelector( "#paint-controls" ).classList.remove( "mask" );
     document.querySelector( ".paint-controls-label" ).textContent = "Paint";
     uiControls.paintControlElements.forEach( e => e.uiActive = true );
-    uiSettings.mask = false;
+    uiSettings.activeTool = "paint";
   },
   showMaskControls: () => {
     document.querySelector( "#paint-controls" ).style.display = "block";
     document.querySelector( "#paint-controls" ).classList.add( "mask" );
     document.querySelector( ".paint-controls-label" ).textContent = "Mask";
     uiControls.paintControlElements.forEach( e => e.uiActive = true );
-    uiSettings.mask = true;
+    uiSettings.activeTool = "mask";
+    uiSettings.toolsSettings.paint.mode = "brush";
   },
 
   genControlElements: [],
@@ -1483,6 +1592,7 @@ function setupUI() {
   } );
   ui.appendChild( button );
 
+  let colorWell;
   {
     //the paint controls
 
@@ -1501,8 +1611,23 @@ function setupUI() {
     {
       const paintButton = document.createElement( "button" );
       paintButton.className = "paint-controls-button";
-      paintButton.textContent = "Brush";
-      registerUIElement( paintButton, { onclick: () => { uiSettings.brush = "paint" } } );
+      paintButton.textContent = "Color";
+      registerUIElement( paintButton, { onclick: () => {
+        //uiSettings.activeTool = "paint";
+        uiSettings.toolsSettings.paint.mode = "brush";
+      }} );
+      paintControls.appendChild( paintButton );
+      uiControls.paintControlElements.push( paintButton );
+    }
+    //the blend selector
+    {
+      const paintButton = document.createElement( "button" );
+      paintButton.className = "paint-controls-button";
+      paintButton.textContent = "Blend";
+      registerUIElement( paintButton, { onclick: () => {
+        //uiSettings.activeTool = "paint";
+        uiSettings.toolsSettings.paint.mode = "blend";
+      }} );
       paintControls.appendChild( paintButton );
       uiControls.paintControlElements.push( paintButton );
     }
@@ -1511,7 +1636,10 @@ function setupUI() {
       const eraseButton = document.createElement( "button" );
       eraseButton.className = "paint-controls-button";
       eraseButton.textContent = "Erase";
-      registerUIElement( eraseButton, { onclick: () => { uiSettings.brush = "erase" } } );
+      registerUIElement( eraseButton, { onclick: () => {
+        //uiSettings.activeTool = "paint";
+        uiSettings.toolsSettings.paint.mode = "erase";
+      } } );
       paintControls.appendChild( eraseButton );
       uiControls.paintControlElements.push( eraseButton );
     }
@@ -1523,8 +1651,8 @@ function setupUI() {
       brushSizeSlider.classList.add( "brush-size" );
       brushSizeSlider.classList.add( "vertical" );
       brushSizeSlider.value = uiSettings.brushSize;
-      brushSizeSlider.min = 0.1;
-      brushSizeSlider.max = 128;
+      brushSizeSlider.min = 2.5;
+      brushSizeSlider.max = 14;
       brushSizeSlider.step = "any";
       brushSizeSlider.setAttribute( "orient", "vertical" );
       brushSizeSlider.orient = "vertical";
@@ -1537,7 +1665,7 @@ function setupUI() {
         y = Math.max( 0, Math.min( 1, y ) );
         const p = 1 - y;
         brushSizeSlider.value = parseFloat(brushSizeSlider.min) + (parseFloat(brushSizeSlider.max) - parseFloat(brushSizeSlider.min))*p;
-        uiSettings.brushSize = parseFloat(brushSizeSlider.value);
+        uiSettings.toolsSettings.paint.modeSettings.all.brushSize = parseFloat(brushSizeSlider.value);
       };
       registerUIElement( brushSizeSlider, { ondrag: updateSize } );
       uiControls.paintControlElements.push( brushSizeSlider );
@@ -1565,7 +1693,7 @@ function setupUI() {
         y = Math.max( 0, Math.min( 1, y ) );
         const p = 1 - y;
         brushOpacity.value = parseFloat(brushOpacity.min) + (parseFloat(brushOpacity.max) - parseFloat(brushOpacity.min))*p;
-        uiSettings.brushOpacity = parseFloat(brushOpacity.value);
+        uiSettings.toolsSettings.paint.modeSettings.all.brushOpacity = parseFloat(brushOpacity.value);
       };
       registerUIElement( brushOpacity, { ondrag: updateOpacity } );
       uiControls.paintControlElements.push( brushOpacity );
@@ -1573,18 +1701,19 @@ function setupUI() {
     }
 
     {
-      //the brush opacity slider
-      const brushBlur = document.createElement("input");
-      brushBlur.type = "range";
-      brushBlur.classList.add( "brush-blur" );
-      brushBlur.classList.add( "vertical" );
-      brushBlur.value = uiSettings.brushBlur;
-      brushBlur.min = 0;
-      brushBlur.max = 10;
-      brushBlur.step = "any";
-      brushBlur.setAttribute( "orient", "vertical" );
-      brushBlur.orient = "vertical";
-      brushBlur.style.appearance = "slider-vertical";
+      //the brush blur slider
+      const brushBlurSlider = document.createElement("input");
+      brushBlurSlider.type = "range";
+      brushBlurSlider.classList.add( "brush-blur" );
+      brushBlurSlider.classList.add( "vertical" );
+      brushBlurSlider.value = uiSettings.brushBlur;
+      brushBlurSlider.min = 0;
+      brushBlurSlider.max = 0.4;
+      //brushBlurSlider.max = 1;
+      brushBlurSlider.step = "any";
+      brushBlurSlider.setAttribute( "orient", "vertical" );
+      brushBlurSlider.orient = "vertical";
+      brushBlurSlider.style.appearance = "slider-vertical";
       const updateBlur = ( {rect,current} ) => {
         let {x,y} = current;
         x -= rect.left; y -= rect.top;
@@ -1592,12 +1721,12 @@ function setupUI() {
         x = Math.max( 0, Math.min( 1, x ) );
         y = Math.max( 0, Math.min( 1, y ) );
         const p = 1 - y;
-        brushBlur.value = parseFloat(brushBlur.min) + (parseFloat(brushBlur.max) - parseFloat(brushBlur.min))*p;
-        uiSettings.brushBlur = parseFloat(brushBlur.value);
+        brushBlurSlider.value = parseFloat(brushBlurSlider.min) + (parseFloat(brushBlurSlider.max) - parseFloat(brushBlurSlider.min))*p;
+        uiSettings.toolsSettings.paint.modeSettings.all.brushBlur = parseFloat(brushBlurSlider.value);
       };
-      registerUIElement( brushBlur, { ondrag: updateBlur } );
-      uiControls.paintControlElements.push( brushBlur );
-      paintControls.appendChild( brushBlur );
+      registerUIElement( brushBlurSlider, { ondrag: updateBlur } );
+      uiControls.paintControlElements.push( brushBlurSlider );
+      paintControls.appendChild( brushBlurSlider );
     }
 
     //the color palette
@@ -1606,15 +1735,16 @@ function setupUI() {
     for( const r of [0,128,255] ) {
       for( const g of [0,128,255] ) {
         for( const b of [0,128,255 ] ) {
+          const [fh,fs,fl] = rgbToHsl( r,g,b );
+          let h = fh * 360, s = fs * 100, l = fl * 100;
           const color = document.createElement( "button" );
           color.classList.add( "color" );
-          color.style.backgroundColor = `rgb(${r},${g},${b})`;
+          color.style.backgroundColor = `hsl(${h},${s}%,${l}%)`;
           registerUIElement( color, { onclick: () => {
-              console.log( "here" );
-              uiSettings.paint.r = r;
-              uiSettings.paint.g = g;
-              uiSettings.paint.b = b;
-              uiSettings.brush = "paint";
+              colorWell.style.backgroundColor = color.style.backgroundColor;
+              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.h = fh;
+              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.s = fs;
+              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.l = fl;
             }
           } );
           uiControls.paintControlElements.push( color );
@@ -1622,23 +1752,23 @@ function setupUI() {
         }
       }
     }
-    const eraser = document.createElement( "button" );
+    /* const eraser = document.createElement( "button" );
     eraser.classList.add( "eraser" );
     registerUIElement( eraser, { onclick: () => uiSettings.brush = "erase" } );
     uiControls.paintControlElements.push( eraser );
-    colorPalette.appendChild( eraser );
+    colorPalette.appendChild( eraser ); */
     paintControls.appendChild( colorPalette );
 
     {
       //the colorwheel summoner
-      const colorWell = document.createElement( "div" );
+      colorWell = document.createElement( "div" );
       colorWell.classList.add( "color-well" );
-      colorWell.style.backgroundColor = uiSettings.paintColor;
+      colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
       let open = false;
       registerUIElement( colorWell, { onclick: () => {
         colorWheel.style.display = ( open = !open ) ? "block" : "none";
         colorWheel.uiActive = open;
-        colorWell.style.backgroundColor = uiSettings.paintColor;
+        colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
         if( open ) updateColorWheelPreview();
       } } );
       uiControls.paintControlElements.push( colorWell );
@@ -1981,9 +2111,10 @@ function setupUI() {
   }
 
   const updateColorWheelPreview = () => {
-    const [h,s,l] = rgbToHsl( uiSettings.paint.r, uiSettings.paint.g, uiSettings.paint.b );
-    const [r,g,b] = hslToRgb( h, 1, 0.5 );
-    baseColor.style.backgroundColor = `rgb(${r},${g},${b})`;
+    const { h,s,l } = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
+    baseColor.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
+    colorPreview.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
+    colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
 
     //convert HSL to coordinates
         //saturation angle: (0) -2.71 -> -0.45 (1), range = 2.26
@@ -2020,7 +2151,6 @@ function setupUI() {
     }
 
 
-    colorPreview.style.backgroundColor = uiSettings.paintColor;
   }
 
     //color well's shared controls need these references
@@ -2096,31 +2226,31 @@ function setupUI() {
         {
 
           //set the color
-          let {r,g,b} = uiSettings.paint,
-            [h,s,l] = rgbToHsl(r,g,b),
-            updated = false;
+          let updated = false;
+
+          let { h, s, l } = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
 
           if( draggingIn === "saturationRing" ) {
             const at = Math.min( 1, Math.max( 0, 1 - (( Math.abs(ang) - 0.45 ) / (2.71-0.45)) ) );
-            [r,g,b] = hslToRgb( h,at,l );
+            s = at;
             updated = true;
           }
           else if( draggingIn === "luminosityRing" ) {
             const at = Math.min( 1, Math.max( 0, 1 - (( Math.abs(ang) - 0.45 ) / (2.71-0.45)) ) );
-            [r,g,b] = hslToRgb( h,s,at );
+            l = at;
             updated = true;
           }
           else if( draggingIn === "hueRing" ) {
             //normalize angle
             const nang = ( ang + Math.PI ) / (Math.PI*2);
-            [r,g,b] = hslToRgb( nang,s,l );
+            h = nang;
             updated = true;
           }
 
           if( updated ) {
-            uiSettings.paint.r = r;
-            uiSettings.paint.g = g;
-            uiSettings.paint.b = b;
+            uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.h = h;
+            uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.s = s;
+            uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.l = l;
             updateColorWheelPreview();
           }
 
@@ -2565,8 +2695,8 @@ const startHandler = p => {
                 cursor.mode = "zoom";
             }
         }
-        else if( p.pointerType !== "touch" && ( selectedLayer?.layerType === "paint" ||
-          ( selectedLayer?.layerType === "generative" && uiSettings.mask === true ) ) ) {
+        else if( p.pointerType !== "touch" && selectedLayer &&
+          ( uiSettings.activeTool === "paint" || uiSettings.activeTool === "mask" ) ) {
           beginPaint();
         }
     }
@@ -2645,7 +2775,7 @@ const moveHandler = ( p, pseudo = false ) => {
             cursor.current.y = y;
         }
         if( painter.active === true ) {
-            const point = [ x , y , 1, p.pressure, p.tiltX, p.tiltY ];
+            const point = [ x , y , 1, p.pressure, p.altitudeAngle || 1.5707963267948966, p.azimuthAngle || 0 ];
             
             _originMatrix[ 2 ] = -view.origin.x;
             _originMatrix[ 5 ] = -view.origin.y;
@@ -2705,7 +2835,8 @@ const stopHandler = p => {
         }
         if( painter.active === true ) {
             painter.active = false;
-            if( selectedLayer.layerType === "paint" || ( selectedLayer.layerType === "generative" && uiSettings.mask === true ) ) {
+            finalizePaint( layersStack.layers[ 0 ], selectedLayer );
+            /* if( selectedLayer.layerType === "paint" || ( selectedLayer.layerType === "generative" && uiSettings.mask === true ) ) {
               if( true ) {
                 finalizePaint( layersStack.layers[0], selectedLayer );
               }
@@ -2720,7 +2851,7 @@ const stopHandler = p => {
                 paintPreviewLayer.textureChangedRect.w = paintPreviewLayer.w;
                 paintPreviewLayer.textureChangedRect.h = paintPreviewLayer.h;
               }
-            }
+            } */
             if( false && selectedPaintLayer ) {
               //finalize to canvas pixels
               /* getTransform();
@@ -2920,33 +3051,41 @@ function transformPoint( p ) {
 }
 
 const paintCanvases = {
-  tip: null,
-  blend: null,
+  //tip: null,
+  //blend: null,
+  tipComposite: null,
+  blendFade: null,
   blendSource: null,
+  blendSourceData: null,
   modRect: {x:0,y:0,x2:0,y2:0,w:0,h:0},
   firstPaint: false,
+  needsReblend: false,
+  blendDistanceTraveled: 0,
+  brushDistanceTraveled: 0,
+  reblendLength: 5,
+  blendAlpha: 0.1,
 }
 function beginPaint() {
 
-  if( ! paintCanvases.tip ) {
+  if( ! paintCanvases.tipComposite ) {
     const canvas = document.createElement( "canvas" ),
       context = canvas.getContext( "2d" );
-    paintCanvases.tip = { canvas, context };
-    //document.body.appendChild( canvas );
-    canvas.style = "position:absolute; left:110px; top:10px; width:100px; height:100px; border:1px solid red; pointer-events:none;";
-  }
-  if( ! paintCanvases.blend ) {
-    const canvas = document.createElement( "canvas" ),
-      context = canvas.getContext( "2d" );
-    paintCanvases.blend = { canvas, context };
-    //document.body.appendChild( canvas );
+    paintCanvases.tipComposite = { canvas, context };
+    document.body.appendChild( canvas );
     canvas.style = "position:absolute; left:110px; top:120px; width:100px; height:100px; border:1px solid red; pointer-events:none;";
+  }
+  if( ! paintCanvases.blendFade ) {
+    const canvas = document.createElement( "canvas" ),
+      context = canvas.getContext( "2d" );
+    paintCanvases.blendFade = { canvas, context };
+    document.body.appendChild( canvas );
+    canvas.style = "position:absolute; left:220px; top:120px; width:100px; height:100px; border:1px solid red; pointer-events:none;";
   }
   if( ! paintCanvases.blendSource ) {
     const canvas = document.createElement( "canvas" ),
       context = canvas.getContext( "2d" );
     paintCanvases.blendSource = { canvas, context };
-    //document.body.appendChild( canvas );
+    document.body.appendChild( canvas );
     canvas.style = "position:absolute; left:110px; top:230px; width:100px; height:100px; border:1px solid red; pointer-events:none;";
   }
 
@@ -2958,10 +3097,16 @@ function beginPaint() {
   paintCanvases.modRect.w = 0;
   paintCanvases.modRect.h = 0;
 
+  //reset our distance trackers
+  paintCanvases.brushDistanceTraveled = 0;
+  paintCanvases.blendDistanceTraveled = 0;
+  paintCanvases.firstPaint = true;
+  paintCanvases.needsReblend = false;
+
+  //match our preview to the selected layer
   const preview = layersStack.layers[0];
   preview.w = preview.canvas.width = preview.maskCanvas.width = selectedLayer.w;
   preview.h = preview.canvas.height = preview.maskCanvas.height = selectedLayer.h;
-
   for( const p of ["topLeft","topRight","bottomLeft","bottomRight"] ) {
     preview[p][0] = selectedLayer[p][0];
     preview[p][1] = selectedLayer[p][1];
@@ -2971,55 +3116,57 @@ function beginPaint() {
   painter.queue.length = 0;
   painter.active = true;
 
-  if( uiSettings.mask === true ) {
-    //starting masking
+  console.log( "Here paint" );
+
+  if( uiSettings.activeTool === "mask" ) {
     if( selectedLayer.maskInitialized === false ) {
-      //all that matters is the alpha.
-      if( uiSettings.brush === "paint" ) {
+      console.log( "here init" );
+      //initialize the selected layer's mask if necessary
+      if( uiSettings.toolsSettings.paint.mode === "brush" ) {
         //if we're starting painting with a positive stroke, clear the mask
         initializeLayerMask( selectedLayer, "transparent" );
       }
-      if( uiSettings.brush === "erase" ) {
+      if( uiSettings.toolsSettings.paint.mode === "erase" ) {
         //if we're starting with erase, solidify the mask (defaults to this anyway tho)
         initializeLayerMask( selectedLayer, "opaque" );
       }
     }
   }
-  else if( uiSettings.mask === false ) {
+  if( uiSettings.activeTool === "paint" ) {
     //solidify the preview's mask
     const preview = layersStack.layers[0];
     preview.maskContext.fillStyle = "rgb(255,255,255)";
     preview.maskContext.globalCompositeOperation = "copy";
     preview.maskContext.fillRect( 0,0,preview.w,preview.h );
     //reupload preview mask
-    preview.maskChanged = true;
-    preview.maskChangedRect.x = 0;
-    preview.maskChangedRect.y = 0;
-    preview.maskChangedRect.w = preview.w;
-    preview.maskChangedRect.h = preview.h;
+    flagLayerMaskChanged( preview );
   }
 
-  //when erasing, copy active layer to preview
-  if( uiSettings.brush === "erase" ) {
-    const ptx = layersStack.layers[0].context;
-    ptx.save();
-    ptx.clearRect( 0,0,selectedLayer.w,selectedLayer.h );
-    if( uiSettings.mask === true ) {
+  //when erasing or blending, copy active layer to preview
+  if( uiSettings.toolsSettings.paint.mode === "erase" || uiSettings.toolsSettings.paint.mode === "blend" ) {
+    const previewContext = layersStack.layers[0].context;
+    previewContext.save();
+    previewContext.clearRect( 0,0,selectedLayer.w,selectedLayer.h );
+    if( uiSettings.activeTool === "mask" ) {
       //when erasing the mask, the preview's alpha needs to perfectly match the mask
       //(this means white shadowing where we have mask but no image)
-      ptx.globalCompositeOperation = "copy";
-      ptx.drawImage( selectedLayer.maskCanvas, 0, 0 );
-      ptx.globalCompositeOperation = "source-atop";
-      ptx.drawImage( selectedLayer.canvas, 0, 0 );
-    } else {
-      ptx.globalCompositeOperation = "copy";
-      ptx.drawImage( selectedLayer.canvas, 0, 0 );
+      previewContext.globalCompositeOperation = "copy";
+      previewContext.drawImage( selectedLayer.maskCanvas, 0, 0 );
+      previewContext.globalCompositeOperation = "source-atop";
+      previewContext.drawImage( selectedLayer.canvas, 0, 0 );
+    } 
+    if( uiSettings.activeTool === "paint" ) {
+      previewContext.globalCompositeOperation = "copy";
+      previewContext.drawImage( selectedLayer.canvas, 0, 0 );
     }
-    ptx.restore();
+    previewContext.restore();
+    //and upload to GPU
+    flagLayerTextureChanged( layersStack.layers[ 0 ] );
   }
 
-  //build the brush tip
-  {
+  //the brush tip is now an imported image
+  /* {
+    //build the brush tip
     const {canvas,context} = paintCanvases.tip;
     //distended shape not yet implemented
     const w = canvas.width = uiSettings.brushSize*2 + uiSettings.brushBlur*4;
@@ -3039,9 +3186,22 @@ function beginPaint() {
     context.arc( 0, 0, uiSettings.brushSize/2, 0, 6.284, false );
     context.fill();
     context.restore();
+  } */
+  //create a copy of our blend source pixels to avoid buffer self-read clashes
+  if( uiSettings.toolsSettings.paint.mode === "blend" ) {
+    const w = paintCanvases.blendSource.canvas.width = selectedLayer.canvas.width;
+    const h = paintCanvases.blendSource.canvas.height = selectedLayer.canvas.height;
+    paintCanvases.blendSource.context.clearRect( 0, 0, w, h );
+    paintCanvases.blendSource.context.save();
+    paintCanvases.blendSource.context.globalCompositeOperation = "copy";
+    paintCanvases.blendSource.context.drawImage( selectedLayer.canvas, 0, 0 );
+    paintCanvases.blendSource.context.restore();
+    //paintCanvases.blendSourceData = paintCanvases.blendSource.getImageData( 0, 0, w, h );
+    //paintCanvases.blendSourceData = selectedLayer.context.getImageData( 0, 0,  selectedLayer.w, selectedLayer.h );
   }
-  //prep the blend blitter
-  {
+  //we re-composite the tip with the blend data and/or color data with every draw
+  /* {
+    //prep the blend blitter
     const {canvas,context} = paintCanvases.blend;
     //distended shape not yet implemented
     const w = canvas.width = paintCanvases.tip.canvas.width;
@@ -3057,49 +3217,64 @@ function beginPaint() {
       context.drawImage( paintCanvases.tip.canvas, 0, 0 );
     }
     context.restore();
-  }
-  //preb the blend source
-  if( uiSettings.brushEngine === "blend" ) {
-    const {canvas,context} = paintCanvases.blendSource;
-    //distended shape not yet implemented
-    const w = canvas.width = selectedLayer.canvas.width;
-    const h = canvas.height = selectedLayer.canvas.height;
-    context.drawImage( selectedLayer.canvas, 0, 0 );
+    {
+      const {canvas,context} = paintCanvases.blendFade;
+      //distended shape not yet implemented
+      const w = canvas.width = paintCanvases.tip.canvas.width;
+      const h = canvas.height = paintCanvases.tip.canvas.height;
+      context.save();
+      context.clearRect( 0,0,w,h );
+      context.drawImage( paintCanvases.blend.canvas, 0, 0 );
+      context.restore();
+    }
+  } */
+
+  //set the sizes of the blendFade and tipComposite canvas
+  {
+    const { brushTiltScale, brushSize, brushBlur } = uiSettings.toolsSettings.paint.modeSettings.all;
+    //blur is a radius, so we double it for size addition
+    //our brush size is also a radius, since it rotates, so we also double it
+    const maxSize = brushSize*brushTiltScale*2 + brushSize*brushBlur*2; 
+    //const maxSize = brushSize*2 + brushSize*brushBlur*2; 
+    paintCanvases.blendFade.canvas.width = maxSize;
+    paintCanvases.blendFade.canvas.height = maxSize;
+    paintCanvases.tipComposite.canvas.width = maxSize;
+    paintCanvases.tipComposite.canvas.height = maxSize;
   }
 
 }
 function finalizePaint( strokeLayer, paintLayer ) {
 
-  const mr = paintCanvases.modRect;
+  const modifiedRect = paintCanvases.modRect;
 
   let oldCanvasData;
 
-  let mx = Math.max( 0, mr.x - mr.w*0.25 ),
-    my = Math.max( 0, mr.y - mr.h*0.25 ),
-    mw = Math.min( 1024, mr.w*1.5 ),
-    mh = Math.min( 1024, mr.h*1.5 );
+  let mx = Math.max( 0, modifiedRect.x - modifiedRect.w*0.25 ),
+    my = Math.max( 0, modifiedRect.y - modifiedRect.h*0.25 ),
+    mw = Math.min( 1024, modifiedRect.w*1.5 ),
+    mh = Math.min( 1024, modifiedRect.h*1.5 );
 
   //get data for our affected region
-  if( uiSettings.mask === true ) {
+  if( uiSettings.activeTool === "mask" ) {
     oldCanvasData = paintLayer.maskContext.getImageData( mx, my, mw, mh );
   } else {
     oldCanvasData = paintLayer.context.getImageData( mx, my, mw, mh );
   }
 
   let ctx;
-  if( uiSettings.mask === true ) ctx = paintLayer.maskContext;
-  if( uiSettings.mask === false ) ctx = paintLayer.context;
+  if( uiSettings.activeTool === "mask" ) ctx = paintLayer.maskContext;
+  if( uiSettings.activeTool === "paint" ) ctx = paintLayer.context;
 
   ctx.save();
   ctx.globalCompositeOperation = "source-over";
-  ctx.globalAlpha = uiSettings.brushOpacity;
-  if( uiSettings.brush === "erase" ) {
+  ctx.globalAlpha = uiSettings.toolsSettings.paint.modeSettings.all.brushOpacity;
+  if( uiSettings.toolsSettings.paint.mode === "erase" || uiSettings.toolsSettings.paint.mode === "blend" ) {
     //paint preview has a copy of the paint layer, and for masking, its alpha exactly matches the paint layer.
     ctx.globalAlpha = 1.0;
     ctx.globalCompositeOperation = "copy";
   }
   ctx.drawImage( strokeLayer.canvas, 0, 0 );
-  if( uiSettings.mask === true && uiSettings.brush === "erase" ) {
+  if( uiSettings.activeTool === "mask" && uiSettings.toolsSettings.paint.mode === "erase" ) {
     //fill the mask with white after erasing though, only preserving its alpha channel
     ctx.fillStyle = "rgb(255,255,255)";
     ctx.globalCompositeOperation = "source-atop";
@@ -3110,46 +3285,32 @@ function finalizePaint( strokeLayer, paintLayer ) {
   //get our new data and record an undo event
   {
     let newCanvasData;
-    if( uiSettings.mask === true ) newCanvasData = paintLayer.maskContext.getImageData( mx, my, mw, mh );
+    if( uiSettings.activeTool === "mask" ) newCanvasData = paintLayer.maskContext.getImageData( mx, my, mw, mh );
     else newCanvasData = paintLayer.context.getImageData( mx, my, mw, mh );
     const historyEntry = {
-      mask: uiSettings.mask,
+      mask: uiSettings.activeTool === "mask",
       paintLayer,
       oldCanvasData,
       newCanvasData,
       x: mx, y: my,
       w: mw, h: mh,
       undo: () => {
-        let changedRect;
-        if( historyEntry.mask ) {
+        if( historyEntry.mask === true ) {
           historyEntry.paintLayer.maskContext.putImageData( historyEntry.oldCanvasData, historyEntry.x, historyEntry.y );
-          historyEntry.paintLayer.maskChanged = true;
-          changedRect = historyEntry.paintLayer.maskChangedRect;
+          flagLayerMaskChanged( historyEntry.paintLayer, historyEntry );
         } else {
           historyEntry.paintLayer.context.putImageData( historyEntry.oldCanvasData, historyEntry.x, historyEntry.y );
-          historyEntry.paintLayer.textureChanged = true;
-          changedRect = historyEntry.paintLayer.textureChangedRect;
+          flagLayerTextureChanged( historyEntry.paintLayer, historyEntry );
         }
-        changedRect.x = historyEntry.x;
-        changedRect.y = historyEntry.y;
-        changedRect.w = historyEntry.w;
-        changedRect.h = historyEntry.h;
       },
       redo: () => {
-        let changedRect;
-        if( historyEntry.mask ) {
+        if( historyEntry.mask === true ) {
           historyEntry.paintLayer.maskContext.putImageData( historyEntry.newCanvasData, historyEntry.x, historyEntry.y );
-          historyEntry.paintLayer.maskChanged = true;
-          changedRect = historyEntry.paintLayer.maskChangedRect;
+          flagLayerMaskChanged( historyEntry.paintLayer, historyEntry );
         } else {
           historyEntry.paintLayer.context.putImageData( historyEntry.newCanvasData, historyEntry.x, historyEntry.y );
-          historyEntry.paintLayer.textureChanged = true;
-          changedRect = historyEntry.paintLayer.textureChangedRect;
+          flagLayerTextureChanged( historyEntry.paintLayer, historyEntry );
         }
-        changedRect.x = historyEntry.x;
-        changedRect.y = historyEntry.y;
-        changedRect.w = historyEntry.w;
-        changedRect.h = historyEntry.h;
       }
     }
     recordHistoryEntry( historyEntry );
@@ -3158,42 +3319,46 @@ function finalizePaint( strokeLayer, paintLayer ) {
   //clear the preview
   strokeLayer.context.clearRect( 0,0, strokeLayer.w, strokeLayer.h );
 
-  if( uiSettings.mask === true ) {
+  if( uiSettings.activeTool === "mask" ) {
     //flag the mask for GPU upload
-    paintLayer.maskChanged = true;
-    paintLayer.maskChangedRect.x = mr.x;
-    paintLayer.maskChangedRect.y = mr.y;
-    paintLayer.maskChangedRect.w = mr.w;
-    paintLayer.maskChangedRect.h = mr.h;
+    flagLayerMaskChanged( paintLayer, modifiedRect );
   } else {
     //flag the paintlayer for GPU upload
-    paintLayer.textureChanged = true;
-    paintLayer.textureChangedRect.x = mr.x;
-    paintLayer.textureChangedRect.y = mr.y;
-    paintLayer.textureChangedRect.w = mr.w;
-    paintLayer.textureChangedRect.h = mr.h;
+    flagLayerTextureChanged( paintLayer, modifiedRect );
   }
 
-  //flag the previewlayer for GPU upload
-  strokeLayer.textureChanged = true;
-  strokeLayer.textureChangedRect.x = mr.x;
-  strokeLayer.textureChangedRect.y = mr.y;
-  strokeLayer.textureChangedRect.w = mr.w;
-  strokeLayer.textureChangedRect.h = mr.h;
+  //flag the previewlayer for GPU upload since we've cleared it
+  flagLayerTextureChanged( strokeLayer, modifiedRect );
 
 }
-function applyPaintStroke( points, layer ) {
+function applyPaintStroke( points, destinationLayer ) {
   if( points.length < 2 ) return;
+
+  const settings = uiSettings.toolsSettings.paint.modeSettings;
+  const { brushTipsImages, brushAspectRatio, brushTiltScale, brushTiltMinAngle, brushSize, brushOpacity, brushBlur, brushSpacing } = settings.all;
+  const colorStyle = settings.brush.colorModes[ settings.brush.colorMode ].colorStyle;
+  const { blendBlur, reblendSpacing, reblendAlpha } = settings.blend;
+
+  const scaledBrushSize = brushSize * 1;
+
+  const reblendLength = reblendSpacing * scaledBrushSize;
+  //const {} = settings.erase;
+
+
   //for now, not slerping vectors, just a line from a to b
-  let [bx,by,b_,bPressure,bTiltX,bTiltY] = points[ points.length-1 ],
-    [ax,ay,a_,aPressure,aTiltX,aTiltY] = points[ points.length-2 ];
+  let [bx,by,b_,bPressure,bAltitudeAngle,bAzimuthAngle] = points[ points.length-1 ],
+    [ax,ay,a_,aPressure,aAltitudeAngle,aAzimuthAngle] = points[ points.length-2 ];
+  
+  if( aAltitudeAngle === undefined ) {
+    aAltitudeAngle = bAltitudeAngle = aAzimuthAngle = bAzimuthAngle = 0;
+  }
 
   //transform our basis points  
   getTransform();
 
-  let [canvasOriginX,canvasOriginY] = layer.topLeft,
-    [xLegX,xLegY] = layer.topRight,
-    [yLegX,yLegY] = layer.bottomLeft;
+  let [canvasOriginX,canvasOriginY] = destinationLayer.topLeft,
+    [xLegX,xLegY] = destinationLayer.topRight,
+    [yLegX,yLegY] = destinationLayer.bottomLeft;
   xLegX -= canvasOriginX; xLegY -= canvasOriginY;
   yLegX -= canvasOriginX; yLegY -= canvasOriginY;
   const lengthXLeg = Math.sqrt( xLegX*xLegX + xLegY*xLegY ),
@@ -3216,109 +3381,264 @@ function applyPaintStroke( points, layer ) {
   //matrix inversion works, but there's an obvious other way, right?
   let canvasTransformAx = globalTransformAx*xLegX + globalTransformAy*xLegY,
     canvasTransformAy = globalTransformAx*yLegX + globalTransformAy*yLegY;
-  canvasTransformAx *= layer.w / lengthXLeg;
-  canvasTransformAy *= layer.h / lengthYLeg;
+  canvasTransformAx *= destinationLayer.w / lengthXLeg;
+  canvasTransformAy *= destinationLayer.h / lengthYLeg;
   let canvasTransformBx = globalTransformBx*xLegX + globalTransformBy*xLegY,
     canvasTransformBy = globalTransformBx*yLegX + globalTransformBy*yLegY;
-  canvasTransformBx *= layer.w / lengthXLeg;
-  canvasTransformBy *= layer.h / lengthYLeg;
+  canvasTransformBx *= destinationLayer.w / lengthXLeg;
+  canvasTransformBy *= destinationLayer.h / lengthYLeg;
 
   //ta[xy] and tb[xy] are the two point coordinates on our canvas where we're painting.
   
   //count our paint pixels
-  const pixelSpacing = Math.max( 1, uiSettings.brushBlur );
-  const lineLength = Math.max( 2, parseInt( Math.sqrt( (canvasTransformAx-canvasTransformBx)**2 + (canvasTransformAy-canvasTransformBy)**2 ) / pixelSpacing ) + 1 );
+  const pixelSpacing = Math.max( 1, brushSpacing * scaledBrushSize );
+  const lineLength = Math.max( 1, parseInt( Math.sqrt( (canvasTransformAx-canvasTransformBx)**2 + (canvasTransformAy-canvasTransformBy)**2 ) / pixelSpacing ) );
 
-  const pencilDistentionScale = uiSettings.brushTiltScaleAdd;
+  //reblend if necessary (we may be using sub-spacing blending)
+  if( uiSettings.toolsSettings.paint.mode === "blend" ) {
+    paintCanvases.blendDistanceTraveled += lineLength;
+    if( paintCanvases.blendDistanceTraveled >= reblendLength ) {
+      paintCanvases.blendDistanceTraveled = 0;
+      paintCanvases.needsReblend = true;
+    }
+
+    //start by grabbing from our paint canvas for blend
+    if( paintCanvases.firstPaint === true || paintCanvases.needsReblend === true ) {
+
+      const w = paintCanvases.blendFade.canvas.width,
+        h = paintCanvases.blendFade.canvas.height;
+      
+      //calculate our blending source cross-fade
+      {
+        //this doesn't work for blending across transparencies
+        paintCanvases.blendFade.context.save();
+        if( paintCanvases.firstPaint === true ) {
+          paintCanvases.blendFade.context.clearRect( 0, 0, w, h );
+          paintCanvases.blendFade.context.globalCompositeOperation = "copy";
+          paintCanvases.blendFade.context.globalAlpha = 1.0;
+        }
+        else if( paintCanvases.needsReblend === true ) {
+          paintCanvases.blendFade.context.globalCompositeOperation = "source-over";
+          paintCanvases.blendFade.context.globalAlpha = reblendAlpha;
+        }
+  
+        //mix source pixels outo our blendfade canvas
+        paintCanvases.blendFade.context.drawImage( paintCanvases.blendSource.canvas, -canvasTransformAx + w/2, -canvasTransformAy + h/2 );
+        paintCanvases.blendFade.context.restore();
+  
+        paintCanvases.firstPaint = false;
+        paintCanvases.needsReblend = false;
+      }
+      /* {
+        if( paintCanvases.firstPaint === true ) {
+          //copy source pixels outo our blendfade canvas
+          //paintCanvases.blendFade.context.save();
+          //paintCanvases.blendFade.context.clearRect( 0, 0, w, h );
+          //paintCanvases.blendFade.context.globalCompositeOperation = "copy";
+          //paintCanvases.blendFade.context.globalAlpha = 1.0;
+          //paintCanvases.blendFade.context.drawImage( paintCanvases.blendSource.canvas, -canvasTransformAx + w/2, -canvasTransformAy + h/2 );
+          //paintCanvases.blendFade.context.restore();
+          const subImageData = paintCanvases.blendFade.context.createImageData( w, h );
+          for( let x=-canvasTransformAx + w/2; x<)
+    
+        }
+        else if( paintCanvases.needsReblend === true ) {
+          //I need to average them, including averaging their alphas, and IDK how except maths. :-/
+          //But! I can optimize this later with a shader, as long as I can make it work at all for now
+          const blendFadeData = paintCanvases.blendFade.context.getImageData( 0,0,w,h );
+          const sourceData = paintCanvases.blendSource.context.getImageData( -parseInt(canvasTransformAx + w/2), -parseInt(canvasTransformAy + h/2), w, h );
+          const b = blendFadeData.data,
+            s = sourceData.data,
+            j = b.length,
+            a = reblendAlpha,
+            ia = 1 - a;
+          for( let i=0; i<j; i+=4 ) {
+            const pa = a * s[i+3]/255,
+              ipa = 1 - pa;
+            console.log( s[i+3] );
+            b[i] = b[i]*ipa + s[i]*pa;
+            b[i+1] = b[i+1]*ipa + s[i+1]*pa;
+            b[i+2] = b[i+2]*ipa + s[i+2]*pa;
+            b[i+3] = (1+b[i+3]*ia) + s[i+3]*a;
+          }
+          paintCanvases.blendFade.context.putImageData( blendFadeData, 0, 0 );
+        }
+  
+        paintCanvases.firstPaint = false;
+        paintCanvases.needsReblend = false;
+      } */
+      //we're recompositing the tip with every draw
+      /* {
+        //mask with tip
+        paintCanvases.blend.context.save();
+        paintCanvases.blend.context.globalAlpha = 1.0;
+        paintCanvases.blend.context.globalCompositeOperation = "destination-in";
+        paintCanvases.blend.context.drawImage( paintCanvases.tip.canvas, 0, 0 );
+        paintCanvases.blend.context.restore();
+      } */
+
+    }
+
+  }
+
+  //get our spacing counter
+  paintCanvases.brushDistanceTraveled += lineLength;
+  if( paintCanvases.brushDistanceTraveled < pixelSpacing ) {
+    //no painting to do yet
+    return;
+  }
+
+  //get our brush color
+  let currentColorStyle = "rgba(0,0,0,0)";
+  if( uiSettings.toolsSettings.paint.mode === "brush" ) {
+    if( uiSettings.activeTool === "mask" ) {
+      currentColorStyle = uiSettings.toolsSettings.mask.maskColor;
+    }
+    if( uiSettings.activeTool === "paint" ) {
+      currentColorStyle = colorStyle;
+    }
+  }
+  if( uiSettings.toolsSettings.paint.mode === "erase" || uiSettings.toolsSettings.paint.mode === "blend" ) {
+    currentColorStyle = "rgb(255,255,255)";
+  }
 
   //update / expand our paint bounds rectangle
-  const mr = paintCanvases.modRect;
-  mr.x = parseInt( Math.min( mr.x, canvasTransformAx - uiSettings.brushSize - uiSettings.brushBlur, canvasTransformBx - uiSettings.brushSize - uiSettings.brushBlur ) );
-  mr.y = parseInt( Math.min( mr.y, canvasTransformAy - uiSettings.brushSize - uiSettings.brushBlur, canvasTransformBy - uiSettings.brushSize - uiSettings.brushBlur ) );
-  mr.x2 = parseInt( Math.max( mr.x2, canvasTransformAx + uiSettings.brushSize + uiSettings.brushBlur, canvasTransformBx + uiSettings.brushSize + uiSettings.brushBlur ) );
-  mr.y2 = parseInt( Math.max( mr.y2, canvasTransformAy + uiSettings.brushSize + uiSettings.brushBlur, canvasTransformBy + uiSettings.brushSize + uiSettings.brushBlur ) );
-  mr.w = mr.x2 - mr.x;
-  mr.h = mr.y2 - mr.y;
+  const modifiedRect = paintCanvases.modRect;
+  {
+    //max out the rectangle
+    modifiedRect.x = parseInt( Math.min( modifiedRect.x, canvasTransformAx - scaledBrushSize*brushTiltScale - scaledBrushSize*brushBlur, canvasTransformBx - scaledBrushSize*brushTiltScale - scaledBrushSize*brushBlur ) );
+    modifiedRect.y = parseInt( Math.min( modifiedRect.y, canvasTransformAy - scaledBrushSize*brushTiltScale - scaledBrushSize*brushBlur, canvasTransformBy - scaledBrushSize*brushTiltScale - scaledBrushSize*brushBlur ) );
+    modifiedRect.x2 = parseInt( Math.max( modifiedRect.x2, canvasTransformAx + scaledBrushSize*brushTiltScale + scaledBrushSize*brushBlur, canvasTransformBx + scaledBrushSize*brushTiltScale + scaledBrushSize*brushBlur ) );
+    modifiedRect.y2 = parseInt( Math.max( modifiedRect.y2, canvasTransformAy + scaledBrushSize*brushTiltScale + scaledBrushSize*brushBlur, canvasTransformBy + scaledBrushSize*brushTiltScale + scaledBrushSize*brushBlur ) );
+    modifiedRect.w = modifiedRect.x2 - modifiedRect.x;
+    modifiedRect.h = modifiedRect.y2 - modifiedRect.y;
+  }
 
   //we're never collecting undo data during this paint function, because finalization is done by blitting the paint layer, not by repainting.
 
-  const ctx = layer.context,
-    cnv = layer.canvas;
-
+  const passesModes = [ uiSettings.toolsSettings.paint.mode ];
+  
+  //when we blend, we first do an erase pass, in order to blend transparent pixels
+  if( uiSettings.toolsSettings.paint.mode === "blend" ) passesModes.unshift( "erase" );
+  
   //okay! Let's paint the line
-  if( uiSettings.brushEngine === "pencil" || uiSettings.brushEngine === "blend" ) {
-    ctx.save();
-    ctx.globalCompositeOperation = "source-over";
-    if( uiSettings.brush === "erase" )
-      ctx.globalCompositeOperation = "destination-out";
-    const tip = paintCanvases.tip.canvas,
-      blend = paintCanvases.blend.canvas,
-      tw = tip.width, th = tip.height;
+  for( const passMode of passesModes ) {
+    destinationLayer.context.save();
+    if( passMode === "brush" || passMode === "blend" ) {
+        destinationLayer.context.globalCompositeOperation = "source-over";
+      }
+    if( passMode === "erase" ) {
+      destinationLayer.context.globalCompositeOperation = "destination-out";
+    }
+    //TODO OPTIMIZATION: limit sub-rect clip blit
+    const tipCompositeWidth = paintCanvases.tipComposite.canvas.width,
+      tipCompositeHeight = paintCanvases.tipComposite.canvas.height;
     for( let i=0; i<lineLength; i++ ) {
 
-      //So slow :-| but not optimizing (plus, we're clamped to two points now)
+      //interpolate linearly between the two points
       const linePortionRemaining = i/lineLength,
         linePortionAdvanced = 1 - linePortionRemaining;
       let paintX = canvasTransformBx*linePortionRemaining + canvasTransformAx*linePortionAdvanced,
-        paintY = canvasTransformBy*linePortionRemaining + canvasTransformAy*linePortionAdvanced,
-        paintPressure = bPressure*linePortionRemaining + aPressure*linePortionAdvanced,
-        paintTiltX = bTiltX*linePortionRemaining + aTiltX*linePortionAdvanced,
-        paintTiltY = bTiltY*linePortionRemaining + aTiltY*linePortionAdvanced,
-        tiltScale = 1 + (( Math.sqrt( paintTiltX**2 + paintTiltY**2 ) / 127 )**2) * pencilDistentionScale;
-      //paintX and paintY are the two points on our canvas where we're blitting the paint-image.
-      if( uiSettings.pressureEnabled === false ) {
-        paintPressure = 1;
-        paintTiltX = 0;
-        paintTiltY = 0;
-        tiltScale = 1;
+        paintY = canvasTransformBy*linePortionRemaining + canvasTransformAy*linePortionAdvanced;
+      let paintPressure = bPressure*linePortionRemaining + aPressure*linePortionAdvanced,
+        altitudeAngle = bAltitudeAngle*linePortionRemaining + aAltitudeAngle*linePortionAdvanced, //against screen z-axis
+        azimuthAngle = bAzimuthAngle*linePortionRemaining + aAzimuthAngle*linePortionAdvanced, //around screen, direction pointing
+        normalizedAltitudeAngle = 1 - ( altitudeAngle / 1.5707963267948966 ); //0 === perpendicular, 1 === parallel
+        //TODO: DEBUG / MAKE RIGHT THIS ANGLE SCALING BEHAVIOR
+      let unTiltClippedAltitudeAngle = Math.min( brushTiltMinAngle, normalizedAltitudeAngle ),
+        normalizedUnTiltClippedAltitudeAngle = unTiltClippedAltitudeAngle / brushTiltMinAngle,
+        tiltClippedAltitudeAngle = Math.max( 0, normalizedAltitudeAngle - brushTiltMinAngle ),
+        normalizedClippedAltitudeAngle = tiltClippedAltitudeAngle / ( 1 - brushTiltMinAngle ),
+        tiltScale = 1 + normalizedClippedAltitudeAngle * brushTiltScale;
+        
+      let scaledBrushSize = brushSize * uiSettings.toolsSettings.paint.modeSettings.all.pressureScaleCurve( paintPressure );
+      let scaledOpacity = uiSettings.toolsSettings.paint.modeSettings.all.pressureOpacityCurve( paintPressure );
+
+      //composite our tip
+      {
+
+        paintCanvases.tipComposite.context.clearRect( 0,0,tipCompositeWidth,tipCompositeHeight );
+
+        //copy over our blendfaded image if we're blending
+        if( passMode === "blend" ) {
+          paintCanvases.tipComposite.context.save();
+          paintCanvases.tipComposite.context.globalCompositeOperation = "copy";
+          paintCanvases.tipComposite.context.globalAlpha = 1.0;
+          //apply blur
+          if( blendBlur > 0 ) {
+            paintCanvases.tipComposite.context.filter = "blur(" + blendBlur + "px)";
+          }
+          paintCanvases.tipComposite.context.drawImage( paintCanvases.blendFade.canvas, 0,0 );
+          paintCanvases.tipComposite.context.restore();
+        }
+        //lay down our color if we're brushing or erasing
+        if( passMode === "brush" || passMode === "erase" ) {
+          paintCanvases.tipComposite.context.save();
+          paintCanvases.tipComposite.context.fillStyle = currentColorStyle;
+          paintCanvases.tipComposite.context.fillRect( 0,0,tipCompositeWidth,tipCompositeHeight );
+          paintCanvases.tipComposite.context.restore();
+        }
+
+        //clip our tip image
+        {
+          paintCanvases.tipComposite.context.save();
+          //set to clip mode
+          paintCanvases.tipComposite.context.globalCompositeOperation = "destination-in";
+          //apply the tilt and rotation
+          paintCanvases.tipComposite.context.translate( tipCompositeWidth/2, tipCompositeHeight/2 );
+          paintCanvases.tipComposite.context.rotate( azimuthAngle );
+          //apply the blur
+          if( brushBlur > 0 ) {
+            paintCanvases.tipComposite.context.filter = "blur(" + ( brushBlur * brushSize ) + "px)";
+          }
+          //draw the tip image
+          const tipImageWidth = brushTipsImages[ 0 ].width,
+          tipImageHeight = brushTipsImages[ 0 ].height;
+          const scaledTipImageWidth = scaledBrushSize * tiltScale,
+            scaledTipImageHeight = scaledBrushSize * tipImageHeight / tipImageWidth;
+          //if the pen is very vertical, we want to center the brush
+          const xOffset = -(scaledTipImageWidth/2) * ( 1 - normalizedUnTiltClippedAltitudeAngle );
+          paintCanvases.tipComposite.context.drawImage( brushTipsImages[ 0 ], xOffset, -scaledTipImageHeight/2, scaledTipImageWidth, scaledTipImageHeight );
+          paintCanvases.tipComposite.context.restore();
+        }
+
       }
 
-      //start by grabbing from our paint canvas for blend
-      if( uiSettings.brushEngine === "blend" && paintCanvases.firstPaint === true ) {
-        const context = paintCanvases.blend.context;
-        const w = paintCanvases.blend.canvas.width,
-          h = paintCanvases.blend.canvas.height;
-        context.save();
-        paintCanvases.firstPaint = false;
-        //grab blend source pixels
-        context.clearRect( 0, 0, w, h );
-        context.globalCompositeOperation = "copy";
-        context.globalAlpha = 1.0;
-        context.drawImage( paintCanvases.blendSource.canvas, -paintX - w/2, -paintY - h/2 );
-        //mask with tip
-        context.globalAlpha = 1.0;
-        context.globalCompositeOperation = "destination-in";
-        context.drawImage( paintCanvases.tip.canvas, 0, 0 );
-        context.restore();
+      //paintX and paintY are the two points on our canvas where we're blitting the composited tip.
+
+      //note that destination layer is the preview layer, not the selected layer
+
+      destinationLayer.context.save();
+      destinationLayer.context.translate( paintX, paintY );
+      /* destinationLayer.context.rotate( Math.atan2( azimuthAngle, altitudeAngle ) );
+      destinationLayer.context.scale( tiltScale, 1 ); //pencil tilt shape
+      destinationLayer.context.translate( (tipCompositeWidth/2) * ( 1 - (1/tiltScale) ), 0 ); */
+
+      //Brush-slider opacity is applied at the brush-level while erasing.
+      //Why? Imagine erasing with a 50% opacity brush on a 50% opacity layer. How do you get that to render onscreen? I don't know.
+      if( passMode === "erase" ) {
+        destinationLayer.context.globalAlpha = scaledOpacity * brushOpacity;
       }
 
-      ctx.save();
-      ctx.translate( paintX, paintY );
-      ctx.rotate( Math.atan2( paintTiltY, paintTiltX ) );
-      ctx.scale( tiltScale, 1 ); //pencil tilt shape
-      ctx.translate( (tw/2) * ( 1 - (1/tiltScale) ), 0 );
-
-      //opacity is applied at the brush-level while erasing??? Hmm.
-      //if( uiSettings.brush === "erase" ) ctx.globalAlpha = p * uiSettings.brushOpacity;
-
-      ctx.globalAlpha = paintPressure; //pencil pressure darkness
-      //Okay... So here, for 
-      ctx.drawImage( blend, -tw/2, -th/2, tw, th );
-      ctx.restore();
+      if( passMode === "brush" ) {
+        //this is a secondary opacity scale from 0 -> 1
+        //during preview, the preview layer's opacity is downscaled to max brushOpacity
+        //at the finalization step, the blit operation's alpha is downscaled to the 0 -> brushOpacity range
+        destinationLayer.context.globalAlpha = scaledOpacity;
+      }
+      //Okay, here we go...
+      destinationLayer.context.drawImage( paintCanvases.tipComposite.canvas, -tipCompositeWidth/2, -tipCompositeHeight/2, tipCompositeWidth, tipCompositeHeight );
+      destinationLayer.context.restore();
 
     }
-    ctx.restore();
+    destinationLayer.context.restore();
   }
 
-  layer.textureChanged = true;
-  layer.textureChangedRect.x = mr.x;
-  layer.textureChangedRect.y = mr.y;
-  layer.textureChangedRect.w = mr.w;
-  layer.textureChangedRect.h = mr.h;
+  flagLayerTextureChanged( destinationLayer, modifiedRect );
 
 }
 
-function paintPointsToLayer( points, layer ) {
+/* function paintPointsToLayer( points, layer ) {
 
   getTransform();
 
@@ -3455,10 +3775,10 @@ function paintPointsToLayer( points, layer ) {
   layer.textureChangedRect.w = modW;
   layer.textureChangedRect.h = modH;
 
-}
+} */
 
-//I think this is never called?
-function stroke( points ) {
+
+/* function stroke( ctx, points ) {
     ctx.save();
     ctx.beginPath();
     ctx.strokeStyle = "black";
@@ -3497,7 +3817,7 @@ function stroke( points ) {
     //ctx.stroke();
 
     ctx.restore();
-}
+} */
 
 const viewMatrices = {
     current: [

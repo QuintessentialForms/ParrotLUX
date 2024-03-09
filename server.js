@@ -26,6 +26,8 @@ const fs = require( 'fs/promises' );
 const host = ipAddress;
 const port = 6789;
 
+console.log( "TODO: serve generic resource names" );
+
 const server = http.createServer(
     async ( request , response ) => {
         request.on( 'error' , err => console.error( "Request error: " , err ) );
@@ -77,6 +79,12 @@ const server = http.createServer(
             if( url.indexOf( '/ColorWheel-Slots-Upper.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
                 const paperFile = await fs.readFile( 'res/ColorWheel-Slots-Upper.png' );
+                response.write( paperFile );
+                response.end();
+            }
+            if( url.indexOf( '/res/img/brushes/tip-pencil01.png' ) === 0 ) {
+                response.writeHead( 200 , { 'Content-Type': 'image/png' } );
+                const paperFile = await fs.readFile( 'res/img/brushes/tip-pencil01.png' );
                 response.write( paperFile );
                 response.end();
             }
