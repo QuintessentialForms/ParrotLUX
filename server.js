@@ -23,6 +23,7 @@ if( ! ipAddress ) {
 
 const http = require( 'http' );
 const fs = require( 'fs/promises' );
+const fss = require( "fs" );
 const host = ipAddress;
 const port = 6789;
 
@@ -56,6 +57,23 @@ const server = http.createServer(
                 const styleFile = await fs.readFile( 'res/canvas.css' );
                 response.write( styleFile );
                 response.end();
+            }
+
+            if( url.indexOf( '/icon/' ) === 0 ) {
+                //get icon name
+                const iconName = url.substring( "/icon/".length, url.length - ".png".length );
+                let okay = (/[\w-]+/gmi).test( iconName ),
+                    ref = "res/img/ui/icon-" + iconName + ".png";
+                if( okay ) { okay = fss.existsSync( ref ); }
+                if( okay ) {
+                    const iconImageFile = await fs.readFile( ref );
+                    response.writeHead( 200 , { 'Content-Type': 'image/png' } );
+                    response.write( iconImageFile );
+                    response.end();
+                } else {
+                    response.writeHead( 404 , { 'Content-Type': 'text/plain' } );
+                    response.end( 'Icon name not recognized.' );
+                }
             }
 
             if( url.indexOf( '/paper.png' ) === 0 ) {
