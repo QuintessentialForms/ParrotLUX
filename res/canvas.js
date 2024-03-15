@@ -629,7 +629,7 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
       if( newLayer.layerType === "paint" || newLayer.layerType === "layer-group" )
         nodeLinkSource.classList.remove( "hidden" );
 
-      const createNodeTail = ( destElement, dashed = false ) => {
+      const createNodeTail = ( destElement, dashed = false, width = -1 ) => {
         const nodeTail = document.createElement( "div" );
         nodeTail.classList.add( "layer-node-tail" );
         nodeLinkSource.appendChild( nodeTail );
@@ -649,7 +649,7 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
           linkRect = nodeLinkSource.getClientRects()[ 0 ];
         }
         
-        const dx = linkRect.left - ( ( destRect.left + destRect.right ) / 2 );
+        const dx = ( width === -1 ) ? linkRect.left - ( ( destRect.left + destRect.right ) / 2 ) : width;
         nodeTail.style.width = dx + "px";
         nodeTail.style.height = ( layerRect.height + window.innerHeight ) + "px";
         return nodeTail;
@@ -732,6 +732,7 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
                       layer: selectedLayer,
                       apiFlowName: controlsPanel.apiFlowName,
                       controlName: controlElement.controlName,
+                      width: linkRect.left - ( ( controlRect.left + controlRect.right ) / 2 )
                       //element: controlElement
                     } );
                     controlElement.uplinkLayer = newLayer;
@@ -776,9 +777,9 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
                     controlElements = document.querySelectorAll( ".image-input-control" );
                   searchForControlElements:
                   for( const controlElement of controlElements ) {
-                    for( const { layer, apiFlowName, controlName } of newLayer.nodeUplinks ) {
+                    for( const { layer, apiFlowName, controlName, width } of newLayer.nodeUplinks ) {
                       if( layer === selectedLayer && controlsPanel.apiFlowName === apiFlowName && controlName === controlElement.controlName ) {
-                        createNodeTail( controlElement );
+                        createNodeTail( controlElement, false, width );
                         continue searchForControlElements;
                       }
                     }
@@ -7906,13 +7907,12 @@ const apiFlows = [
     ]
   },
   {
-    //just replicate t2i functionality: prompt -> lightning
     apiFlowName: "A1111 Lightning Demo txt2img Mini",
     apiFlowType: "generative",
     outputs: [
       {
         outputName: "generated-image",
-        outputType: "image", //could be images array maybe
+        outputType: "image",
         outputResultPath: [ "t2i", "generated-image" ]
       }
     ],
@@ -7934,7 +7934,7 @@ const apiFlows = [
         results: [
           {
             resultName: "generated-image",
-            resultType: "base64-image", //could be images array maybe
+            resultType: "base64-image",
             resultPath: [ "images", 0 ],
           }
         ],
