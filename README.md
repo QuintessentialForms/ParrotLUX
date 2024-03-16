@@ -14,22 +14,22 @@ Run Stable Diffusion on your PC using A1111 or Comfy, and connect to it via the 
 ## Beautiful Painting Workflow & Interface
 The sleek multi-touch interface and fine-tuned brush controls match standard painting apps for art tablets. **Currently in pre-alpha! Stay tuned for much-needed performance improvements and tons of additional features.**
 
-![Text to Image and Painting](demo-paint.jpg "Title")
+![image](demo-paint.jpg "Painting")
 ## Text-to-Image + Painting
 Generate images with text-to-image, powered by Stable Diffusion running on your local PC (or via any network API), using whatever models and custom tooling you want. Adjust generation settings from the app's clean and intuitive interface. **Currently in pre-alpha! Stay tuned for a full suite of settings and API interfaces, plus the ability to easily and quickly make your own.** Slightly more customizable than Comfy, yet more beautiful and intuitive than A1111. Convert the generated image to a paint layer, and paint away.
 
-![Text to Image and Painting](demo-t2i+paint.jpg "Title")
+![image](demo-t2i+paint.jpg "Text-to-Image and Painting")
 ## Image-to-Image from Painted Layers
-Generate subsequent images from your painted layers with new prompts. Simply drag-and-drop to hook up layers, type prompts, configure settings, and generate.
+Generate images from your painted layers with new prompts. Drag-and-drop to hook up layers for image-to-image input or controlnet input, type prompts, configure settings, and generate.
 
-![Image to Image from Painted Layer](demo-i2i.jpg "Title")
+![image](demo-i2i.jpg "Image-to-Image")
 ## ControlNet
-Coming very soon! Lineart, upscaling, pose, and much more!
+Coming very soon! Lineart, upscaling, pose, and much more. :-)
 
 ## Installation
 
 ### One-Click Install
-Coming very soon! A Windows binary and Android APK will be available.
+Coming very soon! Windows binary and Android APK will be available.
 
 ### Requirements
 1. NodeJS. You can install it from [https://nodejs.org/en](https://nodejs.org/en).
@@ -38,7 +38,7 @@ Coming very soon! A Windows binary and Android APK will be available.
 1. Clone the repository to a directory on your local device.
 2. From the terminal, at the top-level of the repository, run `node server.js`.
     * Note the address `http://{local_ip_address}:6789/` logged in the terminal.
-3. On your Android tablet, launch Chrome and navigate to that address. (Only Chrome/Android is supported for now.)
+3. On your Android tablet, launch Chrome and navigate to that address. (Only Chrome on Android is supported for now.)
 4. Tap the full-screen icon in the top-left to dive into the app and begin. :-)  
 
 **Currently in pre-alpha! Full tuturials and documentation will be coming soon.** The app's layout is standard and hopefully intuitive, and there are tooltips.
@@ -62,6 +62,7 @@ Coming very soon! A Windows binary and Android APK will be available.
     - ❌ Layer Groups
 - ✅ Undo / Redo
 - ✅ Save / Load
+- ❌ Import image
 - ❌ Gallery View
 - ✅ Export
 - ✅ Paint
