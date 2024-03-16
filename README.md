@@ -28,13 +28,20 @@ Coming very soon! Lineart, upscaling, pose, and much more. :-)
 
 ## Installation
 
+### Requirements
+* A PC running Automatic1111 stable-diffusion-webui. You can install it from [https://github.com/AUTOMATIC1111/stable-diffusion-webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui).
+    * Launch with command line arguments `--listen` and `--api`, running on port 7860
+    * Comfy will also be supported by default soon.
+* An Android tablet with a pen stylus input (for example, a Samsung Galaxy Tab), with Chrome installed.
+    * iPad and Safari may be supported in the future.
+
 ### One-Click Install
 Coming very soon! Windows binary and Android APK will be available.
 
-### Requirements
-1. NodeJS. You can install it from [https://nodejs.org/en](https://nodejs.org/en).
+### Manual Install Requirements
+* NodeJS. You can install it from [https://nodejs.org/en](https://nodejs.org/en).
 
-### Install
+### Manual Install
 1. Clone the repository to a directory on your local device.
 2. From the terminal, at the top-level of the repository, run `node server.js`.
     * Note the address `http://{local_ip_address}:6789/` logged in the terminal.
@@ -44,16 +51,20 @@ Coming very soon! Windows binary and Android APK will be available.
 **Currently in pre-alpha! Full tuturials and documentation will be coming soon.** The app's layout is standard and hopefully intuitive, and there are tooltips.
 
 ## Features: Done & To-Do
-- ✅ Multitouch
+- ✅ Sleek and Beautiful UI
+- ✅ Input
     - ✅ Pinch to zoom / rotate / pan
+    - ✅ Pen Stylus
+    - ✅ PenPressure & Tilt
     - ❌ Gestures triple-tap+drag
-- ✅ Pen Stylus Input
-    - ✅ Pressure & Tilt
+    - ❌ Mouse Input
+    - ❌ Keyboard Shortcuts
 - ✅ Layers
     - ✅ Paint
     - ✅ AI Generation
     - ✅ Merge
     - ✅ Duplicate
+    - ✅ Delete
     - ✅ Visibility
     - ✅ Opacity
     - ✅ Masks
@@ -65,6 +76,7 @@ Coming very soon! Windows binary and Android APK will be available.
 - ❌ Import image
 - ❌ Gallery View
 - ✅ Export
+- ❌ Settings Panel
 - ✅ Paint
     - ✅ Brush tip image
     - ✅ Pressure & tilt dynamics
@@ -99,22 +111,25 @@ Coming very soon! Windows binary and Android APK will be available.
     - ✅ Paint
     - ✅ Erase
     - ❌ Blend
-- ✅ Sleek and Beautiful UI
 - ❌ Layer Transforms
     - ❌ Translate
     - ❌ Scale
     - ❌ Rotate
-    - ❌ Mirror
+    - ❌ Flip
     - ❌ Crop / Uncrop
+    - Snap
+    - Arrange / Distribute
 - ❌ Paint Mirror Symmetry
 - ❌ Filters
     - ❌ Basic (Hue,Saturation,Luminance,Contrast...)
     - ❌ Channels
-- ❌ Clone / Heal Tool
 - ❌ Text
     - ❌ Text layer
     - ❌ Import fonts in asset browser
+- ❌ Flood Fill
+- ❌ Clone / Heal Tool
+- ❌ Geometry Lines & Shapes
 - ❌ One-click Install
     - ❌ Downloadable APK
     - ❌ Compiled Windows Binaries
-- ???
+- ??? More Stuff ???

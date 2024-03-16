@@ -3,30 +3,17 @@
     What next?
     Iterate! Don't optimize!
     
-  The POC is done. It's actually totally usable.
-  What's next? I have a list of alpha features.
 
-  Next, I should start using it.
-  The color wheel is usable, if not perfect. Have eyedropper too, no blend tho.
-  Next:
-
-    Temporary VR camera case for testing battery, code to auto-start, guaranteed on/off usability in field
-    
     UI:
-    - icons (start temp, don't optimize, iterate)
-    - brush controls
-    - gen controls from 1 solitary proto JSON flow instance
     - layer drag+drop groups (for visible->img2img)
-    - layers scroll
-    - layer hookup to top of screen (layer -> control only, so no scroll while linking)
-      : handle link behavior on scroll
-    - make JSON flow reasonably real on back of A1111 api
-      : gen history
-    - No comfyui yet
+    - gen history
+    - comfy
     - asset browser for some hard-coded brush configs, gen presets, models, loras, *?
       : brushes pencil and brushpen
-    - brush s/o/b preview (On GPU! Need pipeline practice and framebuffer code.)
-
+    - air undo / redo
+    - air brush size/opacity/softness
+    - flood fill
+    - text
     Misc:
     - air wheel
     - flood fill
@@ -139,19 +126,17 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
     //layerOrder: layersStack.layers.length, //not implemented
     layerType,
     layerName: "Layer " + (++layersAddedCount),
+    layerId: layersAddedCount,
 
     visible: true,
     setVisibility: null,
     opacity:1.0,
     setOpacity: null,
 
-    //linkNodes: [],
-    
     //changes IFF you change it
     generativeSettings: {
       apiFlowName: "A1111 Lightning Demo txt2img Mini"
     },
-    
     nodeUplinks: new Set(),
     generativeControls: {},
 
@@ -177,7 +162,6 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
     maskChangedRect: {x:0,y:0,w:lw,h:lh},
 
     layerButton: null,
-    mergeButton: null,
 
   }
   newLayer.canvas.width = lw;
@@ -576,8 +560,8 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
             const poppedUplinks = [];
             for( const uplinkingLayer of layersStack.layers ) {
               for( const uplink of uplinkingLayer.nodeUplinks ) {
-                const { layer, apiFlowName, controlName } = uplink;
-                if( layer === newLayer ) {
+                const { layerId, apiFlowName, controlName } = uplink;
+                if( layerId === newLayer.layerId ) {
                   poppedUplinks.push( [uplinkingLayer,uplink] );
                   uplinkingLayer.nodeUplinks.delete( uplink );
                 }
@@ -661,7 +645,6 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
         nodeLinkSource,
         {
           ondrag: ({ rect, start, current, ending, starting, element }) => {
-            console.log( "Dragging node link source for layer ", newLayer.layerName );
 
             if( starting ) {
               nodeLinkSource.classList.remove( "hovering" );
@@ -719,7 +702,7 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
                     //if this control element already had an existing uplink layer, erase the link
                     if( controlElement.uplinkLayer ) {
                       for( const uplink of controlElement.uplinkLayer.nodeUplinks ) {
-                        if( uplink.layer === selectedLayer && uplink.apiFlowName === apiFlowName && uplink.controlName === controlElement.controlName ) {
+                        if( uplink.layerId === selectedLayer.layerId && uplink.apiFlowName === apiFlowName && uplink.controlName === controlElement.controlName ) {
                           controlElement.uplinkLayer.nodeUplinks.delete( uplink );
                           break;
                         }
@@ -729,7 +712,8 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
 
                     //dropped into new uplink destination, record
                     newLayer.nodeUplinks.add( {
-                      layer: selectedLayer,
+                      //layer: selectedLayer,
+                      layerId: selectedLayer.layerId,
                       apiFlowName: controlsPanel.apiFlowName,
                       controlName: controlElement.controlName,
                       width: linkRect.left - ( ( controlRect.left + controlRect.right ) / 2 )
@@ -737,16 +721,17 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
                     } );
                     controlElement.uplinkLayer = newLayer;
 
-                    //remake the node links
-                    UI.updateContext();
-
                     //stop searching
                     break;
                   }
                 }
               }
 
+              //remake the node links
+              UI.updateContext();
+  
             }
+            
           },
           updateContext: () => {
 
@@ -777,8 +762,8 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
                     controlElements = document.querySelectorAll( ".image-input-control" );
                   searchForControlElements:
                   for( const controlElement of controlElements ) {
-                    for( const { layer, apiFlowName, controlName, width } of newLayer.nodeUplinks ) {
-                      if( layer === selectedLayer && controlsPanel.apiFlowName === apiFlowName && controlName === controlElement.controlName ) {
+                    for( const { layerId, apiFlowName, controlName, width } of newLayer.nodeUplinks ) {
+                      if( layerId === selectedLayer.layerId && controlsPanel.apiFlowName === apiFlowName && controlName === controlElement.controlName ) {
                         createNodeTail( controlElement, false, width );
                         continue searchForControlElements;
                       }
@@ -1015,7 +1000,6 @@ function selectLayer( layer ) {
     selectedLayer.layerButton.querySelector( ".layer-name" ).classList.add( "no-hover" );
   }
   selectedLayer = layer;
-  console.log( layer, layer.layerButton );
   for( const l of document.querySelectorAll( "#layers-column > .layer-button" ) ) {
     l.classList.remove( "active", "no-hover", "hovering" );
   }
@@ -1514,7 +1498,7 @@ function endAirInput( p ) {
     uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.h = h;
     uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.s = s;
     uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.l = l;
-    document.querySelector( ".paint-tools-options-color-well" ).style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
+    document.querySelector( ".paint-tools-options-color-well" ).style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.getColorStyle();
   }
   airInput.insideEyedropperRadius = false;
   airInput.active = false;
@@ -1524,6 +1508,10 @@ function endAirInput( p ) {
   airInput.current.y = 0;
   airInput.uiElement.style.display = "none";
 }
+
+const nonSavedSettingsPaths = [
+  "toolsSettings.paint.modeSettings.brushTipsImages",
+]
 
 let uiSettings = {
 
@@ -1536,7 +1524,7 @@ let uiSettings = {
     UI.updateContext();
   },
 
-  activeTool: null, //null | generate | paint | mask | transform
+  activeTool: null, //null | generate | paint | mask | transform | flood-fill | text-tool
   toolsSettings: {
     "generate": {},
     "paint": {
@@ -1567,12 +1555,12 @@ let uiSettings = {
           colorModes: {
             hsl: {
               h:0, s:0.1, l:0.1,
-              get colorStyle() {
+              getColorStyle: () => {
                 const {h,s,l} = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
                 const [r,g,b] = hslToRgb( h,s,l );
                 return `rgb(${r},${g},${b})`;
               },
-              get rgbFloat() {
+              getRGBFloat: () => {
                 const {h,s,l} = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
                 const [r,g,b] = hslToRgb( h,s,l );
                 return [ r/255, g/255, b/255 ];
@@ -1595,7 +1583,7 @@ let uiSettings = {
     },
   },
 
-  paint: { r:200,g:220,b:240 },
+  /* paint: { r:200,g:220,b:240 },
   get paintColor(){
     const {r,g,b} = uiSettings.paint;
     return `rgb(${r},${g},${b})`;
@@ -1609,7 +1597,7 @@ let uiSettings = {
   brushSize: 14,
   brushOpacity: 1,
   brushBlur: 0,
-  brushProfile: p => uiSettings.brushSize,
+  brushProfile: p => uiSettings.brushSize, */
 
   nodeSnappingDistance: Math.min( innerWidth, innerHeight ) * 0.04, //~50px on a 1080p screen
 
@@ -1935,6 +1923,82 @@ function setupUI() {
         { tooltip: [ "Transform Tool", "to-right", "vertical-center" ] }
       )
     }
+
+    //the flood fill button
+    {
+      const floodFillButton = document.createElement( "div" );
+      floodFillButton.classList.add( "tools-column-flood-fill-button", "round-toggle", "animated", "unimplemented", "unavailable" );
+      toolsColumn.appendChild( floodFillButton );
+      UI.registerElement(
+        floodFillButton,
+        {
+          onclick: () => {
+            if( ! floodFillButton.classList.contains( "unavailable" ) && ! floodFillButton.classList.contains( "unimplemented" ) ) {
+              uiSettings.setActiveTool( "transform" )
+            }
+          },
+          updateContext: () => {
+
+            if( floodFillButton.classList.contains( "unimplemented" ) ) {
+              floodFillButton.classList.add( "unavailable" );
+              floodFillButton.classList.remove( "on" );
+              floodFillButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Flood Fill Tool" + (selectedLayer ? "" : " [Select paint layer to enable]");
+              return;
+            }
+            //if no layer selected, unavailable
+            if( ! selectedLayer?.layerType === "paint" ) {
+              floodFillButton.classList.add( "unavailable" );
+              floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool [Select paint layer to enable]";
+              floodFillButton.classList.remove( "on" );
+            } else {
+              floodFillButton.classList.remove( "unavailable" );
+              floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool";
+              if( uiSettings.activeTool === "flood-fill" ) floodFillButton.classList.add( "on" );
+              else floodFillButton.classList.remove( "on" );
+            }
+          },
+        },
+        { tooltip: [ "Flood Fill Tool", "to-right", "vertical-center" ] }
+      )
+    }
+    
+    //the text tool button
+    {
+      const textToolButton = document.createElement( "div" );
+      textToolButton.classList.add( "tools-column-text-tool-button", "round-toggle", "animated", "unimplemented", "unavailable" );
+      toolsColumn.appendChild( textToolButton );
+      UI.registerElement(
+        textToolButton,
+        {
+          onclick: () => {
+            if( ! textToolButton.classList.contains( "unavailable" ) && ! textToolButton.classList.contains( "unimplemented" ) ) {
+              uiSettings.setActiveTool( "text-tool" )
+            }
+          },
+          updateContext: () => {
+
+            if( textToolButton.classList.contains( "unimplemented" ) ) {
+              textToolButton.classList.add( "unavailable" );
+              textToolButton.classList.remove( "on" );
+              textToolButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Text Tool" + (selectedLayer ? "" : " [Select text layer to enable]");
+              return;
+            }
+            //if no layer selected, unavailable
+            if( ! selectedLayer?.layerType === "text" ) {
+              textToolButton.classList.add( "unavailable" );
+              textToolButton.querySelector(".tooltip" ).textContent = "Text Tool [Select text layer to enable]";
+              textToolButton.classList.remove( "on" );
+            } else {
+              textToolButton.classList.remove( "unavailable" );
+              textToolButton.querySelector(".tooltip" ).textContent = "Text Tool";
+              if( uiSettings.activeTool === "text-tool" ) textToolButton.classList.add( "on" );
+              else textToolButton.classList.remove( "on" );
+            }
+          },
+        },
+        { tooltip: [ "Flood Fill Tool", "to-right", "vertical-center" ] }
+      )
+    }
   }
 
   //the paint tool options
@@ -2204,12 +2268,12 @@ function setupUI() {
     {
       const colorWell = document.createElement( "div" );
       colorWell.classList.add( "paint-tools-options-color-well", "animated" );
-      colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
+      colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.getColorStyle();
       UI.registerElement(
         colorWell,
         {
           onclick: () => {
-            colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
+            colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.getColorStyle();
             document.querySelector( "#color-wheel" )?.toggleVisibility?.();
           }
         },
@@ -2221,65 +2285,6 @@ function setupUI() {
     }
   }
 
-  //the color wheel panel
-  {
-
-  }
-
-  //the paint controls
-  /* let colorWell;
-  {
-
-    const paintControls = document.createElement( "div" );
-    paintControls.id = "paint-controls";
-    ui.appendChild( paintControls );
-  
-
-    //the color palette
-    const colorPalette = document.createElement( "div" );
-    colorPalette.classList.add( "palette" );
-    for( const r of [0,128,255] ) {
-      for( const g of [0,128,255] ) {
-        for( const b of [0,128,255 ] ) {
-          const [fh,fs,fl] = rgbToHsl( r,g,b );
-          let h = fh * 360, s = fs * 100, l = fl * 100;
-          const color = document.createElement( "button" );
-          color.classList.add( "color" );
-          color.style.backgroundColor = `hsl(${h},${s}%,${l}%)`;
-          registerUIElement( color, { onclick: () => {
-              colorWell.style.backgroundColor = color.style.backgroundColor;
-              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.h = fh;
-              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.s = fs;
-              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.l = fl;
-            }
-          } );
-          uiControls.paintControlElements.push( color );
-          colorPalette.appendChild( color );
-        }
-      }
-    }
-    
-    paintControls.appendChild( colorPalette );
-
-    {
-      //the colorwheel summoner
-      colorWell = document.createElement( "div" );
-      colorWell.classList.add( "color-well" );
-      colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
-      let open = false;
-      registerUIElement( colorWell, { onclick: () => {
-        colorWheel.style.display = ( open = !open ) ? "block" : "none";
-        colorWheel.uiActive = open;
-        colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
-        if( open ) updateColorWheelPreview();
-      } } );
-      uiControls.paintControlElements.push( colorWell );
-      paintControls.appendChild( colorWell );
-
-    }
-    paintControls.style.display = "none";
-  } */
-  
   //the generative controls
   {
 
@@ -2357,7 +2362,6 @@ function setupUI() {
         generateButton,
         {
           onclick: async () => {
-            console.log( "Generate!" );
 
             generateButton.classList.add( "pushed" );
             setTimeout( () => generateButton.classList.remove( "pushed" ), UI.animationMS );
@@ -2373,7 +2377,15 @@ function setupUI() {
                 controlValues[ control.controlName ] = parseInt((control.min + r*(control.max-control.min))/control.step) * control.step;
               }
               if( control.controlType === "layer-input" ) {
-                let layerInput = selectedLayer;
+                //The reason we don't set the .controlLayer:null on the control, is links change with selectedLayer
+                let layerInput = selectedLayer; //default to selected layer
+                const imageInputs = document.querySelectorAll( ".image-input-control" );
+                for( const imageInput of imageInputs ) {
+                  if( imageInput.controlName === control.controlLayerControlName && imageInput.uplinkLayer ) {
+                    layerInput = imageInput.uplinkLayer;
+                  }
+                }
+
                 const inputPath = [ ...control.layerPath ];
                 while( inputPath.length ) {
                   layerInput = layerInput[ inputPath.shift() ];
@@ -2406,7 +2418,6 @@ function setupUI() {
 
             //do the generation
             const result = await executeAPICall( apiFlowName, controlValues );
-            console.log( "Got result!: ", result[ "generated-image" ] );
             //absolutely everywhere I reference CTX calls like this will need to change with GPU paint?
             //Or... Hmm. Maybe I use those pixelreads to update these canvases.
             //Well... I have to keep the canvases anyway, right??? For previews. So no change???
@@ -2941,6 +2952,32 @@ function setupUI() {
       addLayersPanel.appendChild( document.createElement( "div" ) ).className = "spacer";
 
       {
+        //add add text layer button
+        const addTextLayerButton = addLayersPanel.appendChild( document.createElement( "div" ) );
+        addTextLayerButton.classList.add( "rounded-line-button", "animated", "unimplemented" );
+        addTextLayerButton.appendChild( new Image() ).src = "icon/text.png";
+        addTextLayerButton.appendChild( document.createElement("span") ).textContent = "Add Text Layer";
+        UI.registerElement( addTextLayerButton, {
+          onclick: () => {
+            addTextLayerButton.classList.add( "pushed" );
+            setTimeout( () => addTextLayerButton.classList.remove( "pushed" ), UI.animationMS );
+            UI.deleteContext( "add-layers-panel-visible" );
+            console.error( "Image import unimplemented." );
+          },
+          updateContext: context => {
+            if( context.has( "add-layers-panel-visible" ) ) addTextLayerButton.uiActive = true;
+            else addTextLayerButton.uiActive = false;
+          }
+        }, { 
+          tooltip: [ "!Unimplemented! Add Text Layer", "to-left", "vertical-center" ],
+          zIndex: 11000,
+        } );
+      }
+
+      //add a spacer
+      addLayersPanel.appendChild( document.createElement( "div" ) ).className = "spacer";
+
+      {
         //add the import image button
         const importImageButton = addLayersPanel.appendChild( document.createElement( "div" ) );
         importImageButton.classList.add( "rounded-line-button", "animated", "unimplemented" );
@@ -3370,7 +3407,6 @@ function setupUIGenerativeControls( apiFlowName ) {
   let numberOfImageInputs = 0;
 
   const apiFlow = apiFlows.find( flow => flow.apiFlowName === apiFlowName );
-  console.log( "Found apiFlow: ", apiFlow, " for name ", apiFlowName );
   for( const control of apiFlow.controls ) {
 
     //load control from layer if any
@@ -3402,6 +3438,8 @@ function setupUIGenerativeControls( apiFlowName ) {
           textInput.onapply = text => {
             controlElementText.textContent = text;
             control.controlValue = text;
+            //store updated value in selected layer
+            selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
           }
           textInput.show();
         } },
@@ -3441,6 +3479,8 @@ function setupUIGenerativeControls( apiFlowName ) {
             number = Math.max( control.min, Math.min( control.max, number ) );
             number = parseInt( number / control.step ) * control.step;
             control.controlValue = number;
+            //store updated value in selected layer
+            selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
             const trimLength = control.step.toString().indexOf( "." ) + 1;
             numberPreview.textContent = trimLength ? number.toString().substring( 0, trimLength+2 ) : number;
             if( ending ) {
@@ -3471,7 +3511,7 @@ function setupUIGenerativeControls( apiFlowName ) {
       searchForLinkLayer:
       for( const uplinkLayer of layersStack.layers ) {
         for( const uplink of uplinkLayer.nodeUplinks ) {
-          if( uplink.layer === selectedLayer && uplink.apiFlowName === apiFlowName && uplink.controlName === control.controlName ) {
+          if( uplink.layerId === selectedLayer.layerId && uplink.apiFlowName === apiFlowName && uplink.controlName === control.controlName ) {
             controlElement.uplinkLayer = uplinkLayer;
             break searchForLinkLayer;
           }
@@ -3490,7 +3530,7 @@ function setupUIGenerativeControls( apiFlowName ) {
           //erase the control uplink layer (if any)
           if( controlElement.uplinkLayer ) {
             for( const uplink of controlElement.uplinkLayer.nodeUplinks ) {
-              if( uplink.layer === selectedLayer && uplink.apiFlowName === apiFlowName && uplink.controlName === control.controlName ) {
+              if( uplink.layerId === selectedLayer.layerId && uplink.apiFlowName === apiFlowName && uplink.controlName === control.controlName ) {
                 controlElement.uplinkLayer.nodeUplinks.delete( uplink );
                 break;
               }
@@ -3514,736 +3554,6 @@ function setupUIGenerativeControls( apiFlowName ) {
   UI.updateContext();
 
 }
-
-function setupUI_old() {
-  
-  //the fullscreen button
-  const button = document.createElement( "button" );
-  button.className = "fullscreen";
-  button.textContent = "Fullscreen v" + VERSION;
-  registerUIElement( button, {
-    onclick: () => {
-      if( document.fullscreenElement ) {
-        document.exitFullscreen?.();
-      } else {
-        main.requestFullscreen();
-      }
-    }
-  } );
-  uiContainer.appendChild( button );
-
-  let colorWell;
-  {
-    //the paint controls
-
-    const paintControls = document.createElement( "div" );
-    paintControls.id = "paint-controls";
-    uiContainer.appendChild( paintControls );
-
-    //the mode label
-    {
-      const modeLabel = document.createElement( "div" );
-      modeLabel.className = "paint-controls-label";
-      modeLabel.textContent = "Paint";
-      paintControls.appendChild( modeLabel );
-    }
-    //the brush selector
-    {
-      const paintButton = document.createElement( "button" );
-      paintButton.className = "paint-controls-button";
-      paintButton.textContent = "Color";
-      registerUIElement( paintButton, { onclick: () => {
-        //uiSettings.activeTool = "paint";
-        uiSettings.toolsSettings.paint.mode = "brush";
-      }} );
-      paintControls.appendChild( paintButton );
-      uiControls.paintControlElements.push( paintButton );
-    }
-    //the blend selector
-    {
-      const paintButton = document.createElement( "button" );
-      paintButton.className = "paint-controls-button";
-      paintButton.textContent = "Blend";
-      registerUIElement( paintButton, { onclick: () => {
-        //uiSettings.activeTool = "paint";
-        uiSettings.toolsSettings.paint.mode = "blend";
-      }} );
-      paintControls.appendChild( paintButton );
-      uiControls.paintControlElements.push( paintButton );
-    }
-    //the erase selector
-    {
-      const eraseButton = document.createElement( "button" );
-      eraseButton.className = "paint-controls-button";
-      eraseButton.textContent = "Erase";
-      registerUIElement( eraseButton, { onclick: () => {
-        //uiSettings.activeTool = "paint";
-        uiSettings.toolsSettings.paint.mode = "erase";
-      } } );
-      paintControls.appendChild( eraseButton );
-      uiControls.paintControlElements.push( eraseButton );
-    }
-  
-    {
-      //the brushsize slider
-      const brushSizeSlider = document.createElement("input");
-      brushSizeSlider.type = "range";
-      brushSizeSlider.classList.add( "brush-size" );
-      brushSizeSlider.classList.add( "vertical" );
-      brushSizeSlider.value = uiSettings.brushSize;
-      brushSizeSlider.min = 2.5;
-      brushSizeSlider.max = 14;
-      brushSizeSlider.step = "any";
-      brushSizeSlider.setAttribute( "orient", "vertical" );
-      brushSizeSlider.orient = "vertical";
-      brushSizeSlider.style.appearance = "slider-vertical";
-      const updateSize = ( {rect,current} ) => {
-        let {x,y} = current;
-        x -= rect.left; y -= rect.top;
-        x /= rect.width; y /= rect.height;
-        x = Math.max( 0, Math.min( 1, x ) );
-        y = Math.max( 0, Math.min( 1, y ) );
-        const p = 1 - y;
-        brushSizeSlider.value = parseFloat(brushSizeSlider.min) + (parseFloat(brushSizeSlider.max) - parseFloat(brushSizeSlider.min))*p;
-        uiSettings.toolsSettings.paint.modeSettings.all.brushSize = parseFloat(brushSizeSlider.value);
-      };
-      registerUIElement( brushSizeSlider, { ondrag: updateSize } );
-      uiControls.paintControlElements.push( brushSizeSlider );
-      paintControls.appendChild( brushSizeSlider );
-    }
-    
-    {
-      //the brush opacity slider
-      const brushOpacity = document.createElement("input");
-      brushOpacity.type = "range";
-      brushOpacity.classList.add( "brush-opacity" );
-      brushOpacity.classList.add( "vertical" );
-      brushOpacity.value = uiSettings.brushOpacity;
-      brushOpacity.min = 0;
-      brushOpacity.max = 1;
-      brushOpacity.step = 1/256;
-      brushOpacity.setAttribute( "orient", "vertical" );
-      brushOpacity.orient = "vertical";
-      brushOpacity.style.appearance = "slider-vertical";
-      const updateOpacity = ( {rect,current} ) => {
-        let {x,y} = current;
-        x -= rect.left; y -= rect.top;
-        x /= rect.width; y /= rect.height;
-        x = Math.max( 0, Math.min( 1, x ) );
-        y = Math.max( 0, Math.min( 1, y ) );
-        const p = 1 - y;
-        brushOpacity.value = parseFloat(brushOpacity.min) + (parseFloat(brushOpacity.max) - parseFloat(brushOpacity.min))*p;
-        uiSettings.toolsSettings.paint.modeSettings.all.brushOpacity = parseFloat(brushOpacity.value);
-      };
-      registerUIElement( brushOpacity, { ondrag: updateOpacity } );
-      uiControls.paintControlElements.push( brushOpacity );
-      paintControls.appendChild( brushOpacity );
-    }
-
-    {
-      //the brush blur slider
-      const brushBlurSlider = document.createElement("input");
-      brushBlurSlider.type = "range";
-      brushBlurSlider.classList.add( "brush-blur" );
-      brushBlurSlider.classList.add( "vertical" );
-      brushBlurSlider.value = uiSettings.brushBlur;
-      brushBlurSlider.min = 0;
-      brushBlurSlider.max = 0.4;
-      //brushBlurSlider.max = 1;
-      brushBlurSlider.step = "any";
-      brushBlurSlider.setAttribute( "orient", "vertical" );
-      brushBlurSlider.orient = "vertical";
-      brushBlurSlider.style.appearance = "slider-vertical";
-      const updateBlur = ( {rect,current} ) => {
-        let {x,y} = current;
-        x -= rect.left; y -= rect.top;
-        x /= rect.width; y /= rect.height;
-        x = Math.max( 0, Math.min( 1, x ) );
-        y = Math.max( 0, Math.min( 1, y ) );
-        const p = 1 - y;
-        brushBlurSlider.value = parseFloat(brushBlurSlider.min) + (parseFloat(brushBlurSlider.max) - parseFloat(brushBlurSlider.min))*p;
-        uiSettings.toolsSettings.paint.modeSettings.all.brushBlur = parseFloat(brushBlurSlider.value);
-      };
-      registerUIElement( brushBlurSlider, { ondrag: updateBlur } );
-      uiControls.paintControlElements.push( brushBlurSlider );
-      paintControls.appendChild( brushBlurSlider );
-    }
-
-    //the color palette
-    const colorPalette = document.createElement( "div" );
-    colorPalette.classList.add( "palette" );
-    for( const r of [0,128,255] ) {
-      for( const g of [0,128,255] ) {
-        for( const b of [0,128,255 ] ) {
-          const [fh,fs,fl] = rgbToHsl( r,g,b );
-          let h = fh * 360, s = fs * 100, l = fl * 100;
-          const color = document.createElement( "button" );
-          color.classList.add( "color" );
-          color.style.backgroundColor = `hsl(${h},${s}%,${l}%)`;
-          registerUIElement( color, { onclick: () => {
-              colorWell.style.backgroundColor = color.style.backgroundColor;
-              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.h = fh;
-              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.s = fs;
-              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.l = fl;
-            }
-          } );
-          uiControls.paintControlElements.push( color );
-          colorPalette.appendChild( color );
-        }
-      }
-    }
-    /* const eraser = document.createElement( "button" );
-    eraser.classList.add( "eraser" );
-    registerUIElement( eraser, { onclick: () => uiSettings.brush = "erase" } );
-    uiControls.paintControlElements.push( eraser );
-    colorPalette.appendChild( eraser ); */
-    paintControls.appendChild( colorPalette );
-
-    {
-      //the colorwheel summoner
-      colorWell = document.createElement( "div" );
-      colorWell.classList.add( "color-well" );
-      colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
-      let open = false;
-      registerUIElement( colorWell, { onclick: () => {
-        colorWheel.style.display = ( open = !open ) ? "block" : "none";
-        colorWheel.uiActive = open;
-        colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
-        if( open ) updateColorWheelPreview();
-      } } );
-      uiControls.paintControlElements.push( colorWell );
-      paintControls.appendChild( colorWell );
-
-    }
-    paintControls.style.display = "none";
-  }
-
-  {
-    //the generative controls
-    const genControls = document.createElement( "div" );
-    genControls.id = "gen-controls";
-
-    const prompt = document.createElement( "input" );
-    prompt.type = "text";
-    prompt.value = "desktop cat";
-    prompt.id = "gen-prompt";
-    registerUIElement( prompt, { onclick: () => prompt.focus() } );
-    uiControls.genControlElements.push( prompt );
-    genControls.appendChild( prompt );
-
-    const gen = document.createElement( "button" );
-    gen.class = "generate";
-    gen.textContent = "Generate";
-    registerUIElement( gen, {onclick: async () => {
-      let api = "txt2img",
-       img2img = null,
-       denoise = 0;
-
-      //try to set img2img
-      if( genControls.classList.contains( "img2img" ) ) {
-        //lets find the image
-        for( const link of linkedNodes ) {
-          if( link.destinationNode.isNode === "img2img" &&
-              link.destinationLayer === selectedLayer ) {
-            //found the link!
-            const sourceLayer = link.sourceLayer;
-            const sourceCanvas = sourceLayer.canvas;
-            console.log( "Found img2img source canvas: ", sourceCanvas );
-            api = "img2img";
-            img2img = sourceCanvas.toDataURL();
-            denoise = document.querySelector("input.denoise").value*1;
-          }
-        }
-      }
-
-      //try to set inpainting
-      let inpaint = false,
-        inpaintFill = "original",
-        inpaintZoomed = false;
-      if( api === "img2img" ) {
-        if( selectedLayer.maskInitialized ) {
-          inpaint = true;
-          //default
-          //inpaint = "original";
-          const inpaintZoomedChecked = !!(document.querySelector( "input.inpaintZoomed" ).checked);
-          if( inpaintZoomedChecked ) inpaintZoomed = true;
-          else inpaintZoomed = false;
-        }
-      }
-
-      let usingLineart = false,
-        lineartStrength = 0
-
-      if( genControls.classList.contains( "lineart" ) ) {
-        //lets find the source lineart canvas
-        const layer = selectedLayer;
-        for( const link of linkedNodes ) {
-          if( link.destinationNode.isNode === "lineart" &&
-              link.destinationLayer === layer ) {
-            //found the link!
-            const sourceLayer = link.sourceLayer;
-            const paintPreviewLayer = layersStack.layers[ 0 ];
-            //convert lineart alpha to white-black
-            const lineartData = sourceLayer.context.getImageData(0,0,sourceLayer.w,sourceLayer.h),
-                d = lineartData.data;
-            for( let i=0; i<d.length; i+=4 ) {
-              d[i] = d[i+1] = d[i+2] = d[i+3];
-              d[i+3] = 255;
-            }
-            paintPreviewLayer.canvas.width = sourceLayer.w;
-            paintPreviewLayer.canvas.height = sourceLayer.h;
-            paintPreviewLayer.context.putImageData( lineartData,0,0 );
-            lineart = paintPreviewLayer.canvas.toDataURL();
-            paintPreviewLayer.context.clearRect(0,0,paintPreviewLayer.w,paintPreviewLayer.h);
-            lineartStrength = document.querySelector("input.lineart").value*1;
-            apisSettings.a1111.setControlNet( { enabled: true, slot:0, lineart, lineartStrength, model:"sai_xl_sketch_256lora [cd3389b1]" } )
-            usingLineart = true;
-          }
-        }
-      }
-      if( usingLineart === false )
-        apisSettings.a1111.setControlNet( { enabled: false, slot: 0 } );
-
-      console.log( "Doing: ", api, img2img, denoise, usingLineart, prompt );
-      const p = prompt.value;
-      const img = await getImageA1111( { api, prompt:p, img2img, denoise, inpaint, inpaintFill, inpaintZoomed } );
-      selectedLayer.context.drawImage( img, 0, 0 );
-      selectedLayer.textureChanged = true;
-      selectedLayer.textureChangedRect.x = 0;
-      selectedLayer.textureChangedRect.y = 0;
-      selectedLayer.textureChangedRect.w = selectedLayer.w;
-      selectedLayer.textureChangedRect.h = selectedLayer.h;
-    }});
-    uiControls.genControlElements.push( gen );
-    genControls.appendChild( gen );
-
-    {
-      const presetSelector = document.createElement( "select" );
-      for( const preset of ["fast","quality"] ) {
-        const opt = document.createElement( "option" );
-        opt.value = preset;
-        opt.textContent = preset;
-        presetSelector.appendChild( opt );
-      }
-      genControls.appendChild( document.createTextNode("Preset") );
-      genControls.appendChild( presetSelector );
-    }
-
-    {
-      const modelSelect = document.createElement( "select" );
-      for( const model of apisSettings.a1111.modelNames ) {
-        const opt = document.createElement( "option" );
-        opt.value = model;
-        opt.textContent = model;
-        modelSelect.appendChild( opt );
-      }
-      genControls.appendChild( document.createTextNode("Model") );
-      genControls.appendChild( modelSelect );
-    }
-
-    {
-      const cfg = document.createElement( "input" );
-      cfg.type = "number";
-      cfg.min = 1;
-      cfg.max = 20;
-      cfg.step = 0.5;
-      cfg.value = 1.0;
-      genControls.appendChild( document.createTextNode("CFG") );
-      genControls.appendChild( cfg );  
-    }
-
-    {
-      const steps = document.createElement( "input" );
-      steps.type = "number";
-      steps.min = 1;
-      steps.max = 100;
-      steps.step = 1;
-      steps.value = 4;
-      genControls.appendChild( document.createTextNode("Steps") );
-      genControls.appendChild( steps );  
-    }
-    {
-      const samplerSelect = document.createElement( "select" );
-      for( const sampler of apisSettings.a1111.samplerNames ) {
-        const opt = document.createElement( "option" );
-        opt.value = sampler;
-        opt.textContent = sampler;
-        samplerSelect.appendChild( opt );
-      }
-      genControls.appendChild( document.createTextNode("Sampler") );
-      genControls.appendChild( samplerSelect );
-    }
-    {
-      //img2img denoise slider
-      const denoiseSlider = document.createElement("input");
-      denoiseSlider.type = "range";
-      denoiseSlider.classList.add( "denoise" );
-      denoiseSlider.value = 0.8;
-      denoiseSlider.min = 0;
-      denoiseSlider.max = 1;
-      denoiseSlider.step = "any";
-      denoiseSlider.style.position = "static";
-      const updateDenoise =  ( {rect,current} ) => {
-        let {x,y} = current;
-        x -= rect.left; y -= rect.top;
-        x /= rect.width; y /= rect.height;
-        x = Math.max( 0, Math.min( 1, x ) );
-        y = Math.max( 0, Math.min( 1, y ) );
-        const p = x;
-        denoiseSlider.value = parseFloat(denoiseSlider.min) + (parseFloat(denoiseSlider.max) - parseFloat(denoiseSlider.min))*p;
-      };
-      registerUIElement( denoiseSlider, { ondrag: updateDenoise } );
-      uiControls.genControlElements.push( denoiseSlider );
-      const denoiseHolder = document.createElement( "div" );
-      denoiseHolder.classList.add( "img2img" );
-      denoiseHolder.style = "position:relative; width:auto;";
-      denoiseHolder.appendChild( document.createTextNode("Denoise") );
-      denoiseHolder.appendChild( denoiseSlider );
-      genControls.appendChild( denoiseHolder );
-    }
-    if( false ){
-      //inpainting zoomed check
-      const inpaintZoomed = document.createElement( "input" );
-      inpaintZoomed.type = "checkbox"
-      inpaintZoomed.classList.add( "inpaintZoomed" );
-      //inpaintZoomed.checked = false;
-      registerUIElement( inpaintZoomed, { onclick: () => { inpaintZoomed.checked = !inpaintZoomed.checked; } } );
-      uiControls.genControlElements.push( inpaintZoomed );
-      const inpaintZoomedHolder = document.createElement( "div" );
-      inpaintZoomedHolder.classList.add( "img2img" );
-      inpaintZoomedHolder.style = "position:relative; width:auto;";
-      inpaintZoomedHolder.appendChild( document.createTextNode("Inpaint Zoomed") );
-      inpaintZoomedHolder.appendChild( inpaintZoomed );
-      genControls.appendChild( inpaintZoomedHolder );
-    }
-    {
-      //controlnet lineart slider
-      const lineartStength = document.createElement("input");
-      lineartStength.type = "range";
-      lineartStength.classList.add( "lineart" );
-      lineartStength.value = 0.8;
-      lineartStength.min = 0;
-      lineartStength.max = 1;
-      lineartStength.step = "any";
-      lineartStength.style.position = "static";
-      const updateLineartStrength =  ( {rect,current} ) => {
-        let {x,y} = current;
-        x -= rect.left; y -= rect.top;
-        x /= rect.width; y /= rect.height;
-        x = Math.max( 0, Math.min( 1, x ) );
-        y = Math.max( 0, Math.min( 1, y ) );
-        const p = x;
-        lineartStength.value = parseFloat(lineartStength.min) + (parseFloat(lineartStength.max) - parseFloat(lineartStength.min))*p;
-      };
-      registerUIElement( lineartStength, { ondrag: updateLineartStrength } );
-      uiControls.genControlElements.push( lineartStength );
-      const lineartStrengthHolder = document.createElement( "div" );
-      lineartStrengthHolder.classList.add( "lineart" );
-      lineartStrengthHolder.style = "position:relative; width:auto;";
-      lineartStrengthHolder.appendChild( document.createTextNode("Lineart Strength") );
-      lineartStrengthHolder.appendChild( lineartStength );
-      genControls.appendChild( lineartStrengthHolder );
-    }
-
-    genControls.style.display = "none";
-    uiContainer.appendChild( genControls );
-
-    
-
-  }
-
-  //the console
-  const consoleElement = uiContainer.appendChild( document.createElement( "div" ) );
-  consoleElement.id = "console";
-
-  {
-    //the undo/redo controls
-    const undoButton = document.createElement( "button" );
-    undoButton.className = "undo";
-    undoButton.style.opacity = 0.25;
-    undoButton.textContent = "Undo";
-    registerUIElement( undoButton, { onclick: undo } );
-    uiContainer.appendChild( undoButton );
-    const redoButton = document.createElement( "button" );
-    redoButton.className = "redo";
-    redoButton.style.opacity = 0.25;
-    redoButton.textContent = "Redo";
-    registerUIElement( redoButton, { onclick: redo } );
-    uiContainer.appendChild( redoButton );
-  }
-
-  {
-    //the layer controls
-
-    //the layers column
-    const layersColumn = document.createElement("div");
-    layersColumn.id = "layers-column";
-
-    {
-      //file controls
-      const fileRow = document.createElement( "div" );
-      fileRow.classList.add( "files" );
-      {
-        //save button
-        const saveButton = document.createElement( "button" );
-        saveButton.textContent = "Save";
-        registerUIElement( saveButton, { onclick: () => saveJSON() } );
-        fileRow.appendChild( saveButton );
-      }
-      {
-        //open button
-        const openButton = document.createElement( "button" );
-        openButton.textContent = "Open";
-        registerUIElement( openButton, { onclick: () => loadJSON() } );
-        fileRow.appendChild( openButton );
-      }
-      {
-        //export button
-        const exportButton = document.createElement( "button" );
-        exportButton.textContent = "Export";
-        registerUIElement( exportButton, { onclick: () => exportPNG() } );
-        fileRow.appendChild( exportButton );
-      }
-
-      layersColumn.appendChild( fileRow );
-      //open button
-      //export button
-    }
-
-    //add paint layer
-    const addLayerButton = document.createElement( "button" );
-    addLayerButton.textContent = "Add Paint Layer";
-    registerUIElement( addLayerButton, { onclick: () => {
-      if( selectedLayer ) addCanvasLayer( "paint", selectedLayer.w, selectedLayer.h, selectedLayer );
-      else addCanvasLayer( "paint" );
-    } } );
-    layersColumn.appendChild( addLayerButton );
-    //add gen layer
-    const addGenLayerButton = document.createElement( "button" );
-    addGenLayerButton.textContent = "Add Generative Layer";
-    registerUIElement( addGenLayerButton, { onclick: () => {
-      if( selectedLayer ) addCanvasLayer( "generative", selectedLayer.w, selectedLayer.h, selectedLayer );
-      else addCanvasLayer( "generative" );
-    } } );
-    layersColumn.appendChild( addGenLayerButton );
-    uiContainer.appendChild( layersColumn );
-
-    //the node-link-dragging overlay
-    const nodeDragOverlay = document.createElement( "div" );
-    nodeDragOverlay.id = "node-drag-overlay";
-    nodeDragOverlay.style.pointerEvents = "none";
-    //the node drag overlay
-    uiContainer.appendChild( nodeDragOverlay );
-
-  }
-
-  {
-    //the air input placeholder
-    const airInputElement = document.createElement( "div" );
-    airInputElement.id = "air-input";
-    const ring = document.createElement( "div" );
-    ring.className = "ring";
-    airInputElement.appendChild( ring );
-    airInputElement.style.display = "none";
-    airInput.uiElement = airInputElement;
-    airInput.colorRing = ring;
-    uiContainer.appendChild( airInputElement );
-  }
-
-  {
-
-    console.log( "Adding color wheel now..." );
-
-    const updateColorWheelPreview = () => {
-      const { h,s,l } = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
-      baseColor.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
-      colorPreview.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
-      document.querySelector( ".paint-tools-options-color-well" ).style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.colorStyle;
-  
-      //Notes; Do not delete!
-      //convert HSL to coordinates
-          //saturation angle: (0) -2.71 -> -0.45 (1), range = 2.26
-          //luminosity angle: (0) +2.71 -> +0.45 (1), range = 2.26
-          //outer-ring distance: 0.308 -> 0.355, radius = .3315
-          //inner-ring distance: 0.218 -> 0.273, radius = .2455
-      
-      const outerRingRadius = 33.15,
-        innerRingRadius = 25,
-        hueAngle = (h  * Math.PI*2) - Math.PI,
-        saturationAngle = -2.71 + s * 2.26,
-        luminosityAngle = 2.71 - l * 2.26;
-  
-      {
-        //hue nub
-        const x = 50 + Math.cos( hueAngle ) * innerRingRadius,
-          y = 50 + Math.sin( hueAngle ) * innerRingRadius;
-        colorNubs.h.style.left = (x-2.5) + "%";
-        colorNubs.h.style.top = (y-2.5) + "%";
-      }
-      {
-        //saturation nub
-        const x = 50 + Math.cos( saturationAngle ) * outerRingRadius,
-          y = 50 + Math.sin( saturationAngle ) * outerRingRadius;
-        colorNubs.s.style.left = (x-2.5) + "%";
-        colorNubs.s.style.top = (y-2.5) + "%";
-      }
-      {
-        //luminosity nub
-        const x = 50 + Math.cos( luminosityAngle ) * outerRingRadius,
-          y = 50 + Math.sin( luminosityAngle ) * outerRingRadius;
-        colorNubs.l.style.left = (x-2.5) + "%";
-        colorNubs.l.style.top = (y-2.5) + "%";
-      }
-  
-  
-    }
-  
-    //color well's shared controls shouldn't need these references
-    let colorWheel, baseColor, colorPreview,
-      colorNubs = { h:null, s:null, l:null };
-
-    //the colorwheel panel
-    colorWheel = document.createElement( "div" );
-    colorWheel.classList.add( "color-wheel", "hidden", "animated" );
-    colorWheel.id = "color-wheel";
-    colorWheel.toggleVisibility = () => {
-      console.log( "Toggling visibility..." );
-      //set position
-      const r = document.querySelector( ".paint-tools-options-color-well" );
-      colorWheel.style.top = `calc( ${r.top + r.height}px + 1rem )`;
-      colorWheel.style.left = `calc( ${(r.left + r.right) / 2}px - ( var(--size) / 2 ) )`;
-      if( colorWheel.classList.contains( "hidden" ) ) {
-        colorWheel.classList.remove( "hidden" );
-      } else {
-        colorWheel.classList.add( "hidden" );
-      }
-    }
-
-    baseColor = document.createElement( "div" );
-    baseColor.classList.add( "base-color" );
-    colorWheel.appendChild( baseColor );
-
-    const upperSlot = new Image();
-      upperSlot.src = "ColorWheel-Slots-Upper.png";
-      upperSlot.className = "upper-slot";
-      colorWheel.appendChild( upperSlot );
-
-    const lowerSlot = new Image();
-      lowerSlot.src = "ColorWheel-Slots-Lower.png";
-      lowerSlot.className = "lower-slot";
-      colorWheel.appendChild( lowerSlot );
-
-    const base = new Image();
-      base.src = "ColorWheel-Base.png";
-      base.className = "base";
-      colorWheel.appendChild( base );
-
-    const nubOverlay = document.createElement( "div" );
-      nubOverlay.className = "nubs-overlay";
-      colorWheel.appendChild( nubOverlay );
-    for( const hslChannel in colorNubs ) {
-      const nub = document.createElement( "div" );
-      nub.className = "color-nub";
-      colorNubs[ hslChannel ] = nub;
-      nubOverlay.appendChild( nub );
-    }
-
-    colorPreview = document.createElement( "div" );
-    colorPreview.classList.add( "color-preview" );
-    colorWheel.appendChild( colorPreview );
-    
-    let draggingIn = null;
-
-    UI.registerElement(
-      base, 
-      {
-        onclickout: () => {
-          colorWheel.classList.add( "hidden" );
-        },
-        ondrag: ({ rect, start, current, ending, starting, element }) => {
-          //let's get the distance and angle
-          const dx = current.x - (rect.left+rect.width/2),
-            dy = current.y - (rect.top+rect.height/2),
-            len = Math.sqrt( dx*dx + dy*dy ) / rect.width,
-            ang = Math.atan2( dy, dx );
-          //saturation angle: (0) -2.71 -> -0.45 (1)
-          //luminosity angle: (0) +2.71 -> +0.45 (1)
-          //outer-ring distance: 79 -> 91 (size=256), do %: 0.308 -> 0.355
-          //inner-ring distance: 56 -> 70: 0.218 -> 0.273
-          if( starting ) {
-            draggingIn = null;
-            if( len >= 0.308 && len <= 0.355 ) {
-              //in one of the outer rings maybe
-              if( ang >= -2.71 && ang <= -0.45)
-                draggingIn = "saturationRing";
-              else if( ang >= 0.45 && ang <= 2.71 ) {
-                draggingIn = "luminosityRing"
-              }
-              else draggingIn = null;
-            }
-            else if( len >= 0.218 && len <= 0.273 ) {
-              //in the hue ring
-              draggingIn = "hueRing";
-            }
-          }
-
-          {
-            //set the color
-            let updated = false;
-
-            let { h, s, l } = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
-
-            if( draggingIn === "saturationRing" ) {
-              const at = Math.min( 1, Math.max( 0, 1 - (( Math.abs(ang) - 0.45 ) / (2.71-0.45)) ) );
-              s = at;
-              updated = true;
-            }
-            else if( draggingIn === "luminosityRing" ) {
-              const at = Math.min( 1, Math.max( 0, 1 - (( Math.abs(ang) - 0.45 ) / (2.71-0.45)) ) );
-              l = at;
-              updated = true;
-            }
-            else if( draggingIn === "hueRing" ) {
-              //normalize angle
-              const nang = ( ang + Math.PI ) / (Math.PI*2);
-              h = nang;
-              updated = true;
-            }
-
-            if( updated ) {
-              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.h = h;
-              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.s = s;
-              uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.l = l;
-              updateColorWheelPreview();
-            }
-          }
-        }
-      },
-      {} //no tooltip
-    );
-
-    uiContainer.appendChild( colorWheel );
-  }
-}
-
-/* function makeHorizontalSlider( div, value=0.5, min=0, max=1, step=0.05 ) {
-  const nub = div.appendChild( document.createElement( "div" ) );
-  div.setAttribute( "value", value );
-  div.setAttribute( "min", min );
-  div.setAttribute( "max", max );
-  div.setAttribute( "step", step );
-  let sliding = false;
-  div.addEventListener( "resize", () => {
-    const r = div.getClientRects()[ 0 ];
-    cnv.width = r.width * devicePixelRatio;
-    cnv.height = r.height * devicePixelRatio;
-  } );
-  div.addEventListener( "pointerdown", p => {
-    const x = p.offsetX;
-    const value = x / cnv.width; //do I need the devicePixelRatio?
-    nub.style.position.left = p.offsetX;
-  } )
-} */
 
 const keys = {}
 function enableKeyTrapping() {
@@ -4405,15 +3715,49 @@ function exportPNG() {
 
 }
 
+
+function cloneObjectForJSON( sourceObject, cloneTarget, ignorePath, path=[] ) {
+  if( ignorePath.includes( path.join(".") ) ) return;
+  for( const key in sourceObject ) {
+    const valueType = typeof sourceObject[ key ];
+    if( [ "string", "number", "boolean" ].includes( valueType ) )
+      cloneTarget[ key ] = sourceObject[ key ];
+    else if( Array.isArray( sourceObject[ key ] ) ) {
+      cloneTarget[ key ] ||= new Array( sourceObject[ key ].length );
+      cloneObjectForJSON( sourceObject[ key ], cloneTarget[ key ], ignorePath, path.concat( key ) );
+    }
+    else if( valueType === "object" ) {
+      cloneTarget[ key ] ||= {};
+      cloneObjectForJSON( sourceObject[ key ], cloneTarget[ key ], ignorePath, path.concat( key ) );
+    }
+  }
+}
+
 function saveJSON() {
-  const uiSettingsSave = JSON.parse( JSON.stringify( uiSettings ) );
+  let settingsClone = {};
+  const brushTipImages = uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages;
+  delete uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages;
+  cloneObjectForJSON( uiSettings, settingsClone, nonSavedSettingsPaths );
+  uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages = brushTipImages;
+  console.log( settingsClone );
+  const uiSettingsSave = JSON.parse( JSON.stringify( settingsClone ) );
   const layersSave = [];
   for( const layer of layersStack.layers ) {
     if( layer.layerType === "paint-preview" ) continue;
-    console.log( layer );
     //drop the canvas, context, glTexture... linkNodes??? ...Yeah. Those don't save right now.
     const {
-      visible, layerType, opacity, w, h,
+      layerType,
+      layerName,
+      layerId,
+
+      visible,
+      opacity,
+
+      generativeSettings,
+      nodeUplinks,
+      generativeControls,
+
+      w, h,
       topLeft, topRight, bottomLeft, bottomRight,
       /* textureChanged, textureChangedRect,
       maskChanged, maskChangedRect, maskInitialized, */
@@ -4422,10 +3766,23 @@ function saveJSON() {
     let saveMaskDataURL = null;
     if( layer.maskInitialized ) saveMaskDataURL = layer.maskCanvas.toDataURL();
     layersSave.push( {
-      visible, layerType, opacity, w, h,
+      layerType,
+      layerName,
+      layerId,
+
+      visible,
+      opacity,
+
+      generativeSettings,
+      nodeUplinks: [ ...nodeUplinks ],
+      generativeControls,
+      
+      w, h,
       topLeft, topRight, bottomLeft, bottomRight,
-      saveImageDataURL, saveMaskDataURL
+      saveImageDataURL,
+      saveMaskDataURL
     } );
+
   }
 
   const saveFile = {
@@ -4467,23 +3824,21 @@ function loadJSON() {
 
         const { uiSettingsSave, layersSave } = saveFile;
 
-        uiSettings = uiSettingsSave;
-        Object.defineProperty( uiSettings, "paintColor", {
-          get: function() {
-            const {r,g,b} = uiSettings.paint;
-            return `rgba(${r},${g},${b})`;
-          }
-        })
+        cloneObjectForJSON( uiSettingsSave, uiSettings, nonSavedSettingsPaths );
         uiSettings.nodeSnappingDistance = Math.min( innerWidth, innerHeight ) * 0.04; //~50px on a 1080p screen
+        loadBrushTipsImages();
       
+        //if we opened over an existing file, we have to clear everything up
         for( const layer of layersStack.layers ) {
           if( layer.layerType === "paint-preview" ) continue;
           deleteLayer( layer );
         }
         clearUndoHistory();
         
+        let lastLayer;
         for( const layer of layersSave ) {
-          const newLayer = await addCanvasLayer( layer.layerType, layer.w, layer.h );
+          let newLayer = await addCanvasLayer( layer.layerType, layer.w, layer.h, lastLayer );
+          lastLayer = newLayer;
           console.log( "Got new layer: ", newLayer );
           const img = new Image();
           img.onload = () => {
@@ -4503,22 +3858,53 @@ function loadJSON() {
           }
 
           const {
-            visible, layerType, opacity, w, h,
+            layerType,
+            layerName,
+            layerId,
+      
+            visible,
+            opacity,
+      
+            generativeSettings,
+            nodeUplinks,
+            generativeControls,
+            
+            w, h,
             topLeft, topRight, bottomLeft, bottomRight,
           } = layer;
-          newLayer.visible = visible;
+
           newLayer.layerType = layerType;
+          newLayer.layerName = layerName;
+          newLayer.layerId = layerId;
+          layersAddedCount = Math.max( layersAddedCount, layerId )
+
+          newLayer.visible = visible;
           newLayer.opacity = opacity;
+
+          newLayer.generativeSettings = generativeSettings;
+          newLayer.nodeUplinks = new Set( nodeUplinks );
+          newLayer.generativeControls = generativeControls;
+
           newLayer.w = w;
           newLayer.h = h;
           newLayer.topLeft = topLeft;
           newLayer.topRight = topRight;
           newLayer.bottomLeft = bottomLeft;
           newLayer.bottomRight = bottomRight;
+
           newLayer.textureChanged = false;
           //initialized to full panel, leave
           //newLayer.textureChangedRect = textureChangedRect;
         }
+
+        //update the brush color preview
+        {
+          const { h,s,l } = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
+          document.querySelector( ".paint-tools-options-color-well" ).style.backgroundColor = `hsl( ${h}turn ${s*100}% ${l*100}% )`;
+        }
+
+        UI.updateContext();
+
       }
         
     }
@@ -5490,7 +4876,7 @@ function paintGPU( points ) {
   //set the paint color
   {
     const brush = uiSettings.toolsSettings.paint.modeSettings.brush;
-    const [r,g,b] = brush.colorModes[brush.colorMode].rgbFloat;
+    const [r,g,b] = brush.colorModes[brush.colorMode].getRGBFloat();
     gl.uniform3f( paintGPUResources.paintColorIndex, r, g, b );
   }
 
@@ -5810,7 +5196,7 @@ function applyPaintStroke( points, destinationLayer ) {
 
   const settings = uiSettings.toolsSettings.paint.modeSettings;
   const { brushTipsImages, brushAspectRatio, brushTiltScale, brushTiltMinAngle, brushSize, brushOpacity, brushBlur, brushSpacing } = settings.all;
-  const colorStyle = settings.brush.colorModes[ settings.brush.colorMode ].colorStyle;
+  const colorStyle = settings.brush.colorModes[ settings.brush.colorMode ].getColorStyle();
   const { blendBlur, reblendSpacing, reblendAlpha } = settings.blend;
 
   const scaledBrushSize = brushSize * 1;
@@ -7706,7 +7092,7 @@ async function executeAPICall( name, controlValues ) {
             while( path.length ) {
               if( typeof results[ resultScheme.name ] !== "object" ) {
                 //path cannot be resolved
-                console.error( "Unresolvable result path." );
+                console.error( "Unresolvable result path.", results, resultScheme, response, controlValues );
                 proceed( false );
               }
               const key = path.shift();
@@ -7764,7 +7150,6 @@ async function executeAPICall( name, controlValues ) {
       }
     } );
     if( completedSuccessfully === true ) {
-      console.log( "Successfully completed apicall." );
       apiResults[ apiCall.apiCallName ] = results;
     }
     else if( completedSuccessfully === false ) {
@@ -7772,7 +7157,6 @@ async function executeAPICall( name, controlValues ) {
       return false;
     }
   }
-  console.log( "Got results: ", apiResults );
   const outputs = {};
   //successfully populated apiResults, or else returned error
   for( const outputScheme of apiFlow.outputs ) {
@@ -7828,6 +7212,48 @@ const apiFlows = [
     ]
   },
   {
+    apiFlowName: "A1111 Layer to Lineart Demo",
+    apiFlowType: "generative",
+    outputs: [
+      {
+        outputName: "generated-image",
+        outputType: "image", //could be images array maybe
+        outputResultPath: [ "cn", "generated-image" ]
+      }
+    ],
+    controls: [
+      { controlName: "module", controlType: "static", controlValue:"lineart_anime_denoise", controlPath: [ "cn", "api", "controlnet_module" ], },
+      { controlName: "threshold a", controlType: "number", min:1, max:255, step:1, controlValue:64, controlPath: [ "cn", "api", "controlnet_threshold_a" ], },
+      { controlName: "threshold b", controlType: "number", min:1, max:255, step:1, controlValue:64, controlPath: [ "cn", "api", "controlnet_threshold_b" ], },
+      { controlName: "controlnet", controlHint: "CN", controlType: "image", controlValue:"", controlLayer:null, controlPath: [ "cn", "api", "controlnet_input_images", 0 ], },
+      { controlName: "resolution", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlLayerControlName: "controlnet", controlPath: [ "cn", "api", "controlnet_processor_res" ], },
+    ],
+    apiCalls: [
+      {
+        apiCallName: "cn",
+        results: [
+          {
+            resultName: "generated-image",
+            resultType: "base64-image", //could be images array maybe
+            resultPath: [ "images", 0 ],
+          }
+        ],
+        host: "device",
+        port: 7860,
+        apiPath: "/controlnet/detect",
+        method: "POST",
+        api: {
+          "controlnet_module": "none",
+          "controlnet_input_images": [ "" ],
+          "controlnet_processor_res": 512,
+          "controlnet_threshold_a": 64,
+          "controlnet_threshold_b": 64,
+          "low_vram": false
+        }
+      }
+    ]
+  },
+  {
     apiFlowName: "A1111 Lightning Demo img2img Mini",
     apiFlowType: "generative",
     outputs: [
@@ -7847,8 +7273,8 @@ const apiFlows = [
       { controlName: "denoise", controlType: "number", min:0, max:1, step:0.01, controlValue:0.75, controlPath: [ "i2i", "api", "denoising_strength" ], },
       { controlName: "steps", controlType: "number", min:1, max:100, step:1, controlValue:4, controlPath: [ "i2i", "api", "steps" ], },
       { controlName: "cfg", controlType: "number", controlValue:1.5, min:0, max: 20, step:0.5, controlPath: [ "i2i", "api", "cfg_scale" ], },
-      { controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlPath: [ "i2i", "api", "width" ], },
-      { controlName: "height", controlType: "layer-input", layerPath: ["h"], controlValue:1024, controlPath: [ "i2i", "api", "height" ], },
+      { controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlLayerControlName: "img2img", controlPath: [ "i2i", "api", "width" ], },
+      { controlName: "height", controlType: "layer-input", layerPath: ["h"], controlValue:1024, controlLayerControlName: "img2img", controlPath: [ "i2i", "api", "height" ], },
 
       { controlName: "img2img", controlHint: "i2i", controlType: "image", controlValue:"", controlLayer:null, controlPath: [ "i2i", "api", "init_images", 0 ], },
     ],
