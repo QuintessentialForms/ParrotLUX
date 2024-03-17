@@ -59,6 +59,8 @@ Coming very soon! Windows binary and Android APK will be available.
     - ❌ Gestures triple-tap+drag
     - ❌ Mouse Input
     - ❌ Keyboard Shortcuts
+        - ✅ Some
+        - ❌ All
 - ✅ Layers
     - ✅ Paint
     - ✅ AI Generation
@@ -68,8 +70,8 @@ Coming very soon! Windows binary and Android APK will be available.
     - ✅ Visibility
     - ✅ Opacity
     - ✅ Masks
-    - ❌ Rename
-    - ❌ Reorganize
+    - ✅ Rename
+    - ✅ Reorganize
     - ❌ Layer Groups
 - ✅ Undo / Redo
 - ✅ Save / Load
@@ -98,7 +100,7 @@ Coming very soon! Windows binary and Android APK will be available.
         - ✅ A1111 img2img / inpainting-with-mask (demo)
         - ✅ A1111 txt2img (demo)
         - ❌ A1111 controlnet (demo)
-        - ❌ A1111 controlnet preprocessor (demo)
+        - ✅ A1111 controlnet preprocessor (demo)
         - ❌ A1111 upscale (demo)
         - ❌ Comfy img2img / inpainting-with-mask (demo)
         - ❌ Comfy txt2img (demo)
@@ -111,14 +113,14 @@ Coming very soon! Windows binary and Android APK will be available.
     - ✅ Paint
     - ✅ Erase
     - ❌ Blend
-- ❌ Layer Transforms
-    - ❌ Translate
-    - ❌ Scale
-    - ❌ Rotate
+- ✅ Layer Transforms
+    - ✅ Translate
+    - ✅ Scale
+    - ✅ Rotate
     - ❌ Flip
     - ❌ Crop / Uncrop
-    - Snap
-    - Arrange / Distribute
+    - ❌ Snap
+    - ❌ Arrange / Distribute
 - ❌ Paint Mirror Symmetry
 - ❌ Filters
     - ❌ Basic (Hue,Saturation,Luminance,Contrast...)

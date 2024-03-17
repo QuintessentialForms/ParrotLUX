@@ -102,23 +102,56 @@ function redo() {
   };
 }
 
-let layersAddedCount = -1;
-async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
+let layersAddedCount = -2;
+async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibling ) {
   
-  //layerType === "paint" | "paint-preview" | "generative"
+  //layerType === "paint" | "paint-preview" | "generative" | "group" | "text" | "pose" | "model" | ...
 
-  let tl =  [W/2-lw/2,H/2-lh/2,1],
-   tr = [W/2+lw/2,H/2-lh/2,1],
-   bl = [W/2-lw/2,H/2+lh/2,1],
-   br = [W/2+lw/2,H/2+lh/2,1];
+  let layerCenterX = W/2,
+    layerCenterY = H/2;
+  let topLeftCorner, topRightCorner, bottomLeftCorner, bottomRightCorner;
 
-  if( layersStack.layers.length > 0 ) {
-    const { topLeft, topRight, bottomLeft, bottomRight } = layersStack.layers[ 0 ];
-    tl = [...topLeft];
-    tr = [...topRight];
-    bl = [...bottomLeft];
-    br = [...bottomRight];
+  if( layerWidth === null || layerHeight === null ) {
+    if( [ "paint", "generative", "text" ].includes( selectedLayer?.layerType ) ) {
+      layerWidth = selectedLayer.w;
+      layerHeight = selectedLayer.h;
+      const { topLeft, topRight, bottomLeft, bottomRight } = selectedLayer;
+      topLeftCorner = [...topLeft];
+      topRightCorner = [...topRight];
+      bottomLeftCorner = [...bottomLeft];
+      bottomRightCorner = [...bottomRight];
+    } else {
+      //get dimensions only from the top layer
+      for( let i = layersStack.layers.length-1; i >= 0; i-- ) {
+        const stackLayer = layersStack.layers[ i ];
+        if( ! [ "paint", "generative", "text" ].includes( stackLayer.layerType ) )
+          continue;
+        layerWidth = stackLayer.w;
+        layerHeight = stackLayer.h;
+        break;
+      }
+      //finally, get default from settings
+      if( layerWidth === null || layerWidth === null ) {
+        layerWidth = uiSettings.defaultLayerWidth;
+        layerHeight = uiSettings.defaultLayerHeight;
+      }
+    }
   }
+
+  topLeftCorner =  [layerCenterX-layerWidth/2,layerCenterY-layerHeight/2,1];
+  topRightCorner = [layerCenterX+layerWidth/2,layerCenterY-layerHeight/2,1];
+  bottomLeftCorner = [layerCenterX-layerWidth/2,layerCenterY+layerHeight/2,1];
+  bottomRightCorner = [layerCenterX+layerWidth/2,layerCenterY+layerHeight/2,1];
+
+  let apiFlowName = null;
+  for( let i = layersStack.layers.length-1; i >= 0; i-- ) {
+    const stackLayer = layersStack.layers[ i ];
+    if( stackLayer.layerType !== "generative" )
+      continue;
+    apiFlowName = stackLayer.generativeSettings.apiFlowName;
+    break;
+  }
+  if( apiFlowName === null ) apiFlowName = uiSettings.defaultAPIFlowName;
 
   //create the back-end layer info
   console.error( "On gen layer make, pull current / last used / first api flow controls" );
@@ -127,6 +160,9 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
     layerType,
     layerName: "Layer " + (++layersAddedCount),
     layerId: layersAddedCount,
+    layerGroupId: null,
+    groupCompositeUpToDate: true,
+    groupClosed: false,
 
     visible: true,
     setVisibility: null,
@@ -134,17 +170,27 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
     setOpacity: null,
 
     //changes IFF you change it
-    generativeSettings: {
-      apiFlowName: "A1111 Lightning Demo txt2img Mini"
-    },
+    generativeSettings: { apiFlowName },
     nodeUplinks: new Set(),
     generativeControls: {},
 
-    w:lw, h:lh,
-    topLeft:tl,
-    topRight:tr,
-    bottomLeft:bl,
-    bottomRight:br,
+    //we can use transform + l/w to rectify our points and avoid drift accumulation
+    transform: {
+      scale: 1,
+      angle: 0,
+      transformingPoints: {
+        topLeft:[...topLeftCorner],
+        topRight:[...topRightCorner],
+        bottomLeft:[...bottomLeftCorner],
+        bottomRight:[...bottomRightCorner],    
+      }
+    },
+    w:layerWidth, h:layerHeight,
+
+    topLeft:topLeftCorner,
+    topRight:topRightCorner,
+    bottomLeft:bottomLeftCorner,
+    bottomRight:bottomRightCorner,
 
     canvas: document.createElement("canvas"),
     context: null,
@@ -155,25 +201,28 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
 
     glTexture: null,
     textureChanged: false,
-    textureChangedRect: {x:0,y:0,w:lw,h:lh},
+    textureChangedRect: {x:0,y:0,w:layerWidth,h:layerHeight},
 
     glMask: null,
     maskChanged: false,
-    maskChangedRect: {x:0,y:0,w:lw,h:lh},
+    maskChangedRect: {x:0,y:0,w:layerWidth,h:layerHeight},
 
     layerButton: null,
 
   }
-  newLayer.canvas.width = lw;
-  newLayer.canvas.height = lh;
+  newLayer.canvas.width = layerWidth;
+  newLayer.canvas.height = layerHeight;
   newLayer.context = newLayer.canvas.getContext( "2d" );
 
-  newLayer.maskCanvas.width = lw;
-  newLayer.maskCanvas.height = lh;
+  newLayer.maskCanvas.width = layerWidth;
+  newLayer.maskCanvas.height = layerHeight;
   newLayer.maskContext = newLayer.maskCanvas.getContext( "2d" );
   //opacify the mask
   newLayer.maskContext.fillStyle = "rgb(255,255,255)";
-  newLayer.maskContext.fillRect( 0,0,lw,lh );
+  newLayer.maskContext.fillRect( 0,0,layerWidth,layerHeight );
+
+  if( selectedLayer && ! nextSibling )
+      nextSibling = selectedLayer;
 
   if( nextSibling ) {
     const index = layersStack.layers.indexOf( nextSibling );
@@ -220,11 +269,12 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
 
   let layerSibling,
     layerButton;
-  if( layerType === "paint" || layerType === "generative" ) {
+  if( layerType !== "paint-preview" ) {
     //create the layer button
     layerButton = document.createElement( "div" );
     layerButton.classList.add( "layer-button", "expanded" );
     layerButton.appendChild( newLayer.canvas );
+    layerButton.layer = newLayer; //Yep, I'm adding it. Double-link.
     newLayer.layerButton = layerButton;
     let startScrollingOffset = 0,
       currentlyScrolling = false,
@@ -259,6 +309,26 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
       },
       { tooltip: ["Select Layer", "to-left", "above-center" ], zIndex:100 }
     );
+
+    //add the layer group joiner
+    {
+      const layerGroupJoiner = document.createElement( "div" );
+      layerGroupJoiner.classList.add( "layer-group-joiner" );
+      layerButton.appendChild( layerGroupJoiner );
+    }
+
+    //add the reorganizer drop-zones
+    {
+      const upperDropzone = document.createElement( "div" );
+      upperDropzone.classList.add( "layer-upper-dropzone", "animated" );
+      layerButton.appendChild( upperDropzone );
+      const lowerDropZone = document.createElement( "div" );
+      lowerDropZone.classList.add( "layer-lower-dropzone", "animated" );
+      layerButton.appendChild( lowerDropZone );
+      const lowerDropzoneGroupJoiner = document.createElement( "div" );
+      lowerDropzoneGroupJoiner.classList.add( "layer-lower-dropzone-group-joiner", "animated" );
+      layerButton.appendChild( lowerDropzoneGroupJoiner );
+    }
 
     //add the opacity slider
     {
@@ -311,7 +381,7 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
         {
           onclick: async () => {
             //adding the new layer inherently adds the undo component
-            const copy = await addCanvasLayer( layerType, lw, lh, newLayer )
+            const copy = await addCanvasLayer( layerType, newLayer.w, newLayer.h, newLayer )
             //by altering the properties without registering a new undo, the creation undo is a copy
             copy.context.drawImage( newLayer.canvas, 0, 0 );
             if( newLayer.maskInitialized )
@@ -354,47 +424,144 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
       layerButton.appendChild( deleteButton );
     }
 
-    //the move button
+    //the move handle
     {
-      const moveButton = document.createElement( "div" );
-      moveButton.classList.add( "layer-move-button", "layer-ui-button", "animated", "unimplemented"  );
+      const moveHandle = document.createElement( "div" );
+      moveHandle.classList.add( "layer-move-button", "layer-ui-button", "animated"  );
+      let hoveringDropTarget = null;
       UI.registerElement(
-        moveButton,
+        moveHandle,
         {
           ondrag: ({ rect, start, current, ending, starting, element }) => {
             if( starting ) {
+              //remove any visible links
+              document.querySelectorAll( ".layer-node-tail" ).forEach( n => nodeLinkSource.removeChild( n ) );
+              //they'll all be remade on update context (hopefully...)
               uiContainer.appendChild( layerButton );
               layerButton.style.position = "absolute";
             }
             layerButton.style.left = `calc( ${current.x}px - 1.5rem )`;
             layerButton.style.top = `calc( ${current.y}px - 3.5rem )`;
+            //check where we're hovering
+            let closestLayerButton = null,
+              closestLayerButtonDistance = Infinity,
+              closestLayerButtonDy = 0,
+              layerButtonHeight = -1;
+            for( const dropzoneButton of document.querySelectorAll( "#layers-column .layer-button" ) ) {
+              const r = dropzoneButton.getClientRects()[ 0 ];
+              if( ! r ) continue;
+              layerButtonHeight = r.height;
+              const distance = Math.abs( current.y - ( r.top + r.height/2 ) );
+              if( distance < closestLayerButtonDistance ) {
+                //closestLayerButton?.classList.remove( "hover-drop-above", "hover-drop-below" );
+                closestLayerButtonDistance = distance;
+                closestLayerButtonDy = current.y - ( r.top + r.height/2 );
+                closestLayerButton = dropzoneButton;
+              }
+            }
+            if( closestLayerButton && closestLayerButtonDistance < layerButtonHeight * 2 ) {
+              if( hoveringDropTarget ) hoveringDropTarget.classList.remove( "hover-drop-above", "hover-drop-below" );
+              hoveringDropTarget = closestLayerButton;
+              if( closestLayerButtonDy > 0 ) closestLayerButton.classList.add( "hover-drop-below" );
+              else closestLayerButton.classList.add( "hover-drop-above" );
+            }
+            else if( hoveringDropTarget ) {
+              hoveringDropTarget.classList.remove( "hover-drop-above", "hover-drop-below" );
+              hoveringDropTarget = null;
+            }
+            //TODO: Implement scroll on layer reorganize
             if( ending ) {
-              document.querySelector( "#layers-column" ).appendChild( layerButton );
+              let newIndex;
+              if( hoveringDropTarget ) {
+                //get old and new indices for the layer drop
+                const oldIndex = layersStack.layers.indexOf( newLayer );
+
+                newIndex = layersStack.layers.indexOf( hoveringDropTarget.layer );
+                if( hoveringDropTarget.classList.contains( "hover-drop-below" ) ) newIndex -= 1;
+
+                //clean up the hovering visuals
+                hoveringDropTarget.classList.remove( "hover-drop-above", "hover-drop-below" );
+
+                //don't pollute the undo stack if no change
+                if( newIndex !== oldIndex ) {
+                  layersStack.layers.splice( oldIndex, 1 );
+                  layersStack.layers.splice( newIndex, 0, newLayer );
+  
+                  const historyEntry = {
+                    oldIndex,
+                    newIndex,
+                    targetLayer: newLayer,
+                    undo: () => {
+                      layersStack.layers.splice( historyEntry.newIndex, 1 );
+                      layersStack.layers.splice( historyEntry.oldIndex, 0, historyEntry.targetLayer );
+                      reorganizeLayerButtons();
+                    },
+                    redo: () => {
+                      layersStack.layers.splice( historyEntry.oldIndex, 1 );
+                      layersStack.layers.splice( historyEntry.newIndex, 0, historyEntry.targetLayer );
+                      reorganizeLayerButtons();
+                    }
+                  }
+                  recordHistoryEntry( historyEntry );
+                }
+              }
               layerButton.style = "";
+              reorganizeLayerButtons();
             }
           },
         },
-        { tooltip: [ "!unimplemented! Reorganize Layer", "to-left", "vertical-center" ], zIndex:1000 },
+        { tooltip: [ "Reorganize Layer", "to-left", "vertical-center" ], zIndex:1000 },
       )
-      layerButton.appendChild( moveButton );
+      layerButton.appendChild( moveHandle );
     }
 
     //the layer name
     {
       const layerName = document.createElement( "div" );
-      layerName.classList.add( "layer-name", "animated", "unimplemented"  );
+      layerName.classList.add( "layer-name", "animated"  );
       const layerNameText = layerName.appendChild( document.createElement( "span" ) );
+      layerNameText.classList.add( "layer-name-text" );
       layerNameText.textContent = newLayer.layerName;
-      layerName.uiActive = false;
       UI.registerElement(
         layerName,
         {
           onclick: () => {
-            //TODO should be easy with overlay accessible now?
-            console.log( "Layer name was clicked." );
+            console.log( "Showing." );
+            const textInput = document.querySelector( "#multiline-text-input-overlay" );
+            textInput.setText( newLayer.layerName );
+            textInput.onapply = text => {
+              //get old and new values
+              const oldLayerName = newLayer.layerName;
+              const newLayerName = text;
+              
+              newLayer.layerName = text;
+              layerNameText.textContent = newLayer.layerName;
+              layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
+
+              const historyEntry = {
+                oldLayerName,
+                newLayerName,
+                targetLayer: newLayer,
+                undo: () => {
+                  newLayer.layerName = oldLayerName;
+                  layerNameText.textContent = newLayer.layerName;
+                  layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
+                },
+                redo: () => {
+                  newLayer.layerName = newLayerName;
+                  layerNameText.textContent = newLayer.layerName;
+                  layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
+                }
+              }
+              recordHistoryEntry( historyEntry );
+            }
+            textInput.show();
           },
+          updateContext: () => {
+            layerNameText.textContent = newLayer.layerName;
+          }
         },
-        { tooltip: [ "!unimplemented! Rename Layer", "above", "to-left-of-center" ], zIndex:1000 },
+        { tooltip: [ `Rename Layer [${newLayer.layerName}]`, "above", "to-left-of-center" ], zIndex:1000 },
       )
       layerButton.appendChild( layerName );
     }
@@ -440,21 +607,26 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
           onclick: () => {
             //The button should only be enabled if merging is possible, but let's check anyway.
             const index = layersStack.layers.indexOf( newLayer );
-            if( layersStack.layers[ index - 1 ]?.layerType === "paint" ) {
+            if( layersStack.layers[ index - 1 ]?.layerType === "paint" &&
+                layersStack.layers[ index - 1 ]?.layerGroupId === newLayer.layerGroupId ) {
               const lowerLayer = layersStack.layers[ index - 1 ];
               //save the current, un-merged lower layer
               const oldData = lowerLayer.context.getImageData( 0,0,lowerLayer.w,lowerLayer.h );
-              //merge this layer down onto the lower layer
+
+              //this layer can't be a group layer, because those can't be merged.
+              //(They can be flattened to paint layers though.)
+
+              //sample this layer onto the lower layer
+              let previewLayer = layersStack.layers.find( l => l.layerType === "paint-preview" );
+              sampleLayerInLayer( newLayer, lowerLayer, previewLayer );
+
+              //merge the sampled area onto the lower layer
               lowerLayer.context.save();
               lowerLayer.context.globalAlpha = newLayer.opacity;
-              lowerLayer.context.drawImage( newLayer.canvas, 0, 0 );
+              lowerLayer.context.drawImage( previewLayer.canvas, 0, 0 );
               lowerLayer.context.restore();
               //flag the lower layer for GPU upload
-              lowerLayer.textureChanged = true;
-              lowerLayer.textureChangedRect.x = 0;
-              lowerLayer.textureChangedRect.y = 0;
-              lowerLayer.textureChangedRect.w = lowerLayer.w;
-              lowerLayer.textureChangedRect.h = lowerLayer.h;
+              flagLayerTextureChanged( lowerLayer );
               //delete this upper layer from the stack
               layersStack.layers.splice( index, 1 );
               //remember this upper layer's parent and sibling for DOM-reinsertion
@@ -481,11 +653,7 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
                   //restore the lower layer's data
                   lowerLayer.context.putImageData( historyEntry.oldData, 0, 0 );
                   //and flag it for GPU upload
-                  lowerLayer.textureChanged = true;
-                  lowerLayer.textureChangedRect.x = 0;
-                  lowerLayer.textureChangedRect.y = 0;
-                  lowerLayer.textureChangedRect.w = lowerLayer.w;
-                  lowerLayer.textureChangedRect.h = lowerLayer.h;
+                  flagLayerTextureChanged( historyEntry.lowerLayer );
                   //reinsert the upper layer into the layer's stack
                   layersStack.layers.splice( historyEntry.index, 0, historyEntry.upperLayer );
                   //reinsert the upper layer into the DOM
@@ -499,12 +667,8 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
                   historyEntry.domParent.removeChild( historyEntry.upperLayer.layerButton );
                   //blit the merged data agaain
                   historyEntry.lowerLayer.context.putImageData( historyEntry.newData, 0, 0 );
-                  //and GPU upload
-                  lowerLayer.textureChanged = true;
-                  lowerLayer.textureChangedRect.x = 0;
-                  lowerLayer.textureChangedRect.y = 0;
-                  lowerLayer.textureChangedRect.w = lowerLayer.w;
-                  lowerLayer.textureChangedRect.h = lowerLayer.h;
+                  //and flag for GPU upload
+                  flagLayerTextureChanged( historyEntry.lowerLayer );
                   //all done theoretically yay
                   //seems all good for now
                 }
@@ -515,6 +679,8 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
               mergeButton.classList.remove( "enabled" );
               mergeButton.uiActive = false;
             }
+
+            UI.updateContext();
 
           },
           updateContext: () => {
@@ -527,7 +693,8 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
               let canMerge = false;
               if( newLayer.layerType === "paint" ) {
                 const index = layersStack.layers.indexOf( newLayer );
-                if( layersStack.layers[ index - 1 ]?.layerType === "paint" ) {
+                if( layersStack.layers[ index - 1 ]?.layerType === "paint" &&
+                    layersStack.layers[ index - 1 ]?.layerGroupId === newLayer.layerGroupId ) {
                   canMerge = true;
                 }
               }
@@ -590,7 +757,7 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
             }
             recordHistoryEntry( historyEntry );
     
-            UI.updateContext();    
+            UI.updateContext();
           },
           updateContext: () => {
             let isVisible = true;
@@ -801,19 +968,18 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
 
   if( layerType === "paint" || layerType === "generative" ) {
     const historyEntry = {
-      newLayer, 
+      newLayer,
       stackIndex: layersStack.layers.indexOf( newLayer ),
       undo: () => {
         layersStack.layers.splice( historyEntry.stackIndex, 1 );
-        layerButton.parentElement.removeChild( layerButton );
+        //layerButton.parentElement.removeChild( layerButton );
+        reorganizeLayerButtons();
       },
       redo: () => {
         layersStack.layers.splice( historyEntry.stackIndex, 0, historyEntry.newLayer );
-        if( layerSibling ) {
-          document.querySelector( "#layers-column" ).insertBefore( layerButton, layerSibling );
-        } else {
-          document.querySelector( "#layers-column" ).appendChild( layerButton );
-        }
+        //if( layerSibling ) document.querySelector( "#layers-column" ).insertBefore( layerButton, layerSibling );
+        //else document.querySelector( "#layers-column" ).appendChild( layerButton );
+        reorganizeLayerButtons();
       }
     }
     recordHistoryEntry( historyEntry );
@@ -823,7 +989,113 @@ async function addCanvasLayer( layerType, lw=1024, lh=1024, nextSibling ) {
   
 }
 
-function composeLayers( destinationLayer, layers, layer0WidthPixels ) {
+function reorganizeLayerButtons() {
+  //we're going to remove and re-insert all our layerbuttons
+  //making sure everything goes in its right group
+  //hmm... I think... Our scroll shouldn't be affected? Much? I hope?
+  //No, the scroll should be fine. If not, I'll fix it.
+
+  //basically, we have these new properties:
+  // layerDepth: this bumps the layer leftward and shrinks it, while also adding a white bar to the right.
+  // for layerDepth > 1, the bump distance and # of bars grows. :-|
+
+  //pop all the buttons
+  document.querySelectorAll( ".layer-button" ).forEach( lb => lb.parentElement.removeChild( lb ) );
+
+  const layersColumn = document.querySelector( "#layers-column" );
+
+  //reinstall in order
+  for( let i=layersStack.layers.length-1; i>=0; i-- ) {
+    const layer = layersStack.layers[ i ];
+    if( layer.layerType === "paint-preview" ) continue;
+    layersColumn.appendChild( layer.layerButton );
+    const layerGroupDepth = Math.min( 5, getLayerGroupDepth( layer ) );
+    if( layerGroupDepth > 0 ) {
+      layer.layerButton.classList.add( "layer-in-group", "layer-group-depth-" + layerGroupDepth );
+    }
+    else layer.layerButton.classList.remove( "layer-in-group" );
+  }
+
+}
+
+//after sampleLayerInLayer, we'll swap out the img2img pull code with sampling like this
+
+function sampleLayerInLayer( sourceLayer, rectLayer, compositingLayer ) {
+
+  //match our compositingLayer to the rectLayer
+  compositingLayer.canvas.width = rectLayer.w;
+  compositingLayer.canvas.height = rectLayer.h;
+
+  //get our rectLayer's coordinate space
+  let origin = { x:rectLayer.topLeft[0], y:rectLayer.topLeft[1] },
+    xLeg = { x:rectLayer.topRight[0] - origin.x, y: rectLayer.topRight[1] - origin.y },
+    xLegLength = Math.sqrt( xLeg.x**2 + xLeg.y**2 ),
+    normalizedXLeg = { x:xLeg.x/xLegLength, y:xLeg.y/xLegLength },
+    yLeg = { x:rectLayer.bottomLeft[0] - origin.x, y: rectLayer.bottomLeft[1] - origin.y },
+    yLegLength = Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
+    normalizedYLeg = { x:yLeg.x/yLegLength, y:yLeg.y/yLegLength };
+
+  //cast sourceLayer's points to rectLayer's space
+  let castPoints = {}
+  for( const pointName of [ "topLeft", "topRight", "bottomLeft" ] ) {
+    let [x,y] = sourceLayer[ pointName ];
+    //translate from origin
+    x -= origin.x; y -= origin.y;
+    //project on normals
+    let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
+    let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
+    //unnormalize
+    xProjection *= rectLayer.w / xLegLength;
+    yProjection *= rectLayer.h / yLegLength;
+    castPoints[ pointName ] = { x:xProjection, y: yProjection }
+  }
+
+  //in this new space, get sourceLayer's axis legs
+  const sourceTopLeg = { dx:castPoints.topRight.x - castPoints.topLeft.x, dy:castPoints.topRight.y - castPoints.topLeft.y },
+    sourceToplegLength = Math.sqrt( sourceTopLeg.dx**2 + sourceTopLeg.dy**2 ),
+    sourceSideLeg = { dx:castPoints.bottomLeft.x - castPoints.topLeft.x, dy:castPoints.bottomLeft.y - castPoints.topLeft.y },
+    sourceSideLegLength = Math.sqrt( sourceSideLeg.dx**2 + sourceSideLeg.dy**2 );
+
+  //in this new space, get sourceLayer's rotation
+  const sourceRotation = Math.atan2( sourceTopLeg.dy, sourceTopLeg.dx );
+  
+  console.log( castPoints, sourceRotation, sourceToplegLength, sourceSideLegLength );
+
+  //draw to the compositing layer
+  const ctx = compositingLayer.context;
+  ctx.save();
+  ctx.clearRect( 0,0,rectLayer.w,rectLayer.h );
+  ctx.translate( castPoints.topLeft.x, castPoints.topLeft.y );
+  ctx.rotate( sourceRotation );
+  //ctx.scale( relativeScale, relativeScale );
+  //draw image
+  ctx.drawImage( sourceLayer.canvas, 0, 0, sourceToplegLength, sourceSideLegLength );
+  //clip to mask
+  if( sourceLayer.maskInitialized ) {
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.drawImage( sourceLayer.maskCanvas, 0, 0, sourceToplegLength, sourceSideLegLength );
+  }
+  ctx.restore();
+
+  //compositingLayer now contains a snapshot of sourceLayer as it overlaps rectLayer
+
+}
+
+function updateLayerGroupComposite( layer ) {
+  //You expect the layer group's resolution to be its visible relative resolution on-screen. And you expect its size to be determined by its contents.
+  //We diverge from this behavior If and Only If you export a layer individually.
+
+  const childLayers = layersStack.layers.filter( l => l.layerGroupId === layer.layerId );
+  //console.error( "Layer group compositing is not checking for cyclical references." );
+  for( const childLayer of childLayers )
+    if( childLayer.layerType === "group" && ! childLayer.groupCompositeUpToDate )
+      updateLayerGroupComposite( childLayer );
+
+  //update
+  composeLayers( layer, childLayers, 1 );
+}
+
+function composeLayers( destinationLayer, layers, pixelScale ) {
   let minX = Infinity, minY = Infinity,
     maxX = -Infinity, maxY = -Infinity;
   for( const layer of layers ) {
@@ -842,16 +1114,6 @@ function composeLayers( destinationLayer, layers, layer0WidthPixels ) {
 
   console.log( minX, minY, maxX, maxY );
 
-  //get the actual width of layer 0
-  let pixelScale;
-  {
-    const layer = layers[ 0 ],
-      dx = layer.topRight[0] - layer.topLeft[0],
-      dy = layer.topRight[1] - layer.topLeft[1],
-      d = Math.sqrt( dx**2 + dy**2 );
-    pixelScale = layer0WidthPixels / d;
-
-  }
   const width = parseInt( ( maxX - minX ) * pixelScale ),
     height = parseInt( ( maxY - minY ) * pixelScale );
 
@@ -892,6 +1154,7 @@ function composeLayers( destinationLayer, layers, layer0WidthPixels ) {
         ctx.drawImage( layer.canvas, 0, 0 );
       }
       /* ctx.lineWidth = 1.0;
+      
       ctx.strokeStyle = "black";
       ctx.strokeRect( 0, 0, layer.canvas.width, layer.canvas.height ); */
       ctx.restore();
@@ -914,6 +1177,13 @@ function flagLayerTextureChanged( layer, rect=null ) {
     layer.textureChangedRect.w = rect.w;
     layer.textureChangedRect.h = rect.h;
   }
+  let groupChainLayer = layer;
+  while( groupChainLayer.layerGroupId !== null ) {
+    const groupLayer = layersStack.layers.find( l => l.layerId ===groupChainLayer.layerGroupId )
+    //if( ! groupLayer ) { console.error( "Layer missing declared group: ", groupChainLayer ); }
+    groupLayer.groupCompositeUpToDate = false;
+    groupChainLayer = groupLayer;
+  }
 }
 function flagLayerMaskChanged( layer, rect=null ) {
   layer.maskChanged = true;
@@ -928,49 +1198,124 @@ function flagLayerMaskChanged( layer, rect=null ) {
     layer.maskChangedRect.w = rect.w;
     layer.maskChangedRect.h = rect.h;
   }
+  let groupChainLayer = layer;
+  while( groupChainLayer.layerGroupId !== null ) {
+    const groupLayer = layersStack.layers.find( l => l.layerId ===groupChainLayer.layerGroupId )
+    //if( ! groupLayer ) { console.error( "Layer missing declared group: ", groupChainLayer ); }
+    groupLayer.groupCompositeUpToDate = false;
+    groupChainLayer = groupLayer;
+  }
+}
+
+function collectGroupedLayersAsFlatList( groupLayerId ) {
+  const collectedLayers = [];
+  let groupIdsToCheck = [ groupLayerId ];
+  while( groupIdsToCheck.length > 0 ) {
+    const groupId = groupIdsToCheck.pop();
+    for( const layer of layersStack.layers ) {
+      if( layer.layerGroupId === groupId ) {
+        collectedLayers.push( layer );
+        if( layer.layerType === "group" ) {
+          groupIdsToCheck.push( layer.layerId );
+        }
+      }
+    }
+  }
+}
+
+function getLayerGroupDepth( layer ) {
+  if( !layer || layer.layerGroupId === null ) return 0;
+  return 1 + getLayerGroupDepth( layersStack.layers.find( l => l.layerId === layer.layerGroupId ) );
+}
+
+function getLayerVisibility( layer ) {
+  if( layer.visible === false ) return false;
+  if( layer.layerGroupId === null && layer.visible === true ) return true;
+  return getLayerVisibility( layersStack.layers.find( l => l.layerId === layer.layerGroupId ) );
 }
 
 async function deleteLayer( layer ) {
 
   //if this layer is selected, unselect it
   if( selectedLayer === layer ) selectedLayer = null;
+  //(we'll reselect a new layer at the bottom of this function)
 
-  //delete from layer stack
+  //delete layer (and any children) from stack
   const index = layersStack.layers.indexOf( layer );
+  const layerIndexPairs = [ [layer, index] ];
   layersStack.layers.splice( index, 1 );
-  //remember the layer's parent and sibling in the DOM
-  const domSibling = layer.layerButton.nextElementSibling,
-    domParent = layer.layerButton.parentElement;
-  //remove button from DOM
-  domParent.removeChild( layer.layerButton );
+  const groupsToCheck = [];
+  if( layer.layerType === "group" ) groupsToCheck.push( layer.layerId );
+  while( groupsToCheck.length ) {
+    const groupId = groupsToCheck.pop();
+    for( let i=layersStack.layers.length-1; i>=0; i-- ) {
+      const searchLayer = layersStack.layers[ i ];
+      if( searchLayer.layerGroupId === groupId ) {
+        layerIndexPairs.push( [searchLayer,i] );
+        if( searchLayer.layerType === "group" )
+          groupsToCheck.push( searchLayer.layerId );
+        layersStack.layers.splice( i, 1 );
+      }
+    }
+  }
   
   //add an undo entry
   const historyEntry = {
     index,
+    layerIndexPairs,
     newLayer: layer,
-    domParent,
-    domSibling,
     undo: () => {
-      //insert into the layer stack
-      layersStack.layers.splice( historyEntry.index, 0, historyEntry.newLayer );
-      //insert into the DOM
-      historyEntry.domParent.insertBefore( historyEntry.newLayer.layerButton, historyEntry.domSibling );
+      //insert into the layer stack in reverse order
+      for( let i=historyEntry.layerIndexPairs.length-1; i>=0; i-- ) {
+        const [layer,index] = historyEntry.layerIndexPairs[ i ];
+        layersStack.layers.splice( index, 0, layer );
+      }
+      reorganizeLayerButtons();
     },
     redo: () => {
-      //delete from the layer stack
-      layersStack.layers.splice( historyEntry.index, 1 );
-      //remove button from DOM
-      historyEntry.domParent.removeChild(  historyEntry.newLayer.layerButton );
+      //delete from the layer stack in order
+      for( const [,index] of historyEntry.layerIndexPairs ) {
+        layersStack.layers.splice( index, 1 );
+      }
+      reorganizeLayerButtons();
     },
     cleanup: () => {
-      //layer won't be coming back.
-      gl.deleteTexture( layer.glTexture );
-      gl.deleteTexture( layer.glMask );
+      //layers won't be coming back.
+      for( const [layer] of historyEntry.layerIndexPairs ) {
+        gl.deleteTexture( layer.glTexture );
+        gl.deleteTexture( layer.glMask );
+      }
     }
   }
+  //:-O And record this horrifyingly subtle algorithm for future testing
   recordHistoryEntry( historyEntry );
 
-  UI.updateContext();
+  //get the next layer
+  let nextLayer;
+  if( index < layersStack.layers.length ) {
+    //search for a non-preview layer
+    for( let i=index; i<layersStack.layers.length; i++ ) {
+      const searchLayer = layersStack.layers[ i ];
+      if( searchLayer.layerType === "paint-preview" ) continue;
+      nextLayer = searchLayer;
+      break;
+    }
+  }
+  if( ! nextLayer && index > 0 ) {
+    //search for a non-preview layer
+    for( let i=index-1; i>=0; i-- ) {
+      const searchLayer = layersStack.layers[ i ];
+      if( searchLayer.layerType === "paint-preview" ) continue;
+      nextLayer = searchLayer;
+      break;
+    }
+  }
+
+  reorganizeLayerButtons();
+
+  if( nextLayer ) selectLayer( nextLayer ); //calls updateContext
+  //otherwise, there are truly no layers left except previews
+  else UI.updateContext();
 
 }
 
@@ -1005,8 +1350,9 @@ function selectLayer( layer ) {
   }
   layer.layerButton.classList.add( "active", "no-hover" );
   layer.layerButton.classList.remove( "hovering" );
-  layer.layerButton.querySelector( ".layer-name" ).uiActive = false;
+  layer.layerButton.querySelector( ".layer-name" ).uiActive = true;
   layer.layerButton.querySelector( ".layer-name" ).classList.remove( "no-hover" );
+
   UI.updateContext();
 }
 
@@ -1018,6 +1364,9 @@ function Loop( t ) {
     if( T === -1 ) T = t - 1;
     const dt = t - T;
     T = t;
+
+    const floatTime = ( t % 50000 ) / 50000;
+
     const secondsPerFrame = dt / 1000;
     const framesPerSecond = 1 / secondsPerFrame;
     fps = ( fps * 0.95 ) + framesPerSecond * 0.05;
@@ -1027,66 +1376,13 @@ function Loop( t ) {
 Info: ${info}`;
 
     if( looping ) window.requestAnimationFrame( Loop );
-    //ctx.fillStyle = paperTexture || "rgb(128,128,128)";
-    //ctx.fillRect( 0,0,W,H );
+    
     updateCycle( t );
 
-    //getTransform();
-    //draw the layers
-    /* for( const layer of layersStack.layers ) {
-        const [x,y] = transformPoint( layer.topLeft ),
-        [x2,y2] = transformPoint( layer.topRight );
-        const dx = x2-x, dy=y2-y;
-        const l = Math.sqrt( dx*dx + dy*dy );
-        ctx.save();
-        ctx.translate( x, y );
-        ctx.rotate( Math.atan2( dy, dx ) );
-        ctx.scale( l / layer.w, l / layer.h );
-        ctx.globalAlpha = layer.opacity;
-        ctx.drawImage( layer.canvas, 0, 0 );
-        ctx.lineWidth = 1.0;
-        ctx.strokeStyle = "black";
-        ctx.strokeRect( 0, 0, layer.canvas.width, layer.canvas.height );
-        ctx.restore();
-    } */
-
-    /* if( currentArtCanvas ) {
-        //Next: Calculate from demo points to get xy, atan2
-        const [x,y] = transformPoint( demoPoints[0] ),
-          [x2,y2] = transformPoint( demoPoints[1] );
-        const dx = x2-x, dy=y2-y;
-        const l = Math.sqrt( dx*dx + dy*dy );
-        ctx.save();
-        ctx.translate( x, y );
-        ctx.rotate( Math.atan2( dy, dx ) );
-        ctx.scale( l / 1024, l / 1024 )
-        ctx.drawImage( currentArtCanvas, 0, 0 );
-        ctx.restore();
-
-        //also preview in corner for point persistence test
-        ctx.drawImage( currentArtCanvas, 0, H - currentArtCanvas.height/16, currentArtCanvas.width/16, currentArtCanvas.height/16)
-    } */
     
-    //stroke( demoPoints );
-
-    //draw cursor state
-    /* if( pointers.count === 1 ) {
-        if( cursor.mode !== "none" ) {
-            ctx.save();
-            ctx.strokeStyle = "rgb(200,220,250)";
-            ctx.lineWidth = 4.0;
-            ctx.beginPath();
-            ctx.moveTo( cursor.origin.x , cursor.origin.y );
-            ctx.lineTo( cursor.current.x , cursor.current.y );
-            ctx.stroke();
-            ctx.restore();
-        }
-    } */
-
     //writeInfo();
 
-    //drawGL();
-
+    
     if( glState.ready ) {
 
       //for each layer:
@@ -1101,19 +1397,22 @@ Info: ${info}`;
       gl.useProgram( glState.program );
       gl.bindVertexArray(glState.vao);
 
+      //TODO: Here we need to collect all transforming layers, if any
       const visibleLayers = [];
       let paintPreviewLayer = null;
       for( const layer of layersStack.layers ) {
-        if( layer.layerType === "paint-preview" ) {
+        if( layer.layerType === "paint-preview" && paintPreviewLayer === null ) {
           paintPreviewLayer = layer;
+          continue;
+        }
+        if( layer.layerType === "group" ) {
           continue;
         }
         if( layer.visible ) {
           visibleLayers.push( layer );
         }
       }
-      //layer ordering not implemented. Might be the wrong way to do it.
-      //visibleLayers.sort( (a,b)=>a.layerOrder-b.layerOrder );
+      
       if( selectedLayer && painter.active && painter.queue.length > 1 ) {
         visibleLayers.splice( visibleLayers.indexOf( selectedLayer )+1, 0, paintPreviewLayer );
       } else {
@@ -1152,20 +1451,44 @@ Info: ${info}`;
           }
         } 
 
-
         let [x,y] = transformPoint( layer.topLeft ),
           [x2,y2] = transformPoint( layer.topRight ),
           [x3,y3] = transformPoint( layer.bottomLeft ),
           [x4,y4] = transformPoint( layer.bottomRight );
         //this unpacking and repacking is because of array re-use
-        const xy = [x,y], xy2 = [x2,y2], xy3 = [x3,y3], xy4 = [x4,y4];
-        //convert that screenspace to GL space
-        const glox = W/2, gloy = H/2;
-        for( const p of [xy,xy2,xy3,xy4] ) {
-          p[0] -= glox; p[1] -= gloy;
-          //We're flipping the y coordinate! OpenGL NDC space defines the bottom of the screen as -1 y, and the top as +1 y (center 0).
-          p[0] /= glox; p[1] /= -gloy;
+        let xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
+
+
+        //TODO: This transform actually needs to happen for all layers that are transforming (if we're transforming a group)
+        //transform the layer if we're mid-transform
+        if( layer === selectedLayer && uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && ( cursor.mode !== "none" || pointers.count === 2 ) ) {
+          getLayerTransform();
+          let [x,y] = transformLayerPoint( xy ),
+            [x2,y2] = transformLayerPoint( xy2 ),
+            [x3,y3] = transformLayerPoint( xy3 ),
+            [x4,y4] = transformLayerPoint( xy4 );
+          xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
+          selectedLayer.transform.transformingPoints.topLeft = [...xy];
+          selectedLayer.transform.transformingPoints.topRight = [...xy2];
+          selectedLayer.transform.transformingPoints.bottomLeft = [...xy3];
+          selectedLayer.transform.transformingPoints.bottomRight = [...xy4];
         }
+
+        //get the layers physical size on-display
+        let layerSizePixels;
+        {
+          const dx = xy2[0] - xy[0], dy = xy2[1] - xy[1];
+          layerSizePixels = Math.sqrt( dx**2 + dy**2 );
+        }
+
+        //convert that screenspace to GL space
+        const glOriginX = W/2, glOriginY = H/2;
+        for( const p of [xy,xy2,xy3,xy4] ) {
+          p[0] -= glOriginX; p[1] -= glOriginY;
+          //We're flipping the y coordinate! OpenGL NDC space defines the bottom of the screen as -1 y, and the top as +1 y (center 0).
+          p[0] /= glOriginX; p[1] /= -glOriginY;
+        }
+
         //update the vertex data
         //top-left triangle
         glState.vertices[0] = xy[0]; glState.vertices[1] = xy[1];
@@ -1212,13 +1535,15 @@ Info: ${info}`;
           layer.maskChanged = false;
         }
 
-
         //set the layer's alpha
         gl.uniform1f( glState.alphaInputIndex, layer.opacity );
         let maskVisibility = 0.0;
         if( layer === selectedLayer && uiSettings.activeTool === "mask" && layer.maskInitialized && painter.active && painter.queue.length )
           maskVisibility = 0.5;
         gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
+        gl.uniform1f( glState.timeIndex, floatTime );
+        gl.uniform1f( glState.borderVisibilityIndex, layer === selectedLayer ? 0.33 : 0.0 ); //for now, all visible
+        gl.uniform1f( glState.borderWidthIndex, 2.0 / layerSizePixels ); //2 pixel border width
 
         //set the uniform to point at texture zero
         gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
@@ -1294,14 +1619,14 @@ function setup() {
 
     enableKeyTrapping();
 
-    //setup the paint preview
+    //setup two paint preview layers (some ops need double-buffering)
+    addCanvasLayer( "paint-preview" );
     addCanvasLayer( "paint-preview" );
 
     window.requestAnimationFrame( Loop );
 
     
     //getImageA1111("a kitten drawing with a pen on a digital art tablet");
-
 
 }
 
@@ -1311,21 +1636,6 @@ const cancelEvent = e => {
   e.cancelBubble = true;
   e.returnValue = false;
   return false;
-}
-
-function drawGL() {
-  gl.clearColor(0,0.1,0.2,1); //slight color to see clear effect
-  gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
-  gl.useProgram( glState.program );
-  gl.bindVertexArray(glState.vao);
-  gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
-  gl.uniform1f( glState.alphaInputIndex, 1.0 );
-  {
-    const primitiveType = gl.TRIANGLES,
-      structStartOffset = 0,
-      structCount = 3;
-      gl.drawArrays( primitiveType, structStartOffset, structCount );
-  }
 }
 
 const glState = {
@@ -1365,6 +1675,9 @@ function setupGL( testImageTexture ) {
     uniform sampler2D imgMask;
     uniform float alpha;
     uniform float mask;
+    uniform float time;
+    uniform float borderVisibility;
+    uniform float borderWidth;
     in vec2 uv;
     out vec4 outColor;
     
@@ -1372,13 +1685,16 @@ function setupGL( testImageTexture ) {
       vec4 lookup = texture(img,uv);
       vec4 maskLookup = texture(imgMask,uv);
       lookup.a *= alpha * maskLookup.a;
+
       if( lookup.a < 0.01 ) {
         lookup = vec4( 1.0,1.0,1.0, mask * maskLookup.a );
       }
-      outColor = lookup;
-      if( uv.x < 0.001 || uv.x > 0.999 || uv.y < 0.001 || uv.y > 0.999 ) {
-        outColor = vec4( 0.0,0.0,0.0,1.0 );
-      }
+
+      float onBorder = float( uv.x < borderWidth || uv.x > (1.0-borderWidth) || uv.y < borderWidth || uv.y > (1.0-borderWidth) );
+      float borderShade = abs( mod( ( ( time - ( uv.x + uv.y ) ) * 0.1 / borderWidth ), 2.0 ) - 1.0 );
+
+      outColor = mix( lookup, vec4( borderShade,borderShade,borderShade,1.0 ), onBorder * borderVisibility );
+
     }`;
 
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
@@ -1415,6 +1731,9 @@ function setupGL( testImageTexture ) {
 
     glState.alphaInputIndex = gl.getUniformLocation( program, "alpha" );
     glState.alphaMaskIndex = gl.getUniformLocation( program, "mask" );
+    glState.timeIndex = gl.getUniformLocation( program, "time" );
+    glState.borderVisibilityIndex = gl.getUniformLocation( program, "borderVisibility" );
+    glState.borderWidthIndex = gl.getUniformLocation( program, "borderWidth" );
 
     //set up a data-descriptor
     const vao = gl.createVertexArray();
@@ -1518,6 +1837,9 @@ let uiSettings = {
   gpuPaint: false,
 
   maxUndoSteps: 20,
+  defaultLayerWidth: 1024,
+  defaultLayerHeight: 1024,
+  defaultAPIFlowName: "A1111 Lightning Demo txt2img Mini",
 
   setActiveTool: tool => {
     uiSettings.activeTool = tool;
@@ -1581,6 +1903,9 @@ let uiSettings = {
     "mask": {
       maskColor: "rgb(255,255,255)", //might make configurable or change eventually, but not implemented yet
     },
+    "transform": {
+      current: true,
+    }
   },
 
   /* paint: { r:200,g:220,b:240 },
@@ -1889,13 +2214,13 @@ function setupUI() {
     //the transform button
     {
       const transformButton = document.createElement( "div" );
-      transformButton.classList.add( "tools-column-transform-button", "round-toggle", "animated", "unimplemented", "unavailable" );
+      transformButton.classList.add( "tools-column-transform-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( transformButton );
       UI.registerElement(
         transformButton,
         {
           onclick: () => {
-            if( ! transformButton.classList.contains( "unavailable" ) && ! transformButton.classList.contains( "unimplemented" ) ) {
+            if( ! transformButton.classList.contains( "unavailable" ) ) {
               uiSettings.setActiveTool( "transform" )
             }
           },
@@ -1999,6 +2324,45 @@ function setupUI() {
         { tooltip: [ "Flood Fill Tool", "to-right", "vertical-center" ] }
       )
     }
+    
+    //the pose tool button
+    {
+      const poseButton = document.createElement( "div" );
+      poseButton.classList.add( "tools-column-pose-button", "round-toggle", "animated", "unimplemented", "unavailable" );
+      toolsColumn.appendChild( poseButton );
+      UI.registerElement(
+        poseButton,
+        {
+          onclick: () => {
+            if( ! poseButton.classList.contains( "unavailable" ) && ! poseButton.classList.contains( "unimplemented" ) ) {
+              uiSettings.setActiveTool( "pose" )
+            }
+          },
+          updateContext: () => {
+
+            if( poseButton.classList.contains( "unimplemented" ) ) {
+              poseButton.classList.add( "unavailable" );
+              poseButton.classList.remove( "on" );
+              poseButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Pose Tool" + (selectedLayer ? "" : " [Select pose layer to enable]");
+              return;
+            }
+            //if no layer selected, unavailable
+            if( ! selectedLayer?.layerType === "pose" ) {
+              poseButton.classList.add( "unavailable" );
+              poseButton.querySelector(".tooltip" ).textContent = "Pose Tool [Select pose layer to enable]";
+              poseButton.classList.remove( "on" );
+            } else {
+              poseButton.classList.remove( "unavailable" );
+              poseButton.querySelector(".tooltip" ).textContent = "Pose Tool";
+              if( uiSettings.activeTool === "pose" ) poseButton.classList.add( "on" );
+              else poseButton.classList.remove( "on" );
+            }
+          },
+        },
+        { tooltip: [ "Flood Fill Tool", "to-right", "vertical-center" ] }
+      )
+    }
+
   }
 
   //the paint tool options
@@ -2378,14 +2742,7 @@ function setupUI() {
               }
               if( control.controlType === "layer-input" ) {
                 //The reason we don't set the .controlLayer:null on the control, is links change with selectedLayer
-                let layerInput = selectedLayer; //default to selected layer
-                const imageInputs = document.querySelectorAll( ".image-input-control" );
-                for( const imageInput of imageInputs ) {
-                  if( imageInput.controlName === control.controlLayerControlName && imageInput.uplinkLayer ) {
-                    layerInput = imageInput.uplinkLayer;
-                  }
-                }
-
+                let layerInput = selectedLayer; //necessarily use selected layer, otherwise we can't control the resolution
                 const inputPath = [ ...control.layerPath ];
                 while( inputPath.length ) {
                   layerInput = layerInput[ inputPath.shift() ];
@@ -2410,7 +2767,12 @@ function setupUI() {
                   console.error( "Generate is pulling a random layer for img2img if there's nothing linked up. Need to show error code." );
                   sourceLayer = layersStack.layers.find( l => l.layerType === "paint" );
                 }
-                controlValues[ control.controlName ] = sourceLayer.canvas.toDataURL();
+                if( sourceLayer.layerType === "group" && ! sourceLayer.groupCompositeUpToDate )
+                  updateLayerGroupComposite( sourceLayer );
+                //cast source layer to generative layer's space
+                const previewLayer = layersStack.layers.find( l => l.layerType === "paint-preview" );
+                sampleLayerInLayer( sourceLayer, selectedLayer, previewLayer );
+                controlValues[ control.controlName ] = previewLayer.canvas.toDataURL();
               }
             }
 
@@ -2439,6 +2801,7 @@ function setupUI() {
       textInputOverlay.setText = text => { textInput.value = text };
       textInputOverlay.show = () => {
         textInputOverlay.classList.remove( "hidden" );
+        textInput.focus();
         disableKeyTrapping();
       };
       //back/close button
@@ -2907,8 +3270,7 @@ function setupUI() {
           onclick: () => {
             addGenerativeLayerButton.classList.add( "pushed" );
             setTimeout( () => addGenerativeLayerButton.classList.remove( "pushed" ), UI.animationMS );
-            if( selectedLayer ) addCanvasLayer( "generative", selectedLayer.w, selectedLayer.h, selectedLayer );
-            else addCanvasLayer( "generative" );
+            addCanvasLayer( "generative" );
             UI.deleteContext( "add-layers-panel-visible" );
           },
           updateContext: context => {
@@ -2934,8 +3296,7 @@ function setupUI() {
           onclick: () => {
             addPaintLayerButton.classList.add( "pushed" );
             setTimeout( () => addPaintLayerButton.classList.remove( "pushed" ), UI.animationMS );
-            if( selectedLayer ) addCanvasLayer( "paint", selectedLayer.w, selectedLayer.h, selectedLayer );
-            else addCanvasLayer( "paint" );
+            addCanvasLayer( "paint" );
             UI.deleteContext( "add-layers-panel-visible" );
           },
           updateContext: context => {
@@ -2961,12 +3322,40 @@ function setupUI() {
           onclick: () => {
             addTextLayerButton.classList.add( "pushed" );
             setTimeout( () => addTextLayerButton.classList.remove( "pushed" ), UI.animationMS );
+            //addCanvasLayer( "text" );
             UI.deleteContext( "add-layers-panel-visible" );
             console.error( "Image import unimplemented." );
           },
           updateContext: context => {
             if( context.has( "add-layers-panel-visible" ) ) addTextLayerButton.uiActive = true;
             else addTextLayerButton.uiActive = false;
+          }
+        }, { 
+          tooltip: [ "!Unimplemented! Add Text Layer", "to-left", "vertical-center" ],
+          zIndex: 11000,
+        } );
+      }
+
+      //add a spacer
+      addLayersPanel.appendChild( document.createElement( "div" ) ).className = "spacer";
+
+      {
+        //add add pose layer button
+        const addPoseLayerButton = addLayersPanel.appendChild( document.createElement( "div" ) );
+        addPoseLayerButton.classList.add( "rounded-line-button", "animated", "unimplemented" );
+        addPoseLayerButton.appendChild( new Image() ).src = "icon/rig.png";
+        addPoseLayerButton.appendChild( document.createElement("span") ).textContent = "Add Pose Layer";
+        UI.registerElement( addPoseLayerButton, {
+          onclick: () => {
+            addPoseLayerButton.classList.add( "pushed" );
+            setTimeout( () => addPoseLayerButton.classList.remove( "pushed" ), UI.animationMS );
+            //addCanvasLayer( "pose" );
+            UI.deleteContext( "add-layers-panel-visible" );
+            console.error( "Image import unimplemented." );
+          },
+          updateContext: context => {
+            if( context.has( "add-layers-panel-visible" ) ) addPoseLayerButton.uiActive = true;
+            else addPoseLayerButton.uiActive = false;
           }
         }, { 
           tooltip: [ "!Unimplemented! Add Text Layer", "to-left", "vertical-center" ],
@@ -2987,6 +3376,7 @@ function setupUI() {
           onclick: () => {
             importImageButton.classList.add( "pushed" );
             setTimeout( () => importImageButton.classList.remove( "pushed" ), UI.animationMS );
+            //TODO: Code to bring in imported image
             UI.deleteContext( "add-layers-panel-visible" );
             console.error( "Image import unimplemented." );
           },
@@ -3013,7 +3403,7 @@ function setupUI() {
           onclick: () => {
             addLayerGroupButton.classList.add( "pushed" );
             setTimeout( () => addLayerGroupButton.classList.remove( "pushed" ), UI.animationMS );
-            //addCanvasLayer( "paint" );
+            //addCanvasLayer( "group" );
             UI.deleteContext( "add-layers-panel-visible" );
             console.error( "Add layer group unimplemented." );
           },
@@ -3431,18 +3821,19 @@ function setupUIGenerativeControls( apiFlowName ) {
       setupUIGenerativeControls.registeredControls.push( controlElement );
       UI.registerElement(
         controlElement,
-        { onclick: () => {
-          //TODO NEXT: Open the overlay to get text input (or back out to leave value unchanged)
-          const textInput = document.querySelector( "#multiline-text-input-overlay" );
-          textInput.setText( control.controlValue );
-          textInput.onapply = text => {
-            controlElementText.textContent = text;
-            control.controlValue = text;
-            //store updated value in selected layer
-            selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
-          }
-          textInput.show();
-        } },
+        {
+          onclick: () => {
+            const textInput = document.querySelector( "#multiline-text-input-overlay" );
+            textInput.setText( control.controlValue );
+            textInput.onapply = text => {
+              controlElementText.textContent = text;
+              control.controlValue = text;
+              //store updated value in selected layer
+              selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
+            }
+            textInput.show();
+          } 
+        },
         { tooltip: [ control.controlName, "below", "to-right-of-center" ], zIndex:10000, }
       );
       controlsPanel.appendChild( controlElement );
@@ -3573,8 +3964,10 @@ function keyHandler( e , state ) {
     if( ! ["F5","F12"].includes( e.key ) )
       e.preventDefault?.();
     keys[ e.key ] = state;
+
+    //update these key controls: arrow keys translate. 4&6 rotate fore and back. 8&2 zoom in and out
+
     if( e.key === "ArrowRight" && selectedLayer ) {
-      console.log( "here" );
       //let's move the layer right a bit
       for( const point of [ selectedLayer.bottomLeft, selectedLayer.bottomRight, selectedLayer.topLeft, selectedLayer.topRight ] ) {
         point[0] += 10;
@@ -3586,7 +3979,19 @@ function keyHandler( e , state ) {
         point[0] -= 10;
       }
     }
+    if( e.key === "ArrowUp" && selectedLayer ) {
+      //let's move the layer right a bit
+      for( const point of [ selectedLayer.bottomLeft, selectedLayer.bottomRight, selectedLayer.topLeft, selectedLayer.topRight ] ) {
+        point[1] -= 10;
+      }
+    }
     if( e.key === "ArrowDown" && selectedLayer ) {
+      //let's move the layer right a bit
+      for( const point of [ selectedLayer.bottomLeft, selectedLayer.bottomRight, selectedLayer.topLeft, selectedLayer.topRight ] ) {
+        point[1] += 10;
+      }
+    }
+    if( e.key === "4" && selectedLayer ) {
       //let's rotate the layer a bit
       const origin = selectedLayer.topLeft;
       const da = 0.1;
@@ -3602,7 +4007,7 @@ function keyHandler( e , state ) {
         point[1] = newY;
       }
     }
-    if( e.key === "ArrowUp" && selectedLayer ) {
+    if( e.key === "6" && selectedLayer ) {
       //let's counter-rotate the layer a bit
       const origin = selectedLayer.topLeft;
       const da = -0.1;
@@ -3618,7 +4023,7 @@ function keyHandler( e , state ) {
         point[1] = newY;
       }
     }
-    if( (e.key === "1" || e.key === "2") && selectedLayer ) {
+    if( (e.key === "2" || e.key === "8") && selectedLayer ) {
       //let's upscale the layer a bit
       const origin = [0,0];
       //should actually recompute these using lw and lh, not my calculated distance or something
@@ -3627,9 +4032,9 @@ function keyHandler( e , state ) {
         origin[0] += point[0];
         origin[1] += point[1];
       }
-      origin[0] /=4;
-      origin[1] /=4;
-      const scale = (e.key === "1") ? 1.1 : 0.9;
+      origin[0] /= 4;
+      origin[1] /= 4;
+      const scale = (e.key === "8") ? 1.05 : 0.95;
       for( const point of points ) {
         const dx = point[0] - origin[0],
           dy = point[1] - origin[1],
@@ -3639,6 +4044,7 @@ function keyHandler( e , state ) {
         point[1] = origin[1] + newY;
       }
     }
+
     //console.log( ":" + e.key + ":" );
     //console.log( `Set ${e.code} to ${state}` );
 }
@@ -3668,20 +4074,35 @@ function resizeCanvases() {
 
 function exportPNG() {
   //TODO: calculate the bounding box of all layers and resize the export canvas
-  const ctx = layersStack.layers[0].context;
-  const {w,h} = layersStack.layers[0];
+  let previewLayer;
+  for( const l of layersStack.layers ) {
+    if( l.layerType === "paint-preview" ) {
+      previewLayer = l;
+      break;
+    }
+  }
+  const ctx = previewLayer.context;
+  const {w,h} = previewLayer;
   ctx.clearRect( 0, 0, w, h );
 
   const layersToDraw = [];
   for( const layer of layersStack.layers ) {
     if( layer.layerType === "paint-preview" ) continue;
     if( layer.visibility === false ) continue;
+    if( layer.layerGroupId !== null ) continue;
     layersToDraw.push( layer );
   }
 
-  const layer0WidthPixels = layersToDraw[0].w;
+  //update all the layergroups
+  for( const layer of layersStack.layers )
+    if( layer.layerType === "group" && ! layer.groupCompositeUpToDate )
+      updateLayerGroupComposite( layer );
 
-  composeLayers( layersStack.layers[0], layersToDraw, layer0WidthPixels );
+
+  console.error( "Export needs dialogue for resolution, and to export 1 layer/group. Currently exporting all layers at global resolution." );
+  const pixelScale = 1;
+
+  composeLayers( previewLayer, layersToDraw, pixelScale );
 
   /* const maskingCanvas = layersStack.layers[ 0 ].maskContext,
     maskingContext = layersStack.layers[ 0 ].maskContext;
@@ -3749,6 +4170,8 @@ function saveJSON() {
       layerType,
       layerName,
       layerId,
+      layerGroupId,
+      groupClosed,
 
       visible,
       opacity,
@@ -3769,6 +4192,8 @@ function saveJSON() {
       layerType,
       layerName,
       layerId,
+      layerGroupId,
+      groupClosed,
 
       visible,
       opacity,
@@ -3861,6 +4286,8 @@ function loadJSON() {
             layerType,
             layerName,
             layerId,
+            layerGroupId,
+            groupClosed,
       
             visible,
             opacity,
@@ -3877,6 +4304,9 @@ function loadJSON() {
           newLayer.layerName = layerName;
           newLayer.layerId = layerId;
           layersAddedCount = Math.max( layersAddedCount, layerId )
+          newLayer.layerGroupId = layerGroupId;
+          if( layerType === "group" ) newLayer.groupCompositeUpToDate = false;
+          newLayer.groupClosed = groupClosed;
 
           newLayer.visible = visible;
           newLayer.opacity = opacity;
@@ -3902,6 +4332,8 @@ function loadJSON() {
           const { h,s,l } = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
           document.querySelector( ".paint-tools-options-color-well" ).style.backgroundColor = `hsl( ${h}turn ${s*100}% ${l*100}% )`;
         }
+
+        reorganizeLayerButtons();
 
         UI.updateContext();
 
@@ -4261,6 +4693,53 @@ const startHandler = p => {
                 cursor.origin.y -= Math.sin( 0.7855 ) * cursor.zoomLength;
                 cursor.mode = "zoom";
             }
+            //check if one of our points is inside the selected layer, and disable transform if not
+            if( uiSettings.activeTool === "transform" ) {
+              let pointInSelectedLayer = false;
+              const point = [cursor.origin.x,cursor.origin.y,1];
+              //get screen->global space inversion
+              _originMatrix[ 2 ] = -view.origin.x;
+              _originMatrix[ 5 ] = -view.origin.y;
+              _positionMatrix[ 2 ] = view.origin.x;
+              _positionMatrix[ 5 ] = view.origin.y;
+    
+              mul3x3( viewMatrices.current , _originMatrix , _inverter );
+              mul3x3( _inverter , viewMatrices.moving , _inverter );
+              mul3x3( _inverter , _positionMatrix , _inverter );
+              inv( _inverter , _inverter );
+    
+              //cast our input points to global space
+              mul3x1( _inverter, point, point );
+    
+              //get our selected layer's space
+              let origin = { x:selectedLayer.topLeft[0], y:selectedLayer.topLeft[1] },
+                xLeg = { x:selectedLayer.topRight[0] - origin.x, y: selectedLayer.topRight[1] - origin.y },
+                xLegLength = Math.sqrt( xLeg.x**2 + xLeg.y**2 ),
+                normalizedXLeg = { x:xLeg.x/xLegLength, y:xLeg.y/xLegLength },
+                yLeg = { x:selectedLayer.bottomLeft[0] - origin.x, y: selectedLayer.bottomLeft[1] - origin.y },
+                yLegLength = Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
+                normalizedYLeg = { x:yLeg.x/yLegLength, y:yLeg.y/yLegLength };
+    
+              //cast global point to our selected layer's space
+              {
+                let [x,y] = point;
+                //translate from origin
+                x -= origin.x; y -= origin.y;
+                //project on normals
+                let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
+                let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
+                //unnormalize
+                xProjection *= selectedLayer.w / xLegLength;
+                yProjection *= selectedLayer.h / yLegLength;
+                //check if the point is inside the layer bounds
+                if( x >= 0 && x <= selectedLayer.w && y >= 0 && y <= selectedLayer.h ) {
+                  pointInSelectedLayer = true;
+                }
+              }
+    
+              if( pointInSelectedLayer ) uiSettings.toolsSettings.transform.current = true;
+              else uiSettings.toolsSettings.transform.current = false;
+            }
         }
         else if( p.pointerType !== "touch" && selectedLayer &&
           ( uiSettings.activeTool === "paint" || uiSettings.activeTool === "mask" ) ) {
@@ -4274,7 +4753,9 @@ const startHandler = p => {
         cursor.current.x = 0;
         cursor.current.y = 0;
     }
-    if( pointers.count === 2 ) {
+    if( pointers.count === 2 && selectedLayer && getLayerVisibility( selectedLayer )  ) {
+
+
         pincher.ongoing = true;
         const [ idA , idB ] = Object.keys( pointers.active ),
             a = pointers.active[ idA ],
@@ -4302,6 +4783,56 @@ const startHandler = p => {
         pincher.origin.length = d;
         pincher.origin.angle = angle;
         pincher.origin.center = { x:cx , y:cy }
+
+        //check if one of our points is inside the selected layer, and disable transform if not
+        if( uiSettings.activeTool === "transform" ) {
+          let pointInSelectedLayer = false;
+          const points = [ [a.origin.x,a.origin.y,1], [b.origin.x,b.origin.y,1] ];
+          //get screen->global space inversion
+          _originMatrix[ 2 ] = -view.origin.x;
+          _originMatrix[ 5 ] = -view.origin.y;
+          _positionMatrix[ 2 ] = view.origin.x;
+          _positionMatrix[ 5 ] = view.origin.y;
+
+          mul3x3( viewMatrices.current , _originMatrix , _inverter );
+          mul3x3( _inverter , viewMatrices.moving , _inverter );
+          mul3x3( _inverter , _positionMatrix , _inverter );
+          inv( _inverter , _inverter );
+
+          //cast our input points to global space
+          mul3x1( _inverter, points[0], points[0] );
+          mul3x1( _inverter, points[1], points[1] );
+
+          //get our selected layer's space
+          let origin = { x:selectedLayer.topLeft[0], y:selectedLayer.topLeft[1] },
+            xLeg = { x:selectedLayer.topRight[0] - origin.x, y: selectedLayer.topRight[1] - origin.y },
+            xLegLength = Math.sqrt( xLeg.x**2 + xLeg.y**2 ),
+            normalizedXLeg = { x:xLeg.x/xLegLength, y:xLeg.y/xLegLength },
+            yLeg = { x:selectedLayer.bottomLeft[0] - origin.x, y: selectedLayer.bottomLeft[1] - origin.y },
+            yLegLength = Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
+            normalizedYLeg = { x:yLeg.x/yLegLength, y:yLeg.y/yLegLength };
+
+          //cast global points to our selected layer's space
+          for( const point of points ) {
+            let [x,y] = point;
+            //translate from origin
+            x -= origin.x; y -= origin.y;
+            //project on normals
+            let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
+            let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
+            //unnormalize
+            xProjection *= selectedLayer.w / xLegLength;
+            yProjection *= selectedLayer.h / yLegLength;
+            //check if the point is inside the layer bounds
+            if( x >= 0 && x <= selectedLayer.w && y >= 0 && y <= selectedLayer.h ) {
+              pointInSelectedLayer = true;
+              break;
+            }
+          }
+
+          if( pointInSelectedLayer ) uiSettings.toolsSettings.transform.current = true;
+          else uiSettings.toolsSettings.transform.current = false;
+        }
     }
     
     moveHandler( p, true );
@@ -4336,6 +4867,7 @@ const moveHandler = ( p, pseudo = false ) => {
 
     const x = p.offsetX * window.devicePixelRatio,
         y = p.offsetY * window.devicePixelRatio;
+
     if( pointers.count === 1 ) {
         if( cursor.mode !== "none" ) {
             cursor.current.x = x;
@@ -4401,7 +4933,11 @@ const stopHandler = p => {
               cursor.inUIRect.activate();
               delete cursor.inUIRect;
             } else {
-              finalizeViewMove();
+              if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true ) {
+                finalizeLayerTransform();
+              } else {
+                finalizeViewMove();
+              }
             }
             cursor.origin.x = 0;
             cursor.origin.y = 0;
@@ -4412,80 +4948,16 @@ const stopHandler = p => {
         if( painter.active === true ) {
             painter.active = false;
             finalizePaint( layersStack.layers[ 0 ], selectedLayer );
-            /* if( selectedLayer.layerType === "paint" || ( selectedLayer.layerType === "generative" && uiSettings.mask === true ) ) {
-              if( true ) {
-                finalizePaint( layersStack.layers[0], selectedLayer );
-              }
-              if( false ) {
-                paintPointsToLayer( painter.queue, selectedPaintLayer );
-                //clear the preview
-                const paintPreviewLayer = layersStack.layers.find( l => l.layerType === "paint-preview" );
-                paintPreviewLayer.context.clearRect( 0,0,paintPreviewLayer.w, paintPreviewLayer.h );
-                paintPreviewLayer.textureChanged = true;
-                paintPreviewLayer.textureChangedRect.x = 0;
-                paintPreviewLayer.textureChangedRect.y = 0;
-                paintPreviewLayer.textureChangedRect.w = paintPreviewLayer.w;
-                paintPreviewLayer.textureChangedRect.h = paintPreviewLayer.h;
-              }
-            } */
-            if( false && selectedPaintLayer ) {
-              //finalize to canvas pixels
-              /* getTransform();
-              //Get our canvas coordinate system
-              let [x,y] = transformPoint( selectedPaintLayer.topLeft ),
-                [x2,y2] = transformPoint( selectedPaintLayer.topRight ),
-                [x3,y3] = transformPoint( selectedPaintLayer.bottomLeft );
-              x2 -= x; y2 -= y;
-              x3 -= x; y3 -= y;
-              const vxl = Math.sqrt( x2*x2 + y2*y2 ),
-                vyl = Math.sqrt( x3*x3 + y3*y3 );
-              const scale = selectedPaintLayer.w / vxl;
-              x2 /= vxl; y2 /= vxl;
-              x3 /= vyl; y3 /= vyl;
-              const catx = selectedPaintLayer.context;
-              catx.save();
-              catx.beginPath();
-              catx.lineCap = "round";
-              catx.lineJoin = "round";
-              catx.strokeStyle = uiSettings.paintColor;
-              catx.lineWidth = uiSettings.brushSize;
-              catx.globalAlpha = uiSettings.brushOpacity;
-              if( uiSettings.brushBlur > 0 )
-                catx.filter="blur(" + uiSettings.brushBlur + "px)";
-              let move = true;
-              for( const p of painter.queue ) {
-                if( ! p ) continue;
-                const [opx,opy] = transformPoint( p );
-                const px = opx - x, py = opy - y;
-                let dvx = px*x2 + py*y2,
-                  dvy = px*x3 + py*y3;
-                dvx *= scale;
-                dvy *= scale;
-                if( move ) {
-                  move = false;
-                  catx.moveTo( dvx, dvy );
-                } else {
-                  catx.lineTo( dvx, dvy );
-                }
-              }
-              catx.stroke();
-              catx.restore();
-              //flag our gltexture for re-uploading
-              selectedPaintLayer.textureChanged = true; */
-            } else {
-              //append to active vector art
-              //disabled vector points
-              /* demoPoints.push( null );
-              for( const p of painter.queue )
-                  demoPoints.push( p );
-              demoPoints.push( null ); */
-            }
             painter.queue.length = 0;
         }
     }
-    if( pointers.count === 2 ) {
+    if( pointers.count === 2 && selectedLayer && getLayerVisibility( selectedLayer )  ) {
         //we should delete both to end the event.
-        finalizeViewMove();
+        if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true) {
+          finalizeLayerTransform();
+        } else {
+          finalizeViewMove();
+        }
         const [ idA , idB ] = Object.keys( pointers.active );
         delete pointers.active[ idA ];
         delete pointers.active[ idB ];
@@ -4536,64 +5008,127 @@ const view = {
     pan: { x: 0, y: 0 },
     origin: { x: 0 , y: 0 }
 }
+const layerTransform = {
+  angle: 0,
+  zoom: 1,
+  pan: { x: 0, y: 0 },
+  origin: { x: 0 , y: 0 }
+}
 function updateCycle( t ) {
-    if( pointers.count === 1 ) {
-        if( cursor.mode === "none" ) return;
-    
-        if( cursor.mode === "pan" ) {
-            view.origin.x = cursor.origin.x;
-            view.origin.y = cursor.origin.y;
-            view.pan.x = cursor.current.x - cursor.origin.x;
-            view.pan.y = cursor.current.y - cursor.origin.y;
-            mat( 1 , 0 , view.pan.x , view.pan.y , viewMatrices.moving );
-        }
-    
-        if( cursor.mode === "zoom" ) {
-            //need initial offset for zoom
-            view.origin.x = cursor.origin.x;
-            view.origin.y = cursor.origin.y;
-    
-            const dx = cursor.current.x - cursor.origin.x;
-            const dy = cursor.current.y - cursor.origin.y;
-            const d = Math.sqrt( dx**2 + dy**2 );
-            view.zoom = d / cursor.zoomLength;
-            mat( view.zoom , 0 , 0 , 0 , viewMatrices.moving );
-        }
-    
-        if( cursor.mode === "rotate" ) {
-            //need initial offset of 0-angle to prevent rotate shuddering
-            view.origin.x = cursor.origin.x;
-            view.origin.y = cursor.origin.y;
-            
-            
-            const dx = cursor.current.x - cursor.origin.x;
-            const dy = cursor.current.y - cursor.origin.y;
-    
-            view.angle = -Math.atan2( dx , dy );
-            mat( 1 , view.angle , 0 , 0 , viewMatrices.moving );
-        }
-    }
-    if( pointers.count === 2 ) {
-
-        const a = pincher.current.a, 
-            b = pincher.current.b;
-        const dx = b.x - a.x, 
-            dy = b.y - a.y,
-            d = Math.sqrt( dx*dx + dy*dy ),
-            angle = Math.atan2( dy , dx );
-
-        const cx = ( a.x + b.x ) / 2,
-            cy = ( a.y + b.y ) / 2;
-
-        view.origin.x = pincher.origin.center.x;
-        view.origin.y = pincher.origin.center.y;
+  if( pointers.count === 1 ) {
+    if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true ) {
+      if( cursor.mode === "none" ) return;
+  
+      if( cursor.mode === "pan" ) {
+        layerTransform.origin.x = cursor.origin.x;
+        layerTransform.origin.y = cursor.origin.y;
+        layerTransform.pan.x = cursor.current.x - cursor.origin.x;
+        layerTransform.pan.y = cursor.current.y - cursor.origin.y;
+        mat( 1 , 0 , layerTransform.pan.x , layerTransform.pan.y , layerTransformMatrices.moving );
+      }
+  
+      if( cursor.mode === "zoom" ) {
+        //need initial offset for zoom
+        layerTransform.origin.x = cursor.origin.x;
+        layerTransform.origin.y = cursor.origin.y;
+  
+        const dx = cursor.current.x - cursor.origin.x;
+        const dy = cursor.current.y - cursor.origin.y;
+        const d = Math.sqrt( dx**2 + dy**2 );
+        layerTransform.zoom = d / cursor.zoomLength;
+        mat( layerTransform.zoom , 0 , 0 , 0 , layerTransformMatrices.moving );
+      }
+  
+      if( cursor.mode === "rotate" ) {
+        //need initial offset of 0-angle to prevent rotate shuddering
+        layerTransform.origin.x = cursor.origin.x;
+        layerTransform.origin.y = cursor.origin.y;
         
-        view.zoom = d / pincher.origin.length;
-        view.angle = angle - pincher.origin.angle;
-        view.pan.x = cx - pincher.origin.center.x;
-        view.pan.y = cy - pincher.origin.center.y;
-        mat( view.zoom , view.angle , view.pan.x , view.pan.y , viewMatrices.moving );
+        const dx = cursor.current.x - cursor.origin.x;
+        const dy = cursor.current.y - cursor.origin.y;
+  
+        layerTransform.angle = -Math.atan2( dx , dy );
+        mat( 1 , layerTransform.angle , 0 , 0 , layerTransformMatrices.moving );
+      }
     }
+    else {
+      if( cursor.mode === "none" ) return;
+  
+      if( cursor.mode === "pan" ) {
+        view.origin.x = cursor.origin.x;
+        view.origin.y = cursor.origin.y;
+        view.pan.x = cursor.current.x - cursor.origin.x;
+        view.pan.y = cursor.current.y - cursor.origin.y;
+        mat( 1 , 0 , view.pan.x , view.pan.y , viewMatrices.moving );
+      }
+  
+      if( cursor.mode === "zoom" ) {
+        //need initial offset for zoom
+        view.origin.x = cursor.origin.x;
+        view.origin.y = cursor.origin.y;
+  
+        const dx = cursor.current.x - cursor.origin.x;
+        const dy = cursor.current.y - cursor.origin.y;
+        const d = Math.sqrt( dx**2 + dy**2 );
+        view.zoom = d / cursor.zoomLength;
+        mat( view.zoom , 0 , 0 , 0 , viewMatrices.moving );
+      }
+  
+      if( cursor.mode === "rotate" ) {
+        //need initial offset of 0-angle to prevent rotate shuddering
+        view.origin.x = cursor.origin.x;
+        view.origin.y = cursor.origin.y;
+        
+        const dx = cursor.current.x - cursor.origin.x;
+        const dy = cursor.current.y - cursor.origin.y;
+  
+        view.angle = -Math.atan2( dx , dy );
+        mat( 1 , view.angle , 0 , 0 , viewMatrices.moving );
+      }
+    }
+  }
+  if( pointers.count === 2 && selectedLayer && getLayerVisibility( selectedLayer ) ) {
+    if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true ) {
+      const a = pincher.current.a, 
+          b = pincher.current.b;
+      const dx = b.x - a.x, 
+          dy = b.y - a.y,
+          d = Math.sqrt( dx*dx + dy*dy ),
+          angle = Math.atan2( dy , dx );
+  
+      const cx = ( a.x + b.x ) / 2,
+          cy = ( a.y + b.y ) / 2;
+  
+      layerTransform.origin.x = pincher.origin.center.x;
+      layerTransform.origin.y = pincher.origin.center.y;
+      
+      layerTransform.zoom = d / pincher.origin.length;
+      layerTransform.angle = angle - pincher.origin.angle;
+      layerTransform.pan.x = cx - pincher.origin.center.x;
+      layerTransform.pan.y = cy - pincher.origin.center.y;
+      mat( layerTransform.zoom , layerTransform.angle , layerTransform.pan.x , layerTransform.pan.y , layerTransformMatrices.moving );
+    }
+    else {
+      const a = pincher.current.a, 
+          b = pincher.current.b;
+      const dx = b.x - a.x, 
+          dy = b.y - a.y,
+          d = Math.sqrt( dx*dx + dy*dy ),
+          angle = Math.atan2( dy , dx );
+  
+      const cx = ( a.x + b.x ) / 2,
+          cy = ( a.y + b.y ) / 2;
+  
+      view.origin.x = pincher.origin.center.x;
+      view.origin.y = pincher.origin.center.y;
+      
+      view.zoom = d / pincher.origin.length;
+      view.angle = angle - pincher.origin.angle;
+      view.pan.x = cx - pincher.origin.center.x;
+      view.pan.y = cy - pincher.origin.center.y;
+      mat( view.zoom , view.angle , view.pan.x , view.pan.y , viewMatrices.moving );
+    }
+  }
 }
 
 const _tpoint = [ 0 , 0 , 1 ],
@@ -4601,10 +5136,14 @@ const _tpoint = [ 0 , 0 , 1 ],
         1 , 0 , 0 ,
         0 , 1 , 0 ,
         0 , 0 , 1
-    ]
+    ],
+    _layerTranform = [
+      1 , 0 , 0 ,
+      0 , 1 , 0 ,
+      0 , 0 , 1
+    ];
 
 function getTransform() {
-  
   _originMatrix[ 2 ] = -view.origin.x;
   _originMatrix[ 5 ] = -view.origin.y;
   _positionMatrix[ 2 ] = view.origin.x;
@@ -4613,7 +5152,6 @@ function getTransform() {
   mul3x3( viewMatrices.current , _originMatrix , _transform ); // origin * current
   mul3x3( _transform , viewMatrices.moving , _transform ); // (origin*current) * moving
   mul3x3( _transform , _positionMatrix , _transform ); // transform = ( (origin*current) * moving ) * position
-
 }
 function transformPoint( p ) {
   _tpoint[0] = p[0];
@@ -4623,7 +5161,25 @@ function transformPoint( p ) {
   mul3x1( _transform , _tpoint , _tpoint );
 
   return _tpoint;
+}
+function getLayerTransform() {
+  _originMatrix[ 2 ] = -layerTransform.origin.x;
+  _originMatrix[ 5 ] = -layerTransform.origin.y;
+  _positionMatrix[ 2 ] = layerTransform.origin.x;
+  _positionMatrix[ 5 ] = layerTransform.origin.y;
 
+  mul3x3( layerTransformMatrices.current , _originMatrix , _layerTranform ); // origin * current
+  mul3x3( _layerTranform , layerTransformMatrices.moving , _layerTranform ); // (origin*current) * moving
+  mul3x3( _layerTranform , _positionMatrix , _layerTranform ); // transform = ( (origin*current) * moving ) * position
+}
+function transformLayerPoint( p ) {
+  _tpoint[0] = p[0];
+  _tpoint[1] = p[1];
+  _tpoint[2] = p[2];
+  
+  mul3x1( _layerTranform , _tpoint , _tpoint );
+
+  return _tpoint;
 }
 
 const paintGPUResources = {
@@ -5237,8 +5793,6 @@ function applyPaintStroke( points, destinationLayer ) {
   globalTransformBy -= canvasOriginY;
 
   //cast to canvas space by projecting on legs
-  //this isn't right, is it? You need the untransform?
-  //matrix inversion works, but there's an obvious other way, right?
   let canvasTransformAx = globalTransformAx*xLegX + globalTransformAy*xLegY,
     canvasTransformAy = globalTransformAx*yLegX + globalTransformAy*yLegY;
   canvasTransformAx *= destinationLayer.w / lengthXLeg;
@@ -5691,6 +6245,18 @@ const viewMatrices = {
         0 , 0 , 1 ,
     ],
 };
+const layerTransformMatrices = {
+  current: [
+      1 , 0 , 0 ,
+      0 , 1 , 0 ,
+      0 , 0 , 1 ,
+  ],
+  moving: [
+      1 , 0 , 0 ,
+      0 , 1 , 0 ,
+      0 , 0 , 1 ,
+  ],
+}
 
 const _final = [
     1 , 0 , 0 ,
@@ -5720,6 +6286,94 @@ function finalizeViewMove() {
     view.pan.y = 0;
     view.zoom = 1;
     view.angle = 0;
+
+    //renable transform for next pinch if it was temporarily disable for nav
+    if( uiSettings.activeTool === "transform" )
+      uiSettings.toolsSettings.transform.current = true;
+
+}
+function finalizeLayerTransform() {
+
+  console.error( "Finalize layer transform needs to actually collectGroupedLayersAsFlatList() and run on a full list. (Run on list of length 1 for a non-group layer.)" );
+
+  const oldData = {
+    scale: selectedLayer.transform.scale,
+    angle: selectedLayer.transform.angle,
+  }
+  for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+    oldData[ pointName ] = [ ...selectedLayer[ pointName ] ];
+  }
+
+  //apply the layer transform to the layer
+  selectedLayer.transform.scale *= layerTransform.zoom;
+  selectedLayer.transform.angle += layerTransform.angle;
+
+  //convert our on-screen transform coordinates to global space coordinates
+
+  _originMatrix[ 2 ] = -view.origin.x;
+  _originMatrix[ 5 ] = -view.origin.y;
+  _positionMatrix[ 2 ] = view.origin.x;
+  _positionMatrix[ 5 ] = view.origin.y;
+
+  mul3x3( viewMatrices.current , _originMatrix , _inverter );
+  mul3x3( _inverter , viewMatrices.moving , _inverter );
+  mul3x3( _inverter , _positionMatrix , _inverter );
+  //get inverse view
+  inv( _inverter , _inverter );
+
+  for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+    const transformingPoint = selectedLayer.transform.transformingPoints[ pointName ];
+    //apply inverse view
+    mul3x1( _inverter, transformingPoint, transformingPoint );
+    //store updated points
+    //at some point, I need to rectify these. Make sure the legs are at right angles and the aspect ratio is fixed etc.
+    selectedLayer[ pointName ][ 0 ] = transformingPoint[ 0 ];
+    selectedLayer[ pointName ][ 1 ] = transformingPoint[ 1 ];
+    selectedLayer[ pointName ][ 2 ] = 1;
+  }
+
+  id3x3( layerTransformMatrices.current ); //zero-out current for next transformation, since we're applying the transform to the points
+  id3x3( layerTransformMatrices.moving ); //zero-out moving for next transformation
+  
+  layerTransform.origin.x = 0;
+  layerTransform.origin.y = 0;
+  layerTransform.pan.x = 0;
+  layerTransform.pan.y = 0;
+  layerTransform.zoom = 1;
+  layerTransform.angle = 0;
+
+  
+  const newData = {
+    scale: selectedLayer.transform.scale,
+    angle: selectedLayer.transform.angle,
+  }
+  for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+    newData[ pointName ] = [ ...selectedLayer[ pointName ] ];
+  }
+
+  const historyEntry = {
+    targetLayer: selectedLayer,
+    oldData,
+    newData,
+    undo: () => {
+      //reinstall old data
+      historyEntry.targetLayer.transform.scale = historyEntry.oldData.scale;
+      historyEntry.targetLayer.transform.angle = historyEntry.oldData.angle;
+      for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+        historyEntry.targetLayer[ pointName ] = [ ...historyEntry.oldData[ pointName ] ]
+      }
+    },
+    redo: () => {
+      //reinstall new data
+      historyEntry.targetLayer.transform.scale = historyEntry.newData.scale;
+      historyEntry.targetLayer.transform.angle = historyEntry.newData.angle;
+      for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+        historyEntry.targetLayer[ pointName ] = [ ...historyEntry.newData[ pointName ] ]
+      }
+    },
+  };
+  recordHistoryEntry( historyEntry );
+
 }
 
 const _rot = [
