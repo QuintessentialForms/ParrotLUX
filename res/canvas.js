@@ -1234,6 +1234,44 @@ function getLayerVisibility( layer ) {
   return getLayerVisibility( layersStack.layers.find( l => l.layerId === layer.layerGroupId ) );
 }
 
+async function resetLayerSize( layer, width, height ) {
+
+  const widthScale = width / layer.w,
+    heightScale = height / layer.h;
+  layer.canvas.width = layer.maskCanvas.width = layer.w = width;
+  layer.canvas.height = layer.maskCanvas.height = layer.h = height;
+  
+  const tl = layer.topLeft,
+    tr = layer.topRight,
+    bl = layer.bottomLeft,
+    br = layer.bottomRight;
+  
+  //resize width vectors
+  const topCenter = [ (tl[0]+tr[0])/2, (tl[1]+tr[1])/2 ],
+    bottomCenter = [ (bl[0]+br[0])/2, (bl[1]+br[1])/2 ];
+
+  for( const [points,center] of [ [[tl,tr],topCenter], [[bl,br],bottomCenter] ]) {
+    for( const point of points ) {
+      point[0] = ((point[0]-center[0]) * widthScale)+center[0];
+      point[1] = ((point[1]-center[1]) * widthScale)+center[1];
+    }
+  }
+
+  //resize height vectors
+  const leftCenter = [ (tl[0]+bl[0])/2, (tl[1]+bl[1])/2 ],
+    rightCenter = [ (tr[0]+br[0])/2, (tr[1]+br[1])/2 ];
+
+  for( const [points,center] of [ [[tl,bl],leftCenter], [[tr,br],rightCenter] ]) {
+    for( const point of points ) {
+      point[0] = ((point[0]-center[0]) * heightScale)+center[0];
+      point[1] = ((point[1]-center[1]) * heightScale)+center[1];
+    }
+  }
+
+  //whatever process called this function had better flag it for upload!
+
+}
+
 async function deleteLayer( layer ) {
 
   //if this layer is selected, unselect it
@@ -1905,6 +1943,7 @@ let uiSettings = {
     },
     "transform": {
       current: true,
+      transformingLayers: [],
     }
   },
 
@@ -2699,6 +2738,7 @@ function setupUI() {
             const assets = [];
             for( const apiFlow of apiFlows ) {
               if( apiFlow.isDemo ) continue;
+              if( apiFlow.apiFlowType === "asset" ) continue;
               const asset = { name: apiFlow.apiFlowName }
               assets.push( asset );
             }
@@ -2772,7 +2812,15 @@ function setupUI() {
                 //cast source layer to generative layer's space
                 const previewLayer = layersStack.layers.find( l => l.layerType === "paint-preview" );
                 sampleLayerInLayer( sourceLayer, selectedLayer, previewLayer );
-                controlValues[ control.controlName ] = previewLayer.canvas.toDataURL();
+                const dataURL = previewLayer.canvas.toDataURL();
+                //controlValues[ control.controlName ] = dataURL.substring( dataURL.indexOf( "," ) + 1 );
+                controlValues[ control.controlName ] = dataURL;
+                if( false ) {
+                  const output = document.body.appendChild( document.createElement( "div" ) );
+                  output.style = "position:absolute; left:0; top:0; color:red; border:1px solid red; width:25vw; height:25vh; font-size:4px; overflow-y:scroll; pointer-events:all; z-index:999999999";
+                  output.textContent = controlValues[ control.controlName ];
+                  //console.log( controlValues[ control.controlName ] );
+                }
               }
             }
 
@@ -2783,6 +2831,9 @@ function setupUI() {
             //absolutely everywhere I reference CTX calls like this will need to change with GPU paint?
             //Or... Hmm. Maybe I use those pixelreads to update these canvases.
             //Well... I have to keep the canvases anyway, right??? For previews. So no change???
+            const image = result[ "generated-image" ];
+            if( image.width !== selectedLayer.w || image.height !== selectedLayer.h )
+              resetLayerSize( selectedLayer, image.width, image.height );
             selectedLayer.context.drawImage( result[ "generated-image" ], 0, 0 );
             flagLayerTextureChanged( selectedLayer );
           }
@@ -3369,23 +3420,36 @@ function setupUI() {
       {
         //add the import image button
         const importImageButton = addLayersPanel.appendChild( document.createElement( "div" ) );
-        importImageButton.classList.add( "rounded-line-button", "animated", "unimplemented" );
+        importImageButton.classList.add( "rounded-line-button", "animated" );
         importImageButton.appendChild( new Image() ).src = "icon/picture.png";
         importImageButton.appendChild( document.createElement("span") ).textContent = "Import Image as Layer";
         UI.registerElement( importImageButton, {
-          onclick: () => {
+          onclick: async () => {
             importImageButton.classList.add( "pushed" );
             setTimeout( () => importImageButton.classList.remove( "pushed" ), UI.animationMS );
-            //TODO: Code to bring in imported image
+            
+            const img = await loadImage();
+            if( img === null ) {
+              UI.deleteContext( "add-layers-panel-visible" );
+              console.error( "Image import failed. Need to add error onscreen" );
+            } else {
+              const imageLayer = await addCanvasLayer( "paint", img.width, img.height );
+              //draw image
+              imageLayer.context.drawImage( img, 0, 0 );
+              flagLayerTextureChanged( imageLayer );
+              //coasting on addCanvasLayer's undo function
+            }
+
+
             UI.deleteContext( "add-layers-panel-visible" );
-            console.error( "Image import unimplemented." );
+
           },
           updateContext: context => {
             if( context.has( "add-layers-panel-visible" ) ) importImageButton.uiActive = true;
             else importImageButton.uiActive = false;
           }
         }, { 
-          tooltip: [ "!Unimplemented! Import Image as Layer", "to-left", "vertical-center" ],
+          tooltip: [ "Import Image as Layer", "to-left", "vertical-center" ],
           zIndex: 11000,
         } );
       }
@@ -3806,6 +3870,39 @@ function setupUIGenerativeControls( apiFlowName ) {
     selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
 
     //make the element from the type
+    if( control.controlType === "asset" ) {
+      /* 
+        code from ui setup where we build the api asset summoner:
+        const apiFlowSelectorButton = document.createElement( "div" );
+        apiFlowSelectorButton.classList.add( "asset-button", "round-toggle", "on" );
+        apiFlowSelectorButton.id = "api-flow-selector-button";
+        apiFlowSelectorButton.appendChild( document.createTextNode( "API" ) );
+        UI.registerElement(
+          apiFlowSelectorButton,
+          {
+            onclick: () => {
+              const assets = [];
+              for( const apiFlow of apiFlows ) {
+                if( apiFlow.isDemo ) continue;
+                if( apiFlow.apiFlowType === "asset" ) continue;
+                const asset = { name: apiFlow.apiFlowName }
+                assets.push( asset );
+              }
+              const callback = asset => {
+                selectedLayer.generativeSettings.apiFlowName = asset.name;
+                setupUIGenerativeControls( asset.name );
+              }
+              openAssetBrowser( assets, callback );
+            }
+          },
+          { tooltip: [ "Select APIFlow", "below", "to-right-of-center" ], zIndex:10000, },
+        )
+        generativeControlsRow.appendChild( apiFlowSelectorButton );
+      
+      */
+     //pull the assets list from the assets library
+     //if none, search for an api populates it and run
+    }
     if( control.controlType === "text" ) {
       const controlElement = document.createElement( "div" );
       controlElement.classList.add( "text-input-control", "animated" );
@@ -4228,6 +4325,30 @@ function saveJSON() {
 
 }
 
+function loadImage() {
+  console.error( "Need to lock UI for async file load." );
+
+  return new Promise( returnImage => {
+    const fileInput = document.createElement( "input" );
+    fileInput.type = "file";
+    fileInput.style = "position:absolute; left:0; top:0; opacity:0;";
+    document.body.appendChild( fileInput );
+    fileInput.addEventListener( "change", e => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => returnImage( img );
+        img.onerror = () => returnImage( null );
+        img.src = reader.result;
+        
+        document.body.removeChild( fileInput );
+      }
+      reader.readAsDataURL( e.target.files[0] );
+    } );
+    fileInput.click();
+  } )
+}
+
 function loadJSON() {
   console.error( "Need to lock UI for async file load." );
 
@@ -4338,7 +4459,9 @@ function loadJSON() {
         UI.updateContext();
 
       }
-        
+      
+      document.body.removeChild( fileInput );
+
     }
     reader.readAsText( e.target.files[0] );
   } );
@@ -7739,18 +7862,20 @@ async function executeAPICall( name, controlValues ) {
           console.error( "Not JSON. Alert api call failed. Response: ", xhr.response );
           complete( false );
         }
+        //console.log( "Got response." );
         for( const resultScheme of apiCall.results ) {
+          //console.log( "Starting with result ", resultScheme );
           const resultSuccessful = await new Promise( proceed => {
             const path = [ ...resultScheme.resultPath ];
-            results[ resultScheme.name ] = response;
+            results[ resultScheme.resultName ] = response;
             while( path.length ) {
-              if( typeof results[ resultScheme.name ] !== "object" ) {
+              if( typeof results[ resultScheme.resultName ] !== "object" ) {
                 //path cannot be resolved
                 console.error( "Unresolvable result path.", results, resultScheme, response, controlValues );
                 proceed( false );
               }
               const key = path.shift();
-              results[ resultScheme.name ] = results[ resultScheme.name ][ key ];
+              results[ resultScheme.resultName ] = results[ resultScheme.resultName ][ key ];
             }
             //got result
             if( resultScheme.resultType === "base64-image" ) {
@@ -7759,9 +7884,12 @@ async function executeAPICall( name, controlValues ) {
                 results[ resultScheme.resultName ] = img;
                 proceed( true );
               }
-              img.src = "data:image/png;base64," + results[ resultScheme.name ];
+              img.src = "data:image/png;base64," + results[ resultScheme.resultName ];
             }
-            //non-image result types we can leave as-is for now
+            if( resultScheme.resultType === "array-object" ) {
+              results[ resultScheme.resultName ] = response;
+              proceed( true );
+            }
           } );
           if( resultSuccessful === false ) {
             console.error( "Unable to retrieve a result." );
@@ -7791,11 +7919,24 @@ async function executeAPICall( name, controlValues ) {
         if( apiCall.method === "POST" ) {
           const postData = {
             method: "POST",
-            url: "http://127.0.0.1:"+ apiCall.port + apiCall.apiPath,
+            //url: "http://127.0.0.1:"+ apiCall.port + apiCall.apiPath,
             path: apiCall.apiPath,//path: "/sdapi/v1/txt2img",
-            host: '127.0.0.1',
+            host: "device",
             port: apiCall.port, //port: '7860',
             apiData: apiCall.api
+          }
+          xhr.open( "POST", "/api" );
+          //apiCall.api has been modified from controlValues, and is ready to send
+          xhr.send(new Blob([JSON.stringify(postData)],{"Content-Type":"application/json"}));
+        }
+        if( apiCall.method === "GET" ) {
+          const postData = {
+            method: "GET",
+            //url: "http://127.0.0.1:"+ apiCall.port + apiCall.apiPath,
+            path: apiCall.apiPath,//path: "/sdapi/v1/txt2img",
+            host: "device",
+            port: apiCall.port, //port: '7860',
+            //apiData: apiCall.api
           }
           xhr.open( "POST", "/api" );
           //apiCall.api has been modified from controlValues, and is ready to send
@@ -7805,6 +7946,7 @@ async function executeAPICall( name, controlValues ) {
     } );
     if( completedSuccessfully === true ) {
       apiResults[ apiCall.apiCallName ] = results;
+      //console.log( "Finished API call successfully with results: ", results );
     }
     else if( completedSuccessfully === false ) {
       console.error( "Failed to complete apicall." );
@@ -7816,10 +7958,29 @@ async function executeAPICall( name, controlValues ) {
   for( const outputScheme of apiFlow.outputs ) {
     const apiCallName = outputScheme.outputResultPath[ 0 ];
     const result = apiResults[ apiCallName ][ outputScheme.outputResultPath[ 1 ] ];
-    outputs[ outputScheme.outputName ] = result;
+    if( outputScheme.outputType === "image" ) {
+      outputs[ outputScheme.outputName ] = result;
+    }
+    if( outputScheme.outputType === "assets" ) {
+      const library = assetsLibrary[ outputScheme.outputLibraryName ] ||= {};
+      const mappedAssets = {};
+      for( const resultEntry of result ) {
+        const mappedAsset = {};
+        for( const {key,path} of outputScheme.assetMap ) {
+          mappedAsset[ key ] = resultEntry;
+          for( let i=0; i<path.length; i++ )
+            mappedAsset[ key ] = mappedAsset[ key ]?.[ path[ i ] ];
+        }
+        library[ mappedAsset.uniqueId ] = mappedAsset;
+        mappedAssets[ mappedAsset.uniqueId ] = mappedAsset;
+      }
+      outputs[ outputScheme.outputName ] = mappedAssets;
+    }
   }
   return outputs;
 }
+
+const assetsLibrary = {}
 
 /* 
 
@@ -7857,13 +8018,99 @@ const apiFlows = [
       //these are in order
       {
         apiCallName: "",
-        results: [
-          //path to data in result, and descriptor of how to handle / datatype
-        ],
+        results: [],
         apiPath: "",
         api: {},
       }
     ]
+  },
+  {
+    isDemo: true,
+    apiFlowName: "A1111 Upscale Demo",
+    apiFlowType: "generative",
+    outputs: [
+      {
+        outputName: "generated-image",
+        outputType: "image", //could be images array maybe
+        outputResultPath: [ "upscale", "generated-image" ]
+      }
+    ],
+    controls: [
+      { controlName: "model", controlType: "static", controlValue:"4x-UltraSharp", controlPath: [ "upscale", "api", "upscaler_1" ], },
+      //{ controlName: "model", controlType: "asset", assetLibrary: "A1111 Upscalers", controlPath: [ "upscale", "api", "upscaler_1" ], },
+      { controlName: "upscale", controlType: "number", min: 1, max: 8, step:0.125, controlValue:2, controlLayerControlName: "upscale image", controlPath: [ "upscale", "api", "upscaling_resize" ], },
+      { controlName: "upscale image", controlHint: "img", controlType: "image", controlValue:"", controlLayer:null, controlPath: [ "upscale", "api", "image" ], },
+    ],
+    apiCalls: [
+      {
+        apiCallName: "upscale",
+        results: [
+          {
+            resultName: "generated-image",
+            resultType: "base64-image", //could be images array maybe
+            resultPath: [ "image" ],
+          }
+        ],
+        host: "device",
+        port: 7860,
+        apiPath: "/sdapi/v1/extra-single-image",
+        method: "POST",
+        api: {
+          "resize_mode": 0, //0 - upscaling_resize, 1 - _w/_h
+          "show_extras_results": true,
+          "gfpgan_visibility": 0,
+          "codeformer_visibility": 0,
+          "codeformer_weight": 0,
+          "upscaling_resize": 2,
+          "upscaling_resize_w": 512,
+          "upscaling_resize_h": 512,
+          "upscaling_crop": true,
+          "upscaler_1": "4x-UltraSharp",
+          "upscaler_2": "None",
+          "extras_upscaler_2_visibility": 0,
+          "upscale_first": false,
+          "image": ""
+        }
+      }
+    ]
+  },
+  {
+    apiFlowName: "A1111 upscalers",
+    assetLibraries: [ "A1111 Upscalers" ],
+    apiFlowType: "asset",
+    outputs: [
+      {
+        outputName: "upscalers-list",
+        outputLibraryName: "A1111 Upscalers",
+        outputType: "assets",
+        assetMap: [
+          { key: "uniqueId", path: [ "name" ] },
+          { key: "name", path: [ "name" ] },
+          { key: "scale", path: [ "scale" ] },
+          //{ key: "modelName", path: [ "model_name" ] }, //this is the name of the base architecture this fine-tune was trained from
+          //{ key: "modelPath", path: [ "model_path" ] }, //path on the disk
+          //{ key: "modelURL", path: [ "model_url" ] }, //null IDK
+        ],
+        outputResultPath: [ "get-upscalers", "upscalers-array" ],
+      }
+    ],
+    controls: [],
+    apiCalls: [
+      {
+        apiCallName: "get-upscalers",
+        results: [
+          {
+            resultName: "upscalers-array",
+            resultType: "array-object",
+            resultPath: [],
+          },
+        ],
+        host: "device",
+        port: 7860,
+        method: "GET",
+        apiPath: "/sdapi/v1/upscalers"
+      }
+    ],
   },
   {
     apiFlowName: "A1111 Layer to Lineart Demo",

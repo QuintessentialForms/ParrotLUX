@@ -58,6 +58,8 @@ Coming very soon! Windows binary and Android APK will be available.
     - ✅ PenPressure & Tilt
     - ❌ Gestures triple-tap+drag
     - ❌ Mouse Input
+        - ✅ Some
+        - ❌ All
     - ❌ Keyboard Shortcuts
         - ✅ Some
         - ❌ All
@@ -76,7 +78,7 @@ Coming very soon! Windows binary and Android APK will be available.
 - ✅ Undo / Redo
 - ✅ Save / Load
 - ❌ Import image
-- ❌ Gallery View
+- ❌ Gallery View (Android APK only?)
 - ✅ Export
 - ❌ Settings Panel
 - ✅ Paint

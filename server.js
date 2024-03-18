@@ -120,7 +120,7 @@ const server = http.createServer(
                 request.on( "data", d => body.push( d ) )
                 request.on( "end", () => {
                     const bodyString = body.join("");
-                    console.log( "Incoming post ended. Got body: ", bodyString.substring(0,10) + "... " + bodyString.length + " characters." );
+                    //console.log( "Incoming post ended. Got body: ", bodyString.substring(0,10) + "... " + bodyString.length + " characters." );
                     let json;
                     try {
                         json = JSON.parse( bodyString );
@@ -132,58 +132,91 @@ const server = http.createServer(
                         console.log( "Received JSON POST from client." );
                         //let's make the post request to the URL given in the data.
 
-                        const apiString = JSON.stringify( json.apiData );
+                        const apiString = (json.method === "POST") ? JSON.stringify( json.apiData ) : null;
 
                         //set up our options
-                        const postOptions = {
+                        const requestOptions = {
                             /* host: '127.0.0.1', //json.host
                             port: '7860', //json.port
                             path: '/sdapi/v1/txt2img', //json.path */
                             //host: json.host,
-                            host: ipAddress,
+                            host: json.host === "device" ? ipAddress : json.host,
                             port: json.port,
                             path: json.path,
-                            method: 'POST', //json.method
-                            headers: {
+                            method: json.method === "POST" ? 'POST' : 'GET', //json.method
+                        }
+
+                        if( json.method === "POST" ) {
+                            requestOptions.headers = {
                                 'Content-Type': 'application/json',
-                                'Content-Length': Buffer.byteLength( apiString )
+                                'Content-Length': Buffer.byteLength( apiString ),
                             }
                         }
 
                         let responseData = [];
 
-                        console.log( "POSTing with options ", JSON.stringify( postOptions ) );
-                        console.log( "POSTing to URL, ", `http://${ipAddress}:${json.port}${json.path}` );
-
-                        const postRequest = http.request(
-                            //"http://127.0.0.1:7860/sdapi/v1/txt2img", //json.url
-                            //json.url,
-                            `http://${ipAddress}:${json.port}${json.path}`,
-                            postOptions,
-                            forwardedResponse => {
-                                forwardedResponse.setEncoding( "utf8" );
-                                forwardedResponse.on( "data", chunk => {
-                                    //console.log( "Got reflected response data." );
-                                    responseData.push( chunk );
-                                } );
-                                forwardedResponse.on( 'end', () => {
-                                    console.log( "Sending client reflected POST." );
-                                    const responseString = responseData.join( "" );
-                                    //console.log( "Reflected response: ", responseString );
-                                    response.writeHead( 200 , {
-                                        'Content-Type': 'application/json',
-                                        //'Content-Length': Buffer.byteLength( responseString ) //added this on a whim, might break stuff!
+                        if( requestOptions.method === "POST" ) {
+                            //console.log( "POSTing with options ", JSON.stringify( postOptions ) );
+                            //console.log( "POSTing to URL, ", `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}` );
+    
+                            const postRequest = http.request(
+                                `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}`,
+                                requestOptions,
+                                forwardedResponse => {
+                                    forwardedResponse.setEncoding( "utf8" );
+                                    forwardedResponse.on( "data", chunk => {
+                                        //console.log( "Got reflected response data." );
+                                        responseData.push( chunk );
                                     } );
-                                    response.end( responseString );
-                                })
-                            }
-                        );
-
-                        postRequest.on( "error", e => console.error( "Forwarded post request error ",  e ) );
-                        console.log( "Sending reflected POST..." );
-                        postRequest.write( apiString );
-                        postRequest.end();
+                                    forwardedResponse.on( 'end', () => {
+                                        console.log( "Responding with reflected POST..." );
+                                        const responseString = responseData.join( "" );
+                                        //console.log( "Reflected response: ", responseString );
+                                        response.writeHead( 200 , {
+                                            'Content-Type': 'application/json',
+                                            //'Content-Length': Buffer.byteLength( responseString ) //added this on a whim, might break stuff!
+                                        } );
+                                        response.end( responseString );
+                                    })
+                                }
+                            );
+    
+                            postRequest.on( "error", e => console.error( "Forwarded POST request error ",  e ) );
+                            console.log( "Reflecting client POST." );
+                            postRequest.write( apiString );
+                            postRequest.end();    
+                        }
                         
+                        if( requestOptions.method === "GET" ) {
+                            //console.log( "GETing with options ", JSON.stringify( postOptions ) );
+                            //console.log( "GETing to URL, ", `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}` );
+    
+                            const getRequest = http.request(
+                                `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}`,
+                                requestOptions,
+                                forwardedResponse => {
+                                    forwardedResponse.setEncoding( "utf8" );
+                                    forwardedResponse.on( "data", chunk => {
+                                        //console.log( "Got reflected response data." );
+                                        responseData.push( chunk );
+                                    } );
+                                    forwardedResponse.on( 'end', () => {
+                                        console.log( "Responding with reflected GET..." );
+                                        const responseString = responseData.join( "" );
+                                        //console.log( "Reflected response: ", responseString );
+                                        response.writeHead( 200 , {
+                                            'Content-Type': 'application/json',
+                                            //'Content-Length': Buffer.byteLength( responseString ) //added this on a whim, might break stuff!
+                                        } );
+                                        response.end( responseString );
+                                    })
+                                }
+                            );
+    
+                            getRequest.on( "error", e => console.error( "Forwarded GET request error ",  e ) );
+                            console.log( "Reflecting client GET." );
+                            getRequest.end();    
+                        }
                     }
                 } )
             }
