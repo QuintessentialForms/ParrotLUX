@@ -1,3 +1,4 @@
+
 /* Working Proof of Concept:
 
     What next?
@@ -103,7 +104,7 @@ function redo() {
 }
 
 let layersAddedCount = -2;
-async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibling ) {
+async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibling=null, doNotUpdate=false ) {
   
   //layerType === "paint" | "paint-preview" | "generative" | "group" | "text" | "pose" | "model" | ...
 
@@ -155,6 +156,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
 
   //create the back-end layer info
   console.error( "On gen layer make, pull current / last used / first api flow controls" );
+
   const newLayer = {
     //layerOrder: layersStack.layers.length, //not implemented
     layerType,
@@ -210,6 +212,13 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     layerButton: null,
 
   }
+
+  if( newLayer.layerType === "paint" ) newLayer.layerName = "Paint " + newLayer.layerName;
+  if( newLayer.layerType === "generative" ) newLayer.layerName = "Gen " + newLayer.layerName;
+  if( newLayer.layerType === "group" ) newLayer.layerName = newLayer.layerName.replace( "Layer", "Group" );
+  if( newLayer.layerType === "text" ) newLayer.layerName = "Text " + newLayer.layerName;
+  if( newLayer.layerType === "pose" ) newLayer.layerName = "Pose " + newLayer.layerName;
+
   newLayer.canvas.width = layerWidth;
   newLayer.canvas.height = layerHeight;
   newLayer.context = newLayer.canvas.getContext( "2d" );
@@ -225,8 +234,15 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
       nextSibling = selectedLayer;
 
   if( nextSibling ) {
-    const index = layersStack.layers.indexOf( nextSibling );
-    layersStack.layers.splice( index+1, 0, newLayer );
+    if( nextSibling === selectedLayer && selectedLayer.layerType === "group" ) {
+      const index = layersStack.layers.indexOf( nextSibling );
+      newLayer.layerGroupId = selectedLayer.layerId;
+      layersStack.layers.splice( index, 0, newLayer );
+    }
+    else {
+      const index = layersStack.layers.indexOf( nextSibling );
+      layersStack.layers.splice( index+1, 0, newLayer );
+    }
   } else {
     layersStack.layers.push( newLayer );
   }
@@ -267,13 +283,14 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     }
   }
 
-  let layerSibling,
-    layerButton;
+  let layerButton;
   if( layerType !== "paint-preview" ) {
     //create the layer button
     layerButton = document.createElement( "div" );
     layerButton.classList.add( "layer-button", "expanded" );
-    layerButton.appendChild( newLayer.canvas );
+    if( newLayer.layerType !== "group" ) {
+      layerButton.appendChild( newLayer.canvas );
+    }
     layerButton.layer = newLayer; //Yep, I'm adding it. Double-link.
     newLayer.layerButton = layerButton;
     let startScrollingOffset = 0,
@@ -287,7 +304,13 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
           const dy = current.y - start.y,
             dt = current.t - start.t;
           if( !currentlyScrolling && ending === true && dt < 200 && Math.abs(dy) < 5 ) {
-            selectLayer( newLayer );
+            if( newLayer !== selectedLayer ) {
+              selectLayer( newLayer );
+            }
+            else if( newLayer === selectedLayer && newLayer.layerType === "group" ) {
+              newLayer.groupClosed = ! newLayer.groupClosed;
+              reorganizeLayerButtons();
+            }
           }
           if( !currentlyScrolling && ( Math.abs( dy ) > 5 || dt > 200 ) ) {
             currentlyScrolling = true;
@@ -309,6 +332,16 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
       },
       { tooltip: ["Select Layer", "to-left", "above-center" ], zIndex:100 }
     );
+
+    //add the layer type icon
+    {
+      const groupIcon = document.createElement( "div" );
+      groupIcon.classList.add( "layer-type-icon", newLayer.layerType );
+      if( newLayer.layerType === "group" ) {
+        groupIcon.classList.add( "open" );
+      }
+      layerButton.appendChild( groupIcon );
+    }
 
     //add the layer group joiner
     {
@@ -380,19 +413,89 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         duplicateButton,
         {
           onclick: async () => {
-            //adding the new layer inherently adds the undo component
-            const copy = await addCanvasLayer( layerType, newLayer.w, newLayer.h, newLayer )
-            //by altering the properties without registering a new undo, the creation undo is a copy
-            copy.context.drawImage( newLayer.canvas, 0, 0 );
-            if( newLayer.maskInitialized )
-              copy.maskContext.drawImage( newLayer.maskCanvas, 0, 0 );
-            copy.textureChanged = true;
-            copy.setVisibility( newLayer.visible );
-            copy.setOpacity( newLayer.opacity );
-            copy.topLeft = [ ...newLayer.topLeft ];
-            copy.topRight = [ ...newLayer.topRight ];
-            copy.bottomLeft = [ ...newLayer.bottomLeft ];
-            copy.bottomRight = [ ...newLayer.bottomRight ];
+
+            //Hooo boy. I can already feel the RAM hurting.
+            if( newLayer.layerType === "group" ) {
+              const groupedLayers = [ newLayer ];
+              for( let i = layersStack.layers.indexOf( newLayer )-1; i>=0; i-- ) {
+                const layer = layersStack.layers[ i ];
+                if( ! getLayerGroupChain( layer ).includes( newLayer.layerId ) ) break;
+                groupedLayers.push( layer );
+              }
+
+              const copyMap = [], 
+                historyEntries = [];
+
+              //we're going to catch our historyEntries
+              for( const layer of groupedLayers ) {
+                //adding all copies as siblings directly above the current layer, one by one
+                const copy = await addCanvasLayer( layer.layerType, layer.w, layer.h, newLayer, true );
+                //by altering the properties without registering a new undo, the creation undo is a copy
+                copy.layerName = layer.layerName;
+                if( layer === newLayer ) copy.layerGroupId = newLayer.layerGroupId;
+                //will set layerGroupId later for rest
+                copy.groupCompositeUpToDate = false;
+                copy.groupClosed = layer.groupClosed;
+                copy.context.drawImage( layer.canvas, 0, 0 );
+                if( layer.maskInitialized ) {
+                  copy.maskContext.drawImage( layer.maskCanvas, 0, 0 );
+                  copy.maskInitialized = true;
+                  flagLayerMaskChanged( copy );
+                }
+                flagLayerTextureChanged( copy );
+                copy.setVisibility( layer.visible );
+                copy.setOpacity( layer.opacity );
+                copy.topLeft = [ ...layer.topLeft ];
+                copy.topRight = [ ...layer.topRight ];
+                copy.bottomLeft = [ ...layer.bottomLeft ];
+                copy.bottomRight = [ ...layer.bottomRight ];
+                copyMap.push( { layer, copy } );
+                //steal the undo entry
+                const historyEntry = history.pop();
+                historyEntries.push( historyEntry );
+              }
+              //match up the layergroup structures
+              for( let i=0; i<copyMap.length; i++ ) {
+                const originalParentMap = copyMap.find( ({layer}) => layer.layerId === copyMap[ i ].layer.layerGroupId );
+                //top-level layer has no parent
+                if( ! originalParentMap ) continue;
+                copyMap[ i ].copy.layerGroupId = originalParentMap.copy.layerId;
+              }
+              //build the superconglomerate undo
+              const historyEntry = {
+                historyEntries,
+                undo: () => {
+                  for( let i = historyEntry.historyEntries.length-1; i>=0; i-- ) {
+                    historyEntry.historyEntries[ i ].undo();
+                  }
+                },
+                redo: () => {
+                  for( const entry of historyEntry.historyEntries )
+                    entry.redo();
+                }
+              }
+              //In the end, we'll push out max 1 old undo history record. The math adds up.
+              recordHistoryEntry( historyEntry );
+            }
+            else {
+              //adding the new layer inherently adds the undo component
+              const copy = await addCanvasLayer( newLayer.layerType, newLayer.w, newLayer.h, newLayer, true )
+              //by altering the properties without registering a new undo, the creation undo is a copy
+              copy.layerName = newLayer.layerName;
+              copy.layerGroupId = newLayer.layerGroupId;
+              copy.context.drawImage( newLayer.canvas, 0, 0 );
+              if( newLayer.maskInitialized )
+                copy.maskContext.drawImage( newLayer.maskCanvas, 0, 0 );
+              copy.textureChanged = true;
+              copy.setVisibility( newLayer.visible );
+              copy.setOpacity( newLayer.opacity );
+              copy.topLeft = [ ...newLayer.topLeft ];
+              copy.topRight = [ ...newLayer.topRight ];
+              copy.bottomLeft = [ ...newLayer.bottomLeft ];
+              copy.bottomRight = [ ...newLayer.bottomRight ];
+            }
+            reorganizeLayerButtons();
+            UI.updateContext();
           },
           updateContext: () => {
             if( layerButton.classList.contains( "active" ) )
@@ -428,7 +531,8 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     {
       const moveHandle = document.createElement( "div" );
       moveHandle.classList.add( "layer-move-button", "layer-ui-button", "animated"  );
-      let hoveringDropTarget = null;
+      let hoveringDropTarget = null,
+        groupedLayers = [];
       UI.registerElement(
         moveHandle,
         {
@@ -437,6 +541,21 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
               //remove any visible links
               document.querySelectorAll( ".layer-node-tail" ).forEach( n => nodeLinkSource.removeChild( n ) );
               //they'll all be remade on update context (hopefully...)
+              //now... remove all the layer buttons in this group if this is a group :-|
+              if( newLayer.layerType === "group" ) {
+                groupedLayers.length = 0;
+
+                for( let i = layersStack.layers.indexOf( newLayer )-1; i>=0; i-- ) {
+                  const layer = layersStack.layers[ i ];
+                  if( ! getLayerGroupChain( layer ).includes( newLayer.layerId ) ) break;
+                  groupedLayers.push( layer );
+                }
+
+                for( const layer of groupedLayers ) {
+                  layer.layerButton.parentElement.removeChild( layer.layerButton );
+                }
+
+              }
               uiContainer.appendChild( layerButton );
               layerButton.style.position = "absolute";
             }
@@ -476,29 +595,52 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                 //get old and new indices for the layer drop
                 const oldIndex = layersStack.layers.indexOf( newLayer );
 
+                layersStack.layers.splice( oldIndex, 1 + groupedLayers.length );
+
                 newIndex = layersStack.layers.indexOf( hoveringDropTarget.layer );
-                if( hoveringDropTarget.classList.contains( "hover-drop-below" ) ) newIndex -= 1;
+
+                const oldGroupId = newLayer.layerGroupId;
+
+                if( hoveringDropTarget.classList.contains( "hover-drop-above" ) ) newIndex += 1;
+
+                if( hoveringDropTarget.layer.layerType === "group" ) {
+                  if( hoveringDropTarget.classList.contains( "hover-drop-above" ) ) {
+                    newLayer.layerGroupId = hoveringDropTarget.layer.layerGroupId;
+                  } else {
+                    newLayer.layerGroupId = hoveringDropTarget.layer.layerId;
+                  }
+                }
+                else {
+                  //require match even on null (which is effectively top-row group)
+                  newLayer.layerGroupId = hoveringDropTarget.layer.layerGroupId;
+                }
+
+                const newGroupId = newLayer.layerGroupId;
+
+                //recording undo event even on drop-in-same-place, should probably fix eventually
+                layersStack.layers.splice( newIndex, 0, newLayer, ...groupedLayers );
 
                 //clean up the hovering visuals
                 hoveringDropTarget.classList.remove( "hover-drop-above", "hover-drop-below" );
 
-                //don't pollute the undo stack if no change
-                if( newIndex !== oldIndex ) {
-                  layersStack.layers.splice( oldIndex, 1 );
-                  layersStack.layers.splice( newIndex, 0, newLayer );
-  
+                {
                   const historyEntry = {
                     oldIndex,
+                    oldGroupId,
                     newIndex,
+                    newGroupId,
                     targetLayer: newLayer,
+                    groupedLayers: [ ...groupedLayers ],
                     undo: () => {
-                      layersStack.layers.splice( historyEntry.newIndex, 1 );
-                      layersStack.layers.splice( historyEntry.oldIndex, 0, historyEntry.targetLayer );
+                      newLayer.layerGroupId = historyEntry.oldGroupId;
+                      layersStack.layers.splice( historyEntry.newIndex, 1+historyEntry.groupedLayers.length );
+                      layersStack.layers.splice( historyEntry.oldIndex, 0, historyEntry.targetLayer, ...historyEntry.groupedLayers );
                       reorganizeLayerButtons();
                     },
                     redo: () => {
-                      layersStack.layers.splice( historyEntry.oldIndex, 1 );
-                      layersStack.layers.splice( historyEntry.newIndex, 0, historyEntry.targetLayer );
+                      newLayer.layerGroupId = historyEntry.newGroupId;
+                      layersStack.layers.splice( historyEntry.oldIndex, 1+historyEntry.groupedLayers.length );
+                      layersStack.layers.splice( historyEntry.newIndex, 0, historyEntry.targetLayer, ...historyEntry.groupedLayers );
                       reorganizeLayerButtons();
                     }
                   }
@@ -777,7 +919,8 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     {
       const nodeLinkSource = document.createElement( "div" );
       nodeLinkSource.classList.add( "layer-node-link-source", "animated", "hidden" );
-      if( newLayer.layerType === "paint" || newLayer.layerType === "layer-group" )
+      //if( newLayer.layerType === "paint" || newLayer.layerType === "group" || newLayer.layerType === "text" || newLayer.layerType === "pose" )
+      if( newLayer.layerType === "paint" || newLayer.layerType === "text" || newLayer.layerType === "pose" )
         nodeLinkSource.classList.remove( "hidden" );
 
       const createNodeTail = ( destElement, dashed = false, width = -1 ) => {
@@ -905,7 +1048,9 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
             layerButton.appendChild( nodeLinkSource );
 
             let handleIsVisible = true;
-            if( ! (newLayer.layerType === "paint" || newLayer.layerType === "layer-group") ) handleIsVisible = false;
+            //if( ! (newLayer.layerType === "paint" || newLayer.layerType === "group" || newLayer.layerType === "text" || newLayer.layerType === "pose" ) )
+            if( ! (newLayer.layerType === "paint" || newLayer.layerType === "text" || newLayer.layerType === "pose" ) )
+              handleIsVisible = false;
             //if( selectedLayer !== newLayer ) isVisible = false;
             if( handleIsVisible === false ) nodeLinkSource.classList.add( "hidden" );
             else nodeLinkSource.classList.remove( "hidden" );
@@ -948,7 +1093,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
 
 
     //insert the layer buttom into the DOM
-    if( nextSibling ) {
+    /* if( nextSibling ) {
       document.querySelector( "#layers-column" ).insertBefore( layerButton, nextSibling.layerButton );
       layerSibling = nextSibling.layerButton;
     } else {
@@ -960,13 +1105,14 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
       else {
         document.querySelector( "#layers-column" ).appendChild( layerButton );
       }
-    }
+    } */
 
     //activate the layer
-    selectLayer( newLayer );
+    if( ! doNotUpdate )
+      selectLayer( newLayer );
   }
 
-  if( layerType === "paint" || layerType === "generative" ) {
+  if( layerType !== "paint-preview" ) {
     const historyEntry = {
       newLayer,
       stackIndex: layersStack.layers.indexOf( newLayer ),
@@ -983,8 +1129,13 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
       }
     }
     recordHistoryEntry( historyEntry );
-  }
 
+    if( ! doNotUpdate ) {
+      reorganizeLayerButtons();
+      UI.updateContext();
+    }
+
+  }
   return newLayer;
   
 }
@@ -1008,6 +1159,12 @@ function reorganizeLayerButtons() {
   for( let i=layersStack.layers.length-1; i>=0; i-- ) {
     const layer = layersStack.layers[ i ];
     if( layer.layerType === "paint-preview" ) continue;
+    if( checkLayerInsideClosedGroup( layer ) ) continue;
+    if( layer.layerType === "group" && layer === selectedLayer ) {
+      updateLayerGroupCoordinates( layer );
+      if( layer.groupClosed === false ) layer.layerButton.querySelector( ".layer-type-icon.group" ).classList.add( "open" );
+      if( layer.groupClosed === true ) layer.layerButton.querySelector( ".layer-type-icon.group" ).classList.remove( "open" );
+    }
     layersColumn.appendChild( layer.layerButton );
     const layerGroupDepth = Math.min( 5, getLayerGroupDepth( layer ) );
     if( layerGroupDepth > 0 ) {
@@ -1095,7 +1252,107 @@ function updateLayerGroupComposite( layer ) {
   composeLayers( layer, childLayers, 1 );
 }
 
+function updateLayerGroupCoordinates( layerGroup ) {
+  if( layerGroup.layerType !== "group" ) return;
+
+  const layersInGroup = collectGroupedLayersAsFlatList( layerGroup.layerId );
+
+  if( layersInGroup.length === 0 ) return;
+
+  let minX = Infinity, minY = Infinity,
+    maxX = -Infinity, maxY = -Infinity;
+  for( const groupedLayer of layersInGroup ) {
+    if( groupedLayer.layerType === "group" ) continue;
+    for( const p of ["topLeft","topRight","bottomLeft","bottomRight"] ) {
+      minX = Math.min(minX,groupedLayer[p][0]);
+      minY = Math.min(minY,groupedLayer[p][1]);
+      maxX = Math.max(maxX,groupedLayer[p][0]);
+      maxY = Math.max(maxY,groupedLayer[p][1]);
+    }
+  }
+
+  minX = minX;
+  minY = minY;
+  maxX = maxX;
+  maxY = maxY;
+
+  console.log( minX, maxX, minY, maxY );
+
+  //update the rect
+  layerGroup.topLeft[0] = minX;
+  layerGroup.topLeft[1] = minY;
+  layerGroup.topRight[0] = maxX;
+  layerGroup.topRight[1] = minY;
+  layerGroup.bottomLeft[0] = minX;
+  layerGroup.bottomLeft[1] = maxY;
+  layerGroup.bottomRight[0] = maxX;
+  layerGroup.bottomRight[1] = maxY;
+
+}
+
+function testPointsInLayer( layer, testPoints, screenSpacePoints = false ) {
+
+  const points = [];
+  for( const point of testPoints )
+    points.push( [ ...point ] );
+
+  if( screenSpacePoints === true ) {
+    //get screen->global space inversion
+    _originMatrix[ 2 ] = -view.origin.x;
+    _originMatrix[ 5 ] = -view.origin.y;
+    _positionMatrix[ 2 ] = view.origin.x;
+    _positionMatrix[ 5 ] = view.origin.y;
+
+    mul3x3( viewMatrices.current , _originMatrix , _inverter );
+    mul3x3( _inverter , viewMatrices.moving , _inverter );
+    mul3x3( _inverter , _positionMatrix , _inverter );
+    inv( _inverter , _inverter );
+
+    for( const point of points ){
+      mul3x1( _inverter, point, point );
+    }
+  }
+
+  //if our layer is a group, make sure we have its rect right
+  if( layer.layerType === "group" ) {
+    updateLayerGroupCoordinates( layer );
+  }
+
+  //get our selected layer's space
+  let origin = { x:layer.topLeft[0], y:layer.topLeft[1] },
+    xLeg = { x:layer.topRight[0] - origin.x, y: layer.topRight[1] - origin.y },
+    xLegLength = Math.sqrt( xLeg.x**2 + xLeg.y**2 ),
+    normalizedXLeg = { x:xLeg.x/xLegLength, y:xLeg.y/xLegLength },
+    yLeg = { x:layer.bottomLeft[0] - origin.x, y: layer.bottomLeft[1] - origin.y },
+    yLegLength = Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
+    normalizedYLeg = { x:yLeg.x/yLegLength, y:yLeg.y/yLegLength };
+
+  let pointInSelectedLayer = false;
+
+  //cast global points to our selected layer's space
+  for( const point of points ) {
+    let [x,y] = point;
+    //translate from origin
+    x -= origin.x; y -= origin.y;
+    //project on normals
+    let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
+    let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
+    //unnormalize
+    xProjection *= selectedLayer.w / xLegLength;
+    yProjection *= selectedLayer.h / yLegLength;
+    //check if the point is inside the layer bounds
+    if( xProjection >= 0 && xProjection <= selectedLayer.w && yProjection >= 0 && yProjection <= selectedLayer.h ) {
+      pointInSelectedLayer = true;
+      break;
+    }
+  }
+
+  return pointInSelectedLayer;
+
+}
+
 function composeLayers( destinationLayer, layers, pixelScale ) {
+
   let minX = Infinity, minY = Infinity,
     maxX = -Infinity, maxY = -Infinity;
   for( const layer of layers ) {
@@ -1111,8 +1368,6 @@ function composeLayers( destinationLayer, layers, pixelScale ) {
   minY = parseInt( minY );
   maxX = parseInt( maxX ) + 1;
   maxY = parseInt( maxY ) + 1;
-
-  console.log( minX, minY, maxX, maxY );
 
   const width = parseInt( ( maxX - minX ) * pixelScale ),
     height = parseInt( ( maxY - minY ) * pixelScale );
@@ -1221,6 +1476,31 @@ function collectGroupedLayersAsFlatList( groupLayerId ) {
       }
     }
   }
+  return collectedLayers;
+}
+
+function getLayerGroupChain( layer ) {
+  const groupChain = [ layer.layerGroupId ];
+  while( layer.layerGroupId !== null ) {
+    layer = layersStack.layers.find( l => l.layerId === layer.layerGroupId );
+    groupChain.push( layer.layerGroupId )
+  }
+  return groupChain; //groupChain should always end in null probably
+}
+
+function checkLayerInsideClosedOrNonVisibleGroup( layer ) {
+  if( layer.visible === false ) return true;
+  if( !layer || layer.layerGroupId === null ) return false;
+  let groupLayer = layersStack.layers.find( l => l.layerId === layer.layerGroupId );
+  if( groupLayer.groupClosed === true || groupLayer.visible === false ) return true;
+  return checkLayerInsideClosedGroup( groupLayer );
+}
+
+function checkLayerInsideClosedGroup( layer ) {
+  if( !layer || layer.layerGroupId === null ) return false;
+  let groupLayer = layersStack.layers.find( l => l.layerId === layer.layerGroupId );
+  if( groupLayer.groupClosed === true ) return true;
+  return checkLayerInsideClosedGroup( groupLayer );
 }
 
 function getLayerGroupDepth( layer ) {
@@ -1232,6 +1512,11 @@ function getLayerVisibility( layer ) {
   if( layer.visible === false ) return false;
   if( layer.layerGroupId === null && layer.visible === true ) return true;
   return getLayerVisibility( layersStack.layers.find( l => l.layerId === layer.layerGroupId ) );
+}
+function getLayerOpacity( layer ) {
+  let alpha = layer.opacity;
+  if( layer.layerGroupId === null ) return alpha;
+  return alpha * getLayerOpacity( layersStack.layers.find( l => l.layerId === layer.layerGroupId ) );
 }
 
 async function resetLayerSize( layer, width, height ) {
@@ -1309,6 +1594,8 @@ async function deleteLayer( layer ) {
         layersStack.layers.splice( index, 0, layer );
       }
       reorganizeLayerButtons();
+      UI.updateContext();
+    
     },
     redo: () => {
       //delete from the layer stack in order
@@ -1316,6 +1603,8 @@ async function deleteLayer( layer ) {
         layersStack.layers.splice( index, 1 );
       }
       reorganizeLayerButtons();
+      UI.updateContext();
+    
     },
     cleanup: () => {
       //layers won't be coming back.
@@ -1328,7 +1617,7 @@ async function deleteLayer( layer ) {
   //:-O And record this horrifyingly subtle algorithm for future testing
   recordHistoryEntry( historyEntry );
 
-  //get the next layer
+  /* //get the next layer
   let nextLayer;
   if( index < layersStack.layers.length ) {
     //search for a non-preview layer
@@ -1347,13 +1636,15 @@ async function deleteLayer( layer ) {
       nextLayer = searchLayer;
       break;
     }
-  }
+  } */
 
   reorganizeLayerButtons();
 
-  if( nextLayer ) selectLayer( nextLayer ); //calls updateContext
+  //if( nextLayer ) selectLayer( nextLayer ); //calls updateContext
   //otherwise, there are truly no layers left except previews
-  else UI.updateContext();
+  //else UI.updateContext();
+
+  UI.updateContext();
 
 }
 
@@ -1383,6 +1674,9 @@ function selectLayer( layer ) {
     selectedLayer.layerButton.querySelector( ".layer-name" ).classList.add( "no-hover" );
   }
   selectedLayer = layer;
+  if( layer.layerType === "group" ) {
+    updateLayerGroupCoordinates( layer );
+  }
   for( const l of document.querySelectorAll( "#layers-column > .layer-button" ) ) {
     l.classList.remove( "active", "no-hover", "hovering" );
   }
@@ -1436,7 +1730,8 @@ Info: ${info}`;
       gl.bindVertexArray(glState.vao);
 
       //TODO: Here we need to collect all transforming layers, if any
-      const visibleLayers = [];
+      const visibleLayers = [],
+        selectedGroupLayers = [];
       let paintPreviewLayer = null;
       for( const layer of layersStack.layers ) {
         if( layer.layerType === "paint-preview" && paintPreviewLayer === null ) {
@@ -1444,9 +1739,15 @@ Info: ${info}`;
           continue;
         }
         if( layer.layerType === "group" ) {
-          continue;
+          if(  layer !== selectedLayer ) {
+            continue;
+          }
+          else if( layer === selectedLayer ) {
+            //grab layers within selected layer group to show their borders. :-)
+            selectedGroupLayers.push( ...collectGroupedLayersAsFlatList( layer.layerId ) );
+          }
         }
-        if( layer.visible ) {
+        if( getLayerVisibility( layer ) ) {
           visibleLayers.push( layer );
         }
       }
@@ -1499,17 +1800,17 @@ Info: ${info}`;
 
         //TODO: This transform actually needs to happen for all layers that are transforming (if we're transforming a group)
         //transform the layer if we're mid-transform
-        if( layer === selectedLayer && uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && ( cursor.mode !== "none" || pointers.count === 2 ) ) {
+        if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && uiSettings.toolsSettings.transform.transformingLayers.includes( layer ) && ( cursor.mode !== "none" || pointers.count === 2 ) ) {
           getLayerTransform();
           let [x,y] = transformLayerPoint( xy ),
             [x2,y2] = transformLayerPoint( xy2 ),
             [x3,y3] = transformLayerPoint( xy3 ),
             [x4,y4] = transformLayerPoint( xy4 );
           xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
-          selectedLayer.transform.transformingPoints.topLeft = [...xy];
-          selectedLayer.transform.transformingPoints.topRight = [...xy2];
-          selectedLayer.transform.transformingPoints.bottomLeft = [...xy3];
-          selectedLayer.transform.transformingPoints.bottomRight = [...xy4];
+          layer.transform.transformingPoints.topLeft = [...xy];
+          layer.transform.transformingPoints.topRight = [...xy2];
+          layer.transform.transformingPoints.bottomLeft = [...xy3];
+          layer.transform.transformingPoints.bottomRight = [...xy4];
         }
 
         //get the layers physical size on-display
@@ -1550,7 +1851,7 @@ Info: ${info}`;
         //let's bind the layer's texture
         gl.activeTexture( gl.TEXTURE0 + 0 );
         gl.bindTexture( gl.TEXTURE_2D, layer.glTexture );
-        if( layer.textureChanged ) {
+        if( layer.layerType !== "group" && layer.textureChanged ) {
           //let's re-upload the layer's texture when it's changed
           const mipLevel = 0,
           internalFormat = gl.RGBA,
@@ -1563,7 +1864,7 @@ Info: ${info}`;
         //bind the layer's mask
         gl.activeTexture( gl.TEXTURE0 + 1 );
         gl.bindTexture( gl.TEXTURE_2D, layer.glMask );
-        if( layer.maskChanged ) {
+        if( layer.layerType !== "group" && layer.maskChanged ) {
           //re-upload the layer's mask when it's changed
           const mipLevel = 0,
           internalFormat = gl.RGBA,
@@ -1574,13 +1875,23 @@ Info: ${info}`;
         }
 
         //set the layer's alpha
-        gl.uniform1f( glState.alphaInputIndex, layer.opacity );
+        gl.uniform1f( glState.alphaInputIndex, getLayerOpacity( layer ) );
         let maskVisibility = 0.0;
         if( layer === selectedLayer && uiSettings.activeTool === "mask" && layer.maskInitialized && painter.active && painter.queue.length )
           maskVisibility = 0.5;
         gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
         gl.uniform1f( glState.timeIndex, floatTime );
-        gl.uniform1f( glState.borderVisibilityIndex, layer === selectedLayer ? 0.33 : 0.0 ); //for now, all visible
+
+        let borderIsVisible = layer === selectedLayer;
+
+        //disable border while transform group to avoid recalculating coordinates every cycle (and visuals are confusing anyway)
+        if( layer.layerType === "group" && uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && ( cursor.mode !== "none" || pointers.count === 2 ) )
+          borderIsVisible = false;
+
+        if( borderIsVisible === false && selectedLayer?.layerType === "group" && selectedGroupLayers.includes( layer ) )
+          borderIsVisible = true;
+
+        gl.uniform1f( glState.borderVisibilityIndex, borderIsVisible ? 0.33 : 0.0 ); //for now, all visible
         gl.uniform1f( glState.borderWidthIndex, 2.0 / layerSizePixels ); //2 pixel border width
 
         //set the uniform to point at texture zero
@@ -2234,9 +2545,9 @@ function setupUI() {
           },
           updateContext: () => {
             //if no layer selected, unavailable
-            if( ! selectedLayer ) {
+            if( ! selectedLayer || [ "group","pose" ].includes( selectedLayer.layerType ) ) {
               maskButton.classList.add( "unavailable" );
-              maskButton.querySelector(".tooltip" ).textContent = "Mask Tool [Select layer to enable]";
+              maskButton.querySelector(".tooltip" ).textContent = "Mask Tool [Select paint, text, or generative layer to enable]";
               maskButton.classList.remove( "on" );
             } else {
               maskButton.classList.remove( "unavailable" );
@@ -3460,16 +3771,15 @@ function setupUI() {
       {
         //add the layers group add button
         const addLayerGroupButton = addLayersPanel.appendChild( document.createElement( "div" ) );
-        addLayerGroupButton.classList.add( "rounded-line-button", "animated", "unimplemented" );
+        addLayerGroupButton.classList.add( "rounded-line-button", "animated" );
         addLayerGroupButton.appendChild( new Image() ).src = "icon/folder.png";
         addLayerGroupButton.appendChild( document.createElement("span") ).textContent = "Add Layer Group";
         UI.registerElement( addLayerGroupButton, {
           onclick: () => {
             addLayerGroupButton.classList.add( "pushed" );
             setTimeout( () => addLayerGroupButton.classList.remove( "pushed" ), UI.animationMS );
-            //addCanvasLayer( "group" );
+            addCanvasLayer( "group" );
             UI.deleteContext( "add-layers-panel-visible" );
-            console.error( "Add layer group unimplemented." );
           },
           updateContext: context => {
             if( context.has( "add-layers-panel-visible" ) ) addLayerGroupButton.uiActive = true;
@@ -4426,7 +4736,7 @@ function loadJSON() {
           newLayer.layerId = layerId;
           layersAddedCount = Math.max( layersAddedCount, layerId )
           newLayer.layerGroupId = layerGroupId;
-          if( layerType === "group" ) newLayer.groupCompositeUpToDate = false;
+          newLayer.groupCompositeUpToDate = false;
           newLayer.groupClosed = groupClosed;
 
           newLayer.visible = visible;
@@ -4453,6 +4763,9 @@ function loadJSON() {
           const { h,s,l } = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
           document.querySelector( ".paint-tools-options-color-well" ).style.backgroundColor = `hsl( ${h}turn ${s*100}% ${l*100}% )`;
         }
+
+        //clear undo again so we can't one-by-one remove our loaded layers
+        clearUndoHistory();
 
         reorganizeLayerButtons();
 
@@ -4541,7 +4854,7 @@ const UI = {
           value = Math.max( slider.min, Math.min( slider.max, value ) );
           slider.value = value;
           const valuePosition = parseInt( 100 * ( slider.value - slider.min ) / ( slider.max - slider.min ) );
-          const realPosition = Math.min( 95, Math.max( 5, valuePosition ) );
+          const realPosition = Math.min( 99, Math.max( 5, valuePosition ) );
           nub.style.left = realPosition + "%";
         }
         slider.setValue( initialValue );
@@ -4818,8 +5131,9 @@ const startHandler = p => {
             }
             //check if one of our points is inside the selected layer, and disable transform if not
             if( uiSettings.activeTool === "transform" ) {
-              let pointInSelectedLayer = false;
               const point = [cursor.origin.x,cursor.origin.y,1];
+              let pointInSelectedLayer = testPointsInLayer( selectedLayer, [point], true );
+              /* let pointInSelectedLayer = false;
               //get screen->global space inversion
               _originMatrix[ 2 ] = -view.origin.x;
               _originMatrix[ 5 ] = -view.origin.y;
@@ -4858,10 +5172,28 @@ const startHandler = p => {
                 if( x >= 0 && x <= selectedLayer.w && y >= 0 && y <= selectedLayer.h ) {
                   pointInSelectedLayer = true;
                 }
-              }
+              } */
     
-              if( pointInSelectedLayer ) uiSettings.toolsSettings.transform.current = true;
-              else uiSettings.toolsSettings.transform.current = false;
+              if( pointInSelectedLayer ) {
+                uiSettings.toolsSettings.transform.current = true;
+                uiSettings.toolsSettings.transform.transformingLayers.length = 0;
+                if( selectedLayer.layerType === "group" ) {
+                  const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
+                  const transformableChildren = [];
+                  for( const layer of groupChildren ) {
+                    if( layer.layerType === "group" ) continue;
+                    transformableChildren.push( layer );
+                  }
+                  uiSettings.toolsSettings.transform.transformingLayers.push( ...transformableChildren );
+                }
+                else {
+                  uiSettings.toolsSettings.transform.transformingLayers.push( selectedLayer );
+                }
+              }
+              else {
+                uiSettings.toolsSettings.transform.current = false;
+                uiSettings.toolsSettings.transform.transformingLayers.length = 0;
+              }
             }
         }
         else if( p.pointerType !== "touch" && selectedLayer &&
@@ -4909,8 +5241,9 @@ const startHandler = p => {
 
         //check if one of our points is inside the selected layer, and disable transform if not
         if( uiSettings.activeTool === "transform" ) {
-          let pointInSelectedLayer = false;
           const points = [ [a.origin.x,a.origin.y,1], [b.origin.x,b.origin.y,1] ];
+          let pointInSelectedLayer = testPointsInLayer( selectedLayer, points, true );
+          /* let pointInSelectedLayer = false;
           //get screen->global space inversion
           _originMatrix[ 2 ] = -view.origin.x;
           _originMatrix[ 5 ] = -view.origin.y;
@@ -4951,10 +5284,28 @@ const startHandler = p => {
               pointInSelectedLayer = true;
               break;
             }
-          }
+          } */
 
-          if( pointInSelectedLayer ) uiSettings.toolsSettings.transform.current = true;
-          else uiSettings.toolsSettings.transform.current = false;
+          if( pointInSelectedLayer ) {
+            uiSettings.toolsSettings.transform.current = true;
+            uiSettings.toolsSettings.transform.transformingLayers.length = 0;
+            if( selectedLayer.layerType === "group" ) {
+              const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
+              const transformableChildren = [];
+              for( const layer of groupChildren ) {
+                if( layer.layerType === "group" ) continue;
+                transformableChildren.push( layer );
+              }
+              uiSettings.toolsSettings.transform.transformingLayers.push( ...transformableChildren );
+            }
+            else {
+              uiSettings.toolsSettings.transform.transformingLayers.push( selectedLayer );
+            }
+          }
+          else {
+            uiSettings.toolsSettings.transform.current = false;
+            uiSettings.toolsSettings.transform.transformingLayers.length = 0;
+          }
         }
     }
     
@@ -6417,22 +6768,12 @@ function finalizeViewMove() {
 }
 function finalizeLayerTransform() {
 
-  console.error( "Finalize layer transform needs to actually collectGroupedLayersAsFlatList() and run on a full list. (Run on list of length 1 for a non-group layer.)" );
+  const layersToTransform = [ ...uiSettings.toolsSettings.transform.transformingLayers ];
+  const transformRecords = [];
 
-  const oldData = {
-    scale: selectedLayer.transform.scale,
-    angle: selectedLayer.transform.angle,
-  }
-  for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
-    oldData[ pointName ] = [ ...selectedLayer[ pointName ] ];
-  }
+  getTransform();
 
-  //apply the layer transform to the layer
-  selectedLayer.transform.scale *= layerTransform.zoom;
-  selectedLayer.transform.angle += layerTransform.angle;
-
-  //convert our on-screen transform coordinates to global space coordinates
-
+  //get our global space coordinates inverter
   _originMatrix[ 2 ] = -view.origin.x;
   _originMatrix[ 5 ] = -view.origin.y;
   _positionMatrix[ 2 ] = view.origin.x;
@@ -6444,15 +6785,51 @@ function finalizeLayerTransform() {
   //get inverse view
   inv( _inverter , _inverter );
 
-  for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
-    const transformingPoint = selectedLayer.transform.transformingPoints[ pointName ];
-    //apply inverse view
-    mul3x1( _inverter, transformingPoint, transformingPoint );
-    //store updated points
-    //at some point, I need to rectify these. Make sure the legs are at right angles and the aspect ratio is fixed etc.
-    selectedLayer[ pointName ][ 0 ] = transformingPoint[ 0 ];
-    selectedLayer[ pointName ][ 1 ] = transformingPoint[ 1 ];
-    selectedLayer[ pointName ][ 2 ] = 1;
+  for( const layerToTransform of layersToTransform ) {
+    const transformRecord = {
+      oldData: null,
+      newData: null,
+      targetLayer: null,
+    }
+  
+    const oldData = {
+      scale: layerToTransform.transform.scale,
+      angle: layerToTransform.transform.angle,
+    }
+    for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+      oldData[ pointName ] = [ ...layerToTransform[ pointName ] ];
+    }
+  
+    //apply the layer transform to the layer
+    layerToTransform.transform.scale *= layerTransform.zoom;
+    layerToTransform.transform.angle += layerTransform.angle;
+  
+    //convert our on-screen transform coordinates to global space coordinates
+    for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+      const transformingPoint = layerToTransform.transform.transformingPoints[ pointName ];
+      //apply inverse view
+      mul3x1( _inverter, transformingPoint, transformingPoint );
+      //store updated points
+      //at some point, I need to rectify these. Make sure the legs are at right angles and the aspect ratio is fixed etc.
+      layerToTransform[ pointName ][ 0 ] = transformingPoint[ 0 ];
+      layerToTransform[ pointName ][ 1 ] = transformingPoint[ 1 ];
+      layerToTransform[ pointName ][ 2 ] = 1;
+    }
+  
+    const newData = {
+      scale: layerToTransform.transform.scale,
+      angle: layerToTransform.transform.angle,
+    }
+    for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+      newData[ pointName ] = [ ...layerToTransform[ pointName ] ];
+    }
+
+    transformRecord.oldData = oldData;
+    transformRecord.newData = newData;
+    transformRecord.targetLayer = layerToTransform;
+
+    transformRecords.push( transformRecord );
+
   }
 
   id3x3( layerTransformMatrices.current ); //zero-out current for next transformation, since we're applying the transform to the points
@@ -6465,33 +6842,29 @@ function finalizeLayerTransform() {
   layerTransform.zoom = 1;
   layerTransform.angle = 0;
 
+  if( selectedLayer.layerType === "group" )
+    updateLayerGroupCoordinates( selectedLayer );
   
-  const newData = {
-    scale: selectedLayer.transform.scale,
-    angle: selectedLayer.transform.angle,
-  }
-  for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
-    newData[ pointName ] = [ ...selectedLayer[ pointName ] ];
-  }
-
   const historyEntry = {
-    targetLayer: selectedLayer,
-    oldData,
-    newData,
+    transformRecords,
     undo: () => {
-      //reinstall old data
-      historyEntry.targetLayer.transform.scale = historyEntry.oldData.scale;
-      historyEntry.targetLayer.transform.angle = historyEntry.oldData.angle;
-      for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
-        historyEntry.targetLayer[ pointName ] = [ ...historyEntry.oldData[ pointName ] ]
+      for( const {targetLayer,oldData} of historyEntry.transformRecords ) {
+        //reinstall old data
+        targetLayer.transform.scale = oldData.scale;
+        targetLayer.transform.angle = oldData.angle;
+        for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+          targetLayer[ pointName ] = [ ...oldData[ pointName ] ]
+        }
       }
     },
     redo: () => {
-      //reinstall new data
-      historyEntry.targetLayer.transform.scale = historyEntry.newData.scale;
-      historyEntry.targetLayer.transform.angle = historyEntry.newData.angle;
-      for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
-        historyEntry.targetLayer[ pointName ] = [ ...historyEntry.newData[ pointName ] ]
+      for( const {targetLayer,newData} of historyEntry.transformRecords ) {
+        //reinstall new data
+        targetLayer.transform.scale = newData.scale;
+        targetLayer.transform.angle = newData.angle;
+        for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+          targetLayer[ pointName ] = [ ...newData[ pointName ] ]
+        }
       }
     },
   };

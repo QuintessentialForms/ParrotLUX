@@ -74,10 +74,12 @@ Coming very soon! Windows binary and Android APK will be available.
     - ✅ Masks
     - ✅ Rename
     - ✅ Reorganize
-    - ❌ Layer Groups
+    - ✅ Layer Groups
+        - ❌ Use as Gen Souce
+        - ❌ Flatten
 - ✅ Undo / Redo
 - ✅ Save / Load
-- ❌ Import image
+- ✅ Import image
 - ❌ Gallery View (Android APK only?)
 - ✅ Export
 - ❌ Settings Panel
@@ -103,7 +105,7 @@ Coming very soon! Windows binary and Android APK will be available.
         - ✅ A1111 txt2img (demo)
         - ❌ A1111 controlnet (demo)
         - ✅ A1111 controlnet preprocessor (demo)
-        - ❌ A1111 upscale (demo)
+        - ~~❌ A1111 upscale (demo)~~ (A1111 extras API currently broken)
         - ❌ Comfy img2img / inpainting-with-mask (demo)
         - ❌ Comfy txt2img (demo)
         - ❌ Comfy controlnet (demo)
