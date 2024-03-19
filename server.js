@@ -163,7 +163,7 @@ const server = http.createServer(
                                 `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}`,
                                 requestOptions,
                                 forwardedResponse => {
-                                    forwardedResponse.setEncoding( "utf8" );
+                                    //forwardedResponse.setEncoding( "utf8" );
                                     forwardedResponse.on( "data", chunk => {
                                         //console.log( "Got reflected response data." );
                                         responseData.push( chunk );
@@ -183,6 +183,7 @@ const server = http.createServer(
     
                             postRequest.on( "error", e => console.error( "Forwarded POST request error ",  e ) );
                             console.log( "Reflecting client POST." );
+                            console.log( "Writing APIString: " + apiString.substring( 0, 20 ) + "..." );
                             postRequest.write( apiString );
                             postRequest.end();    
                         }
@@ -191,31 +192,55 @@ const server = http.createServer(
                             //console.log( "GETing with options ", JSON.stringify( postOptions ) );
                             //console.log( "GETing to URL, ", `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}` );
     
-                            const getRequest = http.request(
-                                `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}`,
-                                requestOptions,
-                                forwardedResponse => {
-                                    forwardedResponse.setEncoding( "utf8" );
-                                    forwardedResponse.on( "data", chunk => {
-                                        //console.log( "Got reflected response data." );
-                                        responseData.push( chunk );
-                                    } );
-                                    forwardedResponse.on( 'end', () => {
-                                        console.log( "Responding with reflected GET..." );
-                                        const responseString = responseData.join( "" );
-                                        //console.log( "Reflected response: ", responseString );
-                                        response.writeHead( 200 , {
-                                            'Content-Type': 'application/json',
-                                            //'Content-Length': Buffer.byteLength( responseString ) //added this on a whim, might break stuff!
+                            let getRequest;
+
+                            try {
+                                getRequest = http.request(
+                                    `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}`,
+                                    requestOptions,
+                                    forwardedResponse => {
+                                        //forwardedResponse.setEncoding( "utf8" );
+                                        forwardedResponse.on( "data", chunk => {
+                                            //console.log( "Got reflected response data." );
+                                            responseData.push( chunk );
                                         } );
-                                        response.end( responseString );
-                                    })
-                                }
-                            );
+                                        forwardedResponse.on( 'end', () => {
+                                            console.log( "Responding with reflected GET..." );
+                                            const responseString = responseData.join( "" );
+                                            //console.log( "Reflected response: ", responseString );
+                                            let responseIsJSON = false;
+                                            try { JSON.parse( responseString ); responseIsJSON = true; } catch( e ) {}
+                                            if( responseIsJSON ) {
+                                                response.writeHead( 200 , {
+                                                    'Content-Type': 'application/json',
+                                                    //'Content-Length': Buffer.byteLength( responseString ) //added this on a whim, might break stuff!
+                                                } );
+                                                response.end( responseString );
+                                            } else {
+                                                //let's assume for now it's an image/png???
+                                                response.writeHead( 200 , {
+                                                    'Content-Type': 'image/png',
+                                                    //'Content-Length': Buffer.byteLength( responseString ) //added this on a whim, might break stuff!
+                                                } );
+                                                let responseBinary = Buffer.concat( responseData );
+                                                response.end( responseBinary );
+                                            }
+                                        })
+                                    }
+                                );
+                            } catch( e ) {
+                                response.writeHead( 404 , {
+                                    'Content-Type': 'application/json',
+                                    //'Content-Length': Buffer.byteLength( responseString ) //added this on a whim, might break stuff!
+                                } );
+                                response.end( '{"error":"Tempera server.js reports bad request."}' );
+                            }
     
-                            getRequest.on( "error", e => console.error( "Forwarded GET request error ",  e ) );
-                            console.log( "Reflecting client GET." );
-                            getRequest.end();    
+                            if( getRequest ) {
+                                getRequest.on( "error", e => console.error( "Forwarded GET request error ",  e ) );
+                                console.log( "Reflecting client GET." );
+                                getRequest.end();  
+                            }  
                         }
                     }
                 } )

@@ -2188,7 +2188,10 @@ let uiSettings = {
   maxUndoSteps: 20,
   defaultLayerWidth: 1024,
   defaultLayerHeight: 1024,
-  defaultAPIFlowName: "A1111 Lightning Demo txt2img Mini",
+
+  //defaultAPIFlowName: "A1111 Lightning Demo txt2img Mini",
+  defaultAPIFlowName: "Comfy SD1.5/SDXL",
+  retryAPIDelay: 2000,
 
   setActiveTool: tool => {
     uiSettings.activeTool = tool;
@@ -4181,6 +4184,40 @@ function setupUIGenerativeControls( apiFlowName ) {
 
     //make the element from the type
     if( control.controlType === "asset" ) {
+      const assetSelectorButton = document.createElement( "div" );
+      assetSelectorButton.classList.add( "asset-button-text", "round-toggle", "long", "on" );
+      const buttonText = document.createElement( "div" );
+      buttonText.classList.add( "button-text" );
+      buttonText.textContent = "↓ " + control.controlValue;
+      assetSelectorButton.appendChild( buttonText );
+      //check if we have this asset library
+      if( ! assetsLibrary.hasOwnProperty( control.assetName ) ) {
+        //download the asset if we can
+        const assetAPI = apiFlows.find( a => ( (!a.isDemo) && a.apiFlowType === "asset" && a.assetLibraries.includes( control.assetName )) );
+        if( assetAPI ) {
+          if( apiExecutionQueue.find( q => q[ 0 ] === assetAPI.apiFlowName ) ) {
+            //already scheduled, hopefully will resolve before this button is clicked
+          } else {
+            executeAPICall( assetAPI.apiFlowName, {} );
+          }
+        }
+      }
+      UI.registerElement(
+        assetSelectorButton,
+        {
+          onclick: () => {
+            const callback = asset => {
+              buttonText.textContent = "↓ " + asset.name;
+              control.controlValue = asset.name;
+              selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
+            }
+            console.log( "Opening assets: ", control.assetName, assetsLibrary[ control.assetName ] )
+            openAssetBrowser( assetsLibrary[ control.assetName ] || [], callback );
+          }
+        },
+        { tooltip: [ "Select " + control.assetName, "below", "to-right-of-center" ], zIndex:10000, },
+      )
+      controlsPanel.appendChild( assetSelectorButton );
       /* 
         code from ui setup where we build the api asset summoner:
         const apiFlowSelectorButton = document.createElement( "div" );
@@ -8218,74 +8255,217 @@ async function demoApiCall() {
   console.log( result );
 }
 
+const wait = delay => new Promise( land => setTimeout( land, delay ) );
+
+const apiExecutionQueue = [];
+
 async function executeAPICall( name, controlValues ) {
+
+  const selfQueue = [name, controlValues];
+  apiExecutionQueue.push( selfQueue );
+
+  while( apiExecutionQueue[ 0 ] !== selfQueue ) {
+    await wait( uiSettings.retryAPIDelay );
+  }
+
   const apiFlow = apiFlows.find( flow => flow.apiFlowName === name );
   //for each control, set its value from the values
   //execute each apiCall in order
   const apiResults = {};
-  for( apiCall of apiFlow.apiCalls ) {
+  let retryCount = 0;
+  for( let i=0; i<apiFlow.apiCalls.length; i ) {
+  //for( apiCall of apiFlow.apiCalls ) {
+    const apiCall = apiFlow.apiCalls[ i ];
+    console.log( "On apicall ", apiCall.apiCallName )
+
+    let resultSchemeExpectingRawFile = false;
+    for( const resultScheme of apiCall.results ) {
+      if( resultScheme.resultPath === "file" ) {
+        resultSchemeExpectingRawFile = resultScheme;
+        break;
+      }
+    }
+
     //process it and get results
     const results = {};
-    const completedSuccessfully = await new Promise( async complete => {
+    const completionStatus = await new Promise( async complete => {
       const xhr = new XMLHttpRequest();
       xhr.onload = async () => {
-        let response;
-        try { response = JSON.parse( xhr.response ); }
-        catch ( e ) {
-          console.error( "Not JSON. Alert api call failed. Response: ", xhr.response );
-          complete( false );
-        }
-        //console.log( "Got response." );
-        for( const resultScheme of apiCall.results ) {
-          //console.log( "Starting with result ", resultScheme );
-          const resultSuccessful = await new Promise( proceed => {
-            const path = [ ...resultScheme.resultPath ];
-            results[ resultScheme.resultName ] = response;
-            while( path.length ) {
-              if( typeof results[ resultScheme.resultName ] !== "object" ) {
-                //path cannot be resolved
-                console.error( "Unresolvable result path.", results, resultScheme, response, controlValues );
-                proceed( false );
-              }
-              const key = path.shift();
-              results[ resultScheme.resultName ] = results[ resultScheme.resultName ][ key ];
-            }
-            //got result
-            if( resultScheme.resultType === "base64-image" ) {
+        if( resultSchemeExpectingRawFile ) {
+          if( resultSchemeExpectingRawFile.resultType === "file-image" ) {
+            const reader = new FileReader();
+            reader.onload = () => {
+              console.log( "Finished reading raw file as dataURL: " + reader.result.substring( 0, 20 ) + "..." );
               const img = new Image();
               img.onload = () => {
-                results[ resultScheme.resultName ] = img;
-                proceed( true );
+                console.log( "Finished loading image from dataURL and storing in result ",  resultSchemeExpectingRawFile.resultName );
+                results[ resultSchemeExpectingRawFile.resultName ] = img;
+                complete( true );
               }
-              img.src = "data:image/png;base64," + results[ resultScheme.resultName ];
+              img.onerror = () => {
+                console.error( "Failed to read xhr.response as good data url. Try something else?" );
+              };
+              img.src = reader.result;
+              
             }
-            if( resultScheme.resultType === "array-object" ) {
-              results[ resultScheme.resultName ] = response;
-              proceed( true );
-            }
-          } );
-          if( resultSuccessful === false ) {
-            console.error( "Unable to retrieve a result." );
-            complete( false );
+            console.log( "Going to try reading response as file | type ", xhr.responseType, " | ", typeof xhr.response );
+            //Hmm... Isn't it cached now? Can't I just set the URL as my image url? No... Because it's reflected. :-/ Hmm.
+            //reader.readAsDataURL( new Blob( [xhr.response], { type: "image/png" } ) );
+            reader.readAsDataURL( xhr.response );
+
           }
         }
-        //populated all results
-        complete( true );
+        else {
+          let jsonResponse;
+
+          if( xhr.response === "" || xhr.response === "{}" && apiCall.retryOnEmpty ) {
+            console.log( "Got empty response. Retrying in ", uiSettings.retryAPIDelay, " ms." );
+            await wait( uiSettings.retryAPIDelay );
+            complete( "retry" );
+            //Else continue. An API call may not need to return anything, after all.
+          }
+
+          try {
+            jsonResponse = JSON.parse( xhr.response );
+          }
+          catch ( e ) {
+              console.error( "Not JSON. Alert api call failed. Response: ", xhr.response );
+              complete( false );
+          }
+          if( jsonResponse ) {
+            console.log( "Got response: ", jsonResponse );
+
+            for( const resultScheme of apiCall.results ) {
+              console.log( "Starting with result ", resultScheme );
+              const resultSuccessful = await new Promise( proceed => {
+                const path = [ ...resultScheme.resultPath ];
+                results[ resultScheme.resultName ] = jsonResponse;
+                while( path.length ) {
+                  if( typeof results[ resultScheme.resultName ] !== "object" ) {
+                    //path cannot be resolved
+                    console.error( "Unresolvable result path.", results, resultScheme, jsonResponse, controlValues );
+                    proceed( false );
+                  }
+                  const key = path.shift();
+                  results[ resultScheme.resultName ] = results[ resultScheme.resultName ][ key ];
+                }
+                //got result
+                if( resultScheme.resultType === "base64-image" ) {
+                  const img = new Image();
+                  img.onload = () => {
+                    results[ resultScheme.resultName ] = img;
+                    proceed( true );
+                  }
+                  img.src = "data:image/png;base64," + results[ resultScheme.resultName ];
+                }
+                if( resultScheme.resultType === "file-image" ) {
+                  const img = new Image();
+                  img.onload = () => {
+                    results[ resultScheme.resultName ] = img;
+                    proceed( true );
+                  }
+                  img.src = "data:image/png;base64," + results[ resultScheme.resultName ];
+                }
+                if( resultScheme.resultType === "array-object" ) {
+                  //results[ resultScheme.resultName ] = jsonResponse;
+                  proceed( true );
+                }
+                if( resultScheme.resultType === "array-string" ) {
+                  console.log( "Updated results: ", results );
+                  results[ resultScheme.resultName ] = results[ resultScheme.resultName ][ 0 ]; //THIS IS A BUG! I don't know why I need this line. :-|
+                  proceed( true );
+                }
+                if( resultScheme.resultType === "string" ) {
+                  console.log( "Installed resultscheme string ")
+                  //this section of code is just for post-processing. For a simple string, we've already stored the result
+                  //results[ resultScheme.resultName ] = response;
+                  proceed( true );
+                }
+              } );
+              if( resultSuccessful === false ) {
+                console.error( "Unable to retrieve a result." );
+                complete( false );
+              }
+            }
+            console.log( "Now have accumulated results: ", results );
+            //populated all results
+            complete( true );
+          }
+        }
       }
       //load api values from controls
       for( const controlScheme of apiFlow.controls ) {
-        if( controlScheme.controlPath[ 0 ] === apiCall.apiCallName ) {
-          const [ , isApi, ...controlPath ] = controlScheme.controlPath;
-          if( isApi === "api" ) {
-            let target = apiCall.api;
+        console.log( "On controlscheme ", controlScheme.controlName );
+        if( controlScheme.controlPath[ 0 ] === apiCall.apiCallName || controlScheme.controlPath[ 0 ] === "controlValue" ) {
+
+          let target;
+
+          let [ topLevel, isApiOrConfig, ...controlPath ] = controlScheme.controlPath;
+
+          if( topLevel === apiCall.apiCallName && isApiOrConfig === "api" ) {
+            target = apiCall.api;
             while( controlPath.length > 1 )
               target = target[ controlPath.shift() ];
-            //controlpath is down to the last key
-            //assign via corresponding name in controlValues object
-            if( controlValues.hasOwnProperty( controlScheme.controlName ) )
-              target[ controlPath.shift() ] = controlValues[ controlScheme.controlName ];
-            else target[ controlPath.shift() ] = controlScheme.controlValue;
           }
+          else if( topLevel === apiCall.apiCallName ) {
+            target = apiCall;
+
+            //just ignore this line...
+            if( isApiOrConfig === "host" && apiCall.host === "device" ) { throw console.error( "Unsafe behavior! An API control may be trying to redirect an API call to an external service." ); }
+
+            controlPath = [ isApiOrConfig, ...controlPath ];
+            for( let i=0, j=controlPath.length-1; i<j; i++ ) {
+              target = target[ controlPath.shift() ];
+            }
+          }
+          else if( topLevel === "controlValue" ) {
+            target = controlScheme;
+            controlPath = [ "controlValue" ]
+          }
+
+          //controlpath is down to the last key
+          //assign via corresponding name in controlValues object
+          if( controlScheme.controlType === "api-result" ) {
+            let retrievedResult = apiResults;
+            for( let i=0; i<controlScheme.resultPath.length; i++ )
+              retrievedResult = retrievedResult?.[ controlScheme.resultPath[ i ] ];
+            if( ! retrievedResult ) {
+              //nothing to set yet in this call.
+              continue;
+            }
+            console.log( "Assigning result ", retrievedResult, " to target ", target[ controlPath[ 0 ] ] );
+            target[ controlPath.shift() ] = retrievedResult;
+          }
+
+          else if( controlScheme.controlType === "string-compose" ) {
+            //check if this is an api-result from the current apicall, probably unnecessary given
+            /* if( controlScheme.controlPath[ 0 ] !== apiCall.apiCallName ) {
+              console.log( "Ignoring control ", controlScheme.controlName, " just during apicall ", apiCall.apiCallName );
+              continue; //nothing to set from here
+            } */
+            let composedString = "";
+            for( const composePath of controlScheme.composePaths ) {
+              const compositionPath = [ ...composePath ];
+              if( typeof composePath === "string" ) composedString += composePath;
+              else {
+                const controlName = compositionPath.shift();
+                console.log( "Looking up controlname for composition: ", controlName );
+                let lookup = apiFlow.controls.find( c => c.controlName === controlName );
+                for( let i=0; i<compositionPath.length; i++ ) 
+                  lookup = lookup[ compositionPath[ i ] ]; //incase controlValue is an obj{} IDK
+                console.log( "Got loookup ", lookup, " from path ", compositionPath );
+                composedString += lookup;
+              }
+            }
+            console.log( "Installing composed string ", composedString, " onto target ", target[ controlPath[ 0 ] ] );
+            target[ controlPath.shift() ] = composedString;
+          }
+
+          else if( controlValues.hasOwnProperty( controlScheme.controlName ) )
+            target[ controlPath.shift() ] = controlValues[ controlScheme.controlName ];
+
+          else target[ controlPath.shift() ] = controlScheme.controlValue;
+
         }
       }
       if( apiCall.host === "device" ) {
@@ -8299,6 +8479,7 @@ async function executeAPICall( name, controlValues ) {
             apiData: apiCall.api
           }
           xhr.open( "POST", "/api" );
+          if( resultSchemeExpectingRawFile ) xhr.responseType = "blob";
           //apiCall.api has been modified from controlValues, and is ready to send
           xhr.send(new Blob([JSON.stringify(postData)],{"Content-Type":"application/json"}));
         }
@@ -8311,19 +8492,27 @@ async function executeAPICall( name, controlValues ) {
             port: apiCall.port, //port: '7860',
             //apiData: apiCall.api
           }
+          //This is not a typo. We POST to the backend; it runs a GET and reflects.
           xhr.open( "POST", "/api" );
+          if( resultSchemeExpectingRawFile ) xhr.responseType = "blob";
           //apiCall.api has been modified from controlValues, and is ready to send
           xhr.send(new Blob([JSON.stringify(postData)],{"Content-Type":"application/json"}));
         }
       }
     } );
-    if( completedSuccessfully === true ) {
+    if( completionStatus === true ) {
       apiResults[ apiCall.apiCallName ] = results;
-      //console.log( "Finished API call successfully with results: ", results );
+      console.log( "Finished API call successfully with results: ", results );
+      ++i;
+      retryCount = 0;
     }
-    else if( completedSuccessfully === false ) {
+    else if( completionStatus === false ) {
       console.error( "Failed to complete apicall." );
       return false;
+    }
+    else if( completionStatus === "retry" ) {
+      retryCount++;
+      //and loop
     }
   }
   const outputs = {};
@@ -8335,8 +8524,9 @@ async function executeAPICall( name, controlValues ) {
       outputs[ outputScheme.outputName ] = result;
     }
     if( outputScheme.outputType === "assets" ) {
-      const library = assetsLibrary[ outputScheme.outputLibraryName ] ||= {};
-      const mappedAssets = {};
+      console.log( "Mapping outputscheme ", outputScheme, " with result ", result );
+      const library = assetsLibrary[ outputScheme.outputLibraryName ] ||= [];
+      const mappedAssets = [];
       for( const resultEntry of result ) {
         const mappedAsset = {};
         for( const {key,path} of outputScheme.assetMap ) {
@@ -8344,12 +8534,16 @@ async function executeAPICall( name, controlValues ) {
           for( let i=0; i<path.length; i++ )
             mappedAsset[ key ] = mappedAsset[ key ]?.[ path[ i ] ];
         }
-        library[ mappedAsset.uniqueId ] = mappedAsset;
-        mappedAssets[ mappedAsset.uniqueId ] = mappedAsset;
+        library.push( mappedAsset );
+        mappedAssets.push( mappedAsset );
       }
       outputs[ outputScheme.outputName ] = mappedAssets;
     }
   }
+  console.log( "Finished apiFlow with outputs: ", outputs );
+
+  apiExecutionQueue.splice( apiExecutionQueue.indexOf( selfQueue ), 1 );
+
   return outputs;
 }
 
@@ -8410,7 +8604,7 @@ const apiFlows = [
     ],
     controls: [
       { controlName: "model", controlType: "static", controlValue:"4x-UltraSharp", controlPath: [ "upscale", "api", "upscaler_1" ], },
-      //{ controlName: "model", controlType: "asset", assetLibrary: "A1111 Upscalers", controlPath: [ "upscale", "api", "upscaler_1" ], },
+      //{ controlName: "model", controlType: "asset", assetName: "A1111 Upscalers", controlPath: [ "upscale", "api", "upscaler_1" ], },
       { controlName: "upscale", controlType: "number", min: 1, max: 8, step:0.125, controlValue:2, controlLayerControlName: "upscale image", controlPath: [ "upscale", "api", "upscaling_resize" ], },
       { controlName: "upscale image", controlHint: "img", controlType: "image", controlValue:"", controlLayer:null, controlPath: [ "upscale", "api", "image" ], },
     ],
@@ -8484,6 +8678,602 @@ const apiFlows = [
         apiPath: "/sdapi/v1/upscalers"
       }
     ],
+  },
+  {
+    apiFlowName: "Comfy Whatnot",
+    assetLibraries: [ "Comfy Models", "Comfy ControlNets", "Comfy Samplers", "Comfy Schedulers", "Comfy VAEs", "Comfy UNETs" ],
+    apiFlowType: "asset",
+    outputs: [
+      {
+        outputName: "comfy-models-list",
+        outputLibraryName: "Comfy Models",
+        outputType: "assets",
+        assetMap: [
+          { key: "uniqueId", path: [] },
+          { key: "name", path: [] },
+        ],
+        outputResultPath: [ "get-object-info", "models-array" ],
+      },
+      {
+        outputName: "comfy-controlnets-list",
+        outputLibraryName: "Comfy ControlNets",
+        outputType: "assets",
+        assetMap: [
+          { key: "uniqueId", path: [] },
+          { key: "name", path: [] },
+        ],
+        outputResultPath: [ "get-object-info", "controlnets-array" ],
+      },
+      {
+        outputName: "comfy-samplers",
+        outputLibraryName: "Comfy Samplers",
+        outputType: "assets",
+        assetMap: [
+          { key: "uniqueId", path: [] },
+          { key: "name", path: [] },
+        ],
+        outputResultPath: [ "get-object-info", "samplers-array" ],
+      },
+      {
+        outputName: "comfy-schedulers",
+        outputLibraryName: "Comfy Schedulers",
+        outputType: "assets",
+        assetMap: [
+          { key: "uniqueId", path: [] },
+          { key: "name", path: [] },
+        ],
+        outputResultPath: [ "get-object-info", "schedulers-array" ],
+      },
+      {
+        outputName: "comfy-schedulers",
+        outputLibraryName: "Comfy VAEs",
+        outputType: "assets",
+        assetMap: [
+          { key: "uniqueId", path: [] },
+          { key: "name", path: [] },
+        ],
+        outputResultPath: [ "get-object-info", "vaes-array" ],
+      },
+      {
+        outputName: "comfy-unets",
+        outputLibraryName: "Comfy UNETs",
+        outputType: "assets",
+        assetMap: [
+          { key: "uniqueId", path: [] },
+          { key: "name", path: [] },
+        ],
+        outputResultPath: [ "get-object-info", "unets-array" ],
+      },
+    ],
+    controls: [],
+    apiCalls: [
+      {
+        apiCallName: "get-object-info",
+        results: [
+          {
+            resultName: "models-array",
+            resultType: "array-string",
+            resultPath: [ "CheckpointLoaderSimple", "input", "required", "ckpt_name" ],
+          },
+          {
+            resultName: "controlnets-array",
+            resultType: "array-string",
+            resultPath: [ "ControlNetLoader", "input", "required", "control_net_name" ],
+          },
+          {
+            resultName: "samplers-array",
+            resultType: "array-string",
+            resultPath: [ "KSampler", "input", "required", "sampler_name" ],
+          },
+          {
+            resultName: "schedulers-array",
+            resultType: "array-string",
+            resultPath: [ "KSampler", "input", "required", "scheduler" ],
+          },
+          {
+            resultName: "vaes-array",
+            resultType: "array-string",
+            resultPath: [ "VAELoader", "input", "required", "vae_name" ],
+          },
+          {
+            resultName: "unets-array",
+            resultType: "array-string",
+            resultPath: [ "UNETLoader", "input", "required", "unet_name" ],
+          },
+        ],
+        host: "device",
+        port: 8188,
+        method: "GET",
+        apiPath: "/object_info"
+      }
+    ],
+  },
+  {
+    apiFlowName: "Comfy SD1.5/SDXL",
+    apiFlowType: "generative",
+    outputs: [
+      {
+        outputName: "generated-image",
+        outputType: "image", //could be images array maybe
+        outputResultPath: [ "view", "generated-image" ]
+      }
+    ],
+    controls: [
+      { controlName: "Prompt", controlType: "text", controlValue: "desktop cat", controlPath: [ "sd-prompt", "api", "prompt", "62", "inputs", "text" ], },
+      { controlName: "Negative Prompt", controlType: "text", controlValue: "", controlPath: [ "sd-prompt", "api", "prompt", "63", "inputs", "text" ], },
+      { controlName: "Steps", controlType: "number", min:1, max:100, step:1, controlValue:4, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "steps" ], },
+      { controlName: "CFG", controlType: "number", min:1, max:50, step:0.25, controlValue:1.5, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "cfg" ], },
+
+      { controlName: "Model", controlType: "asset", assetName:"Comfy Models", controlValue:"juggernautXL_v9Rdphoto2Lightning.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "61", "inputs", "ckpt_name" ], },
+      /* { controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "29", "inputs", "vae_name" ], }, */
+
+      { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "seed" ], },
+      { controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlPath: [ "sd-prompt", "api", "prompt", "66", "inputs", "width" ], },
+      { controlName: "height", controlType: "layer-input", layerPath: ["h"], controlValue:1024, controlPath: [ "sd-prompt", "api", "prompt", "66", "inputs", "height" ], },
+
+      { controlName: "UID", controlType: "api-result", resultPath: [ "sd-prompt", "prompt_id" ], controlPath: [ "controlValue" ], controlValue: "to overwrite" },
+      //string-compose lets you compose controlValues and constants into a new string
+      { controlName: "history-path", controlType: "string-compose", composePaths: [ "/history/", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "apiPath" ] },
+      { controlName: "result-history-filename", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 0, "resultPath", 0 ] },
+      { controlName: "result-history-subfolder", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 1, "resultPath", 0 ] },
+      { controlName: "filename", controlType: "api-result", resultPath: [ "get-filename", "image-filename" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filename" },
+      //{ controlName: "filefolder", controlType: "api-result", resultPath: [ "get-filename", "image-subfolder" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filefolder" },
+      
+      { controlName: "view-filename", controlType: "string-compose", composePaths: [ "/view?filename=", [ "filename", "controlValue" ], "&subfolder=&type=output&rand=0.0923485734985" ], controlPath: [ "view", "apiPath" ] },
+    ],
+    apiCalls: [
+      {
+        apiCallName: "sd-prompt",
+        results: [
+          {
+            resultName: "prompt_id",
+            resultType: "string",
+            resultPath: ["prompt_id"],
+          },
+        ],
+        host: "device",
+        port: 8188,
+        apiPath: "/prompt",
+        method: "POST",
+        api: {
+          prompt: {
+            "60": {
+              "inputs": {
+                "seed": 249619404060710,
+                "steps": 4,
+                "cfg": 1.5,
+                "sampler_name": "dpmpp_sde",
+                "scheduler": "normal",
+                "denoise": 1,
+                "model": [
+                  "61",
+                  0
+                ],
+                "positive": [
+                  "62",
+                  0
+                ],
+                "negative": [
+                  "63",
+                  0
+                ],
+                "latent_image": [
+                  "66",
+                  0
+                ]
+              },
+              "class_type": "KSampler",
+              "_meta": {
+                "title": "KSampler"
+              }
+            },
+            "61": {
+              "inputs": {
+                "ckpt_name": "SDXL-Juggernaut-Lightning-4S.DPMppSDE.832x1216.CFG1-2.safetensors"
+              },
+              "class_type": "CheckpointLoaderSimple",
+              "_meta": {
+                "title": "Load Checkpoint"
+              }
+            },
+            "62": {
+              "inputs": {
+                "text": "test",
+                "clip": [
+                  "61",
+                  1
+                ]
+              },
+              "class_type": "CLIPTextEncode",
+              "_meta": {
+                "title": "CLIP Text Encode (Prompt)"
+              }
+            },
+            "63": {
+              "inputs": {
+                "text": "",
+                "clip": [
+                  "61",
+                  1
+                ]
+              },
+              "class_type": "CLIPTextEncode",
+              "_meta": {
+                "title": "CLIP Text Encode (Prompt)"
+              }
+            },
+            "64": {
+              "inputs": {
+                "samples": [
+                  "60",
+                  0
+                ],
+                "vae": [
+                  "61",
+                  2
+                ]
+              },
+              "class_type": "VAEDecode",
+              "_meta": {
+                "title": "VAE Decode"
+              }
+            },
+            "65": {
+              "inputs": {
+                "filename_prefix": "ComfyUI",
+                "images": [
+                  "64",
+                  0
+                ]
+              },
+              "class_type": "SaveImage",
+              "_meta": {
+                "title": "Save Image"
+              }
+            },
+            "66": {
+              "inputs": {
+                "width": 1024,
+                "height": 1024,
+                "batch_size": 1
+              },
+              "class_type": "EmptyLatentImage",
+              "_meta": {
+                "title": "Empty Latent Image"
+              }
+            }
+          }
+        },
+      },
+      {
+        retryOnEmpty: true,
+        apiCallName: "get-filename",
+        results: [
+          {
+            resultName: "image-filename",
+            resultType: "string",
+            resultPath: [ "{UID for filename}", "outputs", 65, "images", 0, "filename" ],
+          },
+          {
+            resultName: "image-subfolder",
+            resultType: "string",
+            resultPath: [ "{UID for subfolder}", "outputs", 65, "images", 0, "subfolder" ],
+          },
+        ],
+        host: "device",
+        port: 8188,
+        method: "GET",
+        apiPath: "/history/{UID}"
+      },
+      {
+        apiCallName: "view",
+        results: [
+          {
+            resultName: "generated-image",
+            resultType: "file-image",
+            resultPath: "file"
+          }
+        ],
+        host: "device",
+        port: 8188,
+        method: "GET",
+        apiPath: "/view?filename={FILENAME}"
+      }
+    ]
+  },
+  {
+    apiFlowName: "Comfy SC Test",
+    apiFlowType: "generative",
+    outputs: [
+      {
+        outputName: "generated-image",
+        outputType: "image", //could be images array maybe
+        outputResultPath: [ "view", "generated-image" ]
+      }
+    ],
+    controls: [
+      { controlName: "Prompt", controlType: "text", controlValue: "desktop cat", controlPath: [ "sc-prompt", "api", "prompt", "6", "inputs", "text" ], },
+      { controlName: "Negative Prompt", controlType: "text", controlValue: "", controlPath: [ "sc-prompt", "api", "prompt", "7", "inputs", "text" ], },
+      { controlName: "C Steps", controlType: "number", min:1, max:100, step:1, controlValue:4, controlPath: [ "sc-prompt", "api", "prompt", "3", "inputs", "steps" ], },
+      { controlName: "C CFG", controlType: "number", min:1, max:50, step:0.25, controlValue:1.5, controlPath: [ "sc-prompt", "api", "prompt", "3", "inputs", "cfg" ], },
+      { controlName: "B Steps", controlType: "number", min:1, max:100, step:1, controlValue:2, controlPath: [ "sc-prompt", "api", "prompt", "33", "inputs", "steps" ], },
+
+      { controlName: "C Model", controlType: "asset", assetName:"Comfy UNETs", controlValue:"cascade_stage_c_bf16.safetensors", controlPath: [ "sc-prompt", "api", "prompt", "30", "inputs", "unet_name" ], },
+      { controlName: "B Model", controlType: "asset", assetName:"Comfy UNETs", controlValue:"cascade_stage_b_lite_bf16.safetensors", controlPath: [ "sc-prompt", "api", "prompt", "32", "inputs", "unet_name" ], },
+      { controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sc-prompt", "api", "prompt", "29", "inputs", "vae_name" ], },
+
+      { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "sc-prompt", "api", "prompt", "3", "inputs", "seed" ], },
+      { controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlPath: [ "sc-prompt", "api", "prompt", "34", "inputs", "width" ], },
+      { controlName: "height", controlType: "layer-input", layerPath: ["h"], controlValue:1024, controlPath: [ "sc-prompt", "api", "prompt", "34", "inputs", "height" ], },
+
+      { controlName: "UID", controlType: "api-result", resultPath: [ "sc-prompt", "prompt_id" ], controlPath: [ "controlValue" ], controlValue: "to overwrite" },
+      //string-compose lets you compose controlValues and constants into a new string
+      { controlName: "history-path", controlType: "string-compose", composePaths: [ "/history/", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "apiPath" ] },
+      { controlName: "result-history-filename", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 0, "resultPath", 0 ] },
+      { controlName: "result-history-subfolder", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 1, "resultPath", 0 ] },
+      { controlName: "filename", controlType: "api-result", resultPath: [ "get-filename", "image-filename" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filename" },
+      { controlName: "filefolder", controlType: "api-result", resultPath: [ "get-filename", "image-subfolder" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filefolder" },
+      //&subfolder=wuer&type=output
+      { controlName: "view-filename", controlType: "string-compose", composePaths: [ "/view?filename=", [ "filename", "controlValue" ], "&subfolder=", [ "filefolder", "controlValue" ], "&type=output&rand=0.0923485734985" ], controlPath: [ "view", "apiPath" ] },
+      //{ controlName: "view-filename", controlType: "string-compose", composePaths: [ "/view?filename=", [ "filename", "controlValue" ], "&subfolder=&type=output&rand=0.0923485734985" ], controlPath: [ "view", "apiPath" ] },
+    ],
+    apiCalls: [
+      {
+        apiCallName: "sc-prompt",
+        results: [
+          {
+            resultName: "prompt_id",
+            resultType: "string",
+            resultPath: ["prompt_id"],
+          },
+        ],
+        host: "device",
+        port: 8188,
+        apiPath: "/prompt",
+        method: "POST",
+        api: { prompt: {
+          "3": {
+            "inputs": {
+              "seed": 750887496150267,
+              "steps": 4,
+              "cfg": 1.5,
+              "sampler_name": "ddpm",
+              "scheduler": "simple",
+              "denoise": 1,
+              "model": [
+                "59",
+                0
+              ],
+              "positive": [
+                "6",
+                0
+              ],
+              "negative": [
+                "7",
+                0
+              ],
+              "latent_image": [
+                "34",
+                0
+              ]
+            },
+            "class_type": "KSampler",
+            "_meta": {
+              "title": "KSampler"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "desktop cat",
+              "clip": [
+                "37",
+                0
+              ]
+            },
+            "class_type": "CLIPTextEncode",
+            "_meta": {
+              "title": "CLIP Text Encode (Prompt)"
+            }
+          },
+          "7": {
+            "inputs": {
+              "text": "",
+              "clip": [
+                "37",
+                0
+              ]
+            },
+            "class_type": "CLIPTextEncode",
+            "_meta": {
+              "title": "CLIP Text Encode (Prompt)"
+            }
+          },
+          "8": {
+            "inputs": {
+              "samples": [
+                "33",
+                0
+              ],
+              "vae": [
+                "29",
+                0
+              ]
+            },
+            "class_type": "VAEDecode",
+            "_meta": {
+              "title": "VAE Decode"
+            }
+          },
+          "9": {
+            "inputs": {
+              "filename_prefix": "wuer/ComfyUI",
+              "images": [
+                "8",
+                0
+              ]
+            },
+            "class_type": "SaveImage",
+            "_meta": {
+              "title": "Save Image"
+            }
+          },
+          "29": {
+            "inputs": {
+              "vae_name": "cascade_stage_a.safetensors"
+            },
+            "class_type": "VAELoader",
+            "_meta": {
+              "title": "Load VAE"
+            }
+          },
+          "30": {
+            "inputs": {
+              "unet_name": "cascade_stage_c_bf16.safetensors"
+            },
+            "class_type": "UNETLoader",
+            "_meta": {
+              "title": "UNETLoader"
+            }
+          },
+          "32": {
+            "inputs": {
+              "unet_name": "cascade_stage_b_lite_bf16.safetensors"
+            },
+            "class_type": "UNETLoader",
+            "_meta": {
+              "title": "UNETLoader"
+            }
+          },
+          "33": {
+            "inputs": {
+              "seed": 750887496150267,
+              "steps": 2,
+              "cfg": 1,
+              "sampler_name": "ddpm",
+              "scheduler": "simple",
+              "denoise": 1,
+              "model": [
+                "32",
+                0
+              ],
+              "positive": [
+                "36",
+                0
+              ],
+              "negative": [
+                "40",
+                0
+              ],
+              "latent_image": [
+                "34",
+                1
+              ]
+            },
+            "class_type": "KSampler",
+            "_meta": {
+              "title": "KSampler"
+            }
+          },
+          "34": {
+            "inputs": {
+              "width": 1024,
+              "height": 1024,
+              "compression": 42,
+              "batch_size": 1
+            },
+            "class_type": "StableCascade_EmptyLatentImage",
+            "_meta": {
+              "title": "StableCascade_EmptyLatentImage"
+            }
+          },
+          "36": {
+            "inputs": {
+              "conditioning": [
+                "40",
+                0
+              ],
+              "stage_c": [
+                "3",
+                0
+              ]
+            },
+            "class_type": "StableCascade_StageB_Conditioning",
+            "_meta": {
+              "title": "StableCascade_StageB_Conditioning"
+            }
+          },
+          "37": {
+            "inputs": {
+              "clip_name": "cascade_clip.safetensors",
+              "type": "stable_cascade"
+            },
+            "class_type": "CLIPLoader",
+            "_meta": {
+              "title": "Load CLIP"
+            }
+          },
+          "40": {
+            "inputs": {
+              "conditioning": [
+                "6",
+                0
+              ]
+            },
+            "class_type": "ConditioningZeroOut",
+            "_meta": {
+              "title": "ConditioningZeroOut"
+            }
+          },
+          "59": {
+            "inputs": {
+              "shift": 2,
+              "model": [
+                "30",
+                0
+              ]
+            },
+            "class_type": "ModelSamplingStableCascade",
+            "_meta": {
+              "title": "ModelSamplingStableCascade"
+            }
+          }
+        }
+      } },
+      {
+        retryOnEmpty: true,
+        apiCallName: "get-filename",
+        results: [
+          {
+            resultName: "image-filename",
+            resultType: "string",
+            resultPath: [ "{UID for filename}", "outputs", 9, "images", 0, "filename" ],
+          },
+          {
+            resultName: "image-subfolder",
+            resultType: "string",
+            resultPath: [ "{UID for subfolder}", "outputs", 9, "images", 0, "subfolder" ],
+          },
+        ],
+        host: "device",
+        port: 8188,
+        method: "GET",
+        apiPath: "/history/{UID}"
+      },
+      {
+        apiCallName: "view",
+        results: [
+          {
+            resultName: "generated-image",
+            resultType: "file-image",
+            resultPath: "file"
+          }
+        ],
+        host: "device",
+        port: 8188,
+        method: "GET",
+        apiPath: "/view?filename={FILENAME}"
+      }
+    ]
   },
   {
     apiFlowName: "A1111 Layer to Lineart Demo",
