@@ -2190,7 +2190,7 @@ let uiSettings = {
   defaultLayerHeight: 1024,
 
   //defaultAPIFlowName: "A1111 Lightning Demo txt2img Mini",
-  defaultAPIFlowName: "Comfy SD1.5/SDXL",
+  defaultAPIFlowName: "Comfy SD1.5/SDXL txt2img",
   retryAPIDelay: 2000,
 
   setActiveTool: tool => {
@@ -4211,44 +4211,13 @@ function setupUIGenerativeControls( apiFlowName ) {
               control.controlValue = asset.name;
               selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
             }
-            console.log( "Opening assets: ", control.assetName, assetsLibrary[ control.assetName ] )
+            //console.log( "Opening assets: ", control.assetName, assetsLibrary[ control.assetName ] )
             openAssetBrowser( assetsLibrary[ control.assetName ] || [], callback );
           }
         },
         { tooltip: [ "Select " + control.assetName, "below", "to-right-of-center" ], zIndex:10000, },
       )
       controlsPanel.appendChild( assetSelectorButton );
-      /* 
-        code from ui setup where we build the api asset summoner:
-        const apiFlowSelectorButton = document.createElement( "div" );
-        apiFlowSelectorButton.classList.add( "asset-button", "round-toggle", "on" );
-        apiFlowSelectorButton.id = "api-flow-selector-button";
-        apiFlowSelectorButton.appendChild( document.createTextNode( "API" ) );
-        UI.registerElement(
-          apiFlowSelectorButton,
-          {
-            onclick: () => {
-              const assets = [];
-              for( const apiFlow of apiFlows ) {
-                if( apiFlow.isDemo ) continue;
-                if( apiFlow.apiFlowType === "asset" ) continue;
-                const asset = { name: apiFlow.apiFlowName }
-                assets.push( asset );
-              }
-              const callback = asset => {
-                selectedLayer.generativeSettings.apiFlowName = asset.name;
-                setupUIGenerativeControls( asset.name );
-              }
-              openAssetBrowser( assets, callback );
-            }
-          },
-          { tooltip: [ "Select APIFlow", "below", "to-right-of-center" ], zIndex:10000, },
-        )
-        generativeControlsRow.appendChild( apiFlowSelectorButton );
-      
-      */
-     //pull the assets list from the assets library
-     //if none, search for an api populates it and run
     }
     if( control.controlType === "text" ) {
       const controlElement = document.createElement( "div" );
@@ -8276,7 +8245,7 @@ async function executeAPICall( name, controlValues ) {
   for( let i=0; i<apiFlow.apiCalls.length; i ) {
   //for( apiCall of apiFlow.apiCalls ) {
     const apiCall = apiFlow.apiCalls[ i ];
-    console.log( "On apicall ", apiCall.apiCallName )
+    //console.log( "On apicall ", apiCall.apiCallName )
 
     let resultSchemeExpectingRawFile = false;
     for( const resultScheme of apiCall.results ) {
@@ -8295,10 +8264,10 @@ async function executeAPICall( name, controlValues ) {
           if( resultSchemeExpectingRawFile.resultType === "file-image" ) {
             const reader = new FileReader();
             reader.onload = () => {
-              console.log( "Finished reading raw file as dataURL: " + reader.result.substring( 0, 20 ) + "..." );
+              //console.log( "Finished reading raw file as dataURL: " + reader.result.substring( 0, 20 ) + "..." );
               const img = new Image();
               img.onload = () => {
-                console.log( "Finished loading image from dataURL and storing in result ",  resultSchemeExpectingRawFile.resultName );
+                //console.log( "Finished loading image from dataURL and storing in result ",  resultSchemeExpectingRawFile.resultName );
                 results[ resultSchemeExpectingRawFile.resultName ] = img;
                 complete( true );
               }
@@ -8308,7 +8277,7 @@ async function executeAPICall( name, controlValues ) {
               img.src = reader.result;
               
             }
-            console.log( "Going to try reading response as file | type ", xhr.responseType, " | ", typeof xhr.response );
+            //console.log( "Going to try reading response as file | type ", xhr.responseType, " | ", typeof xhr.response );
             //Hmm... Isn't it cached now? Can't I just set the URL as my image url? No... Because it's reflected. :-/ Hmm.
             //reader.readAsDataURL( new Blob( [xhr.response], { type: "image/png" } ) );
             reader.readAsDataURL( xhr.response );
@@ -8318,10 +8287,11 @@ async function executeAPICall( name, controlValues ) {
         else {
           let jsonResponse;
 
-          if( xhr.response === "" || xhr.response === "{}" && apiCall.retryOnEmpty ) {
-            console.log( "Got empty response. Retrying in ", uiSettings.retryAPIDelay, " ms." );
+          if( (xhr.response === "" || xhr.response === "{}") && apiCall.retryOnEmpty ) {
+            //console.log( "Got empty response. Retrying in ", uiSettings.retryAPIDelay, " ms." );
             await wait( uiSettings.retryAPIDelay );
             complete( "retry" );
+            return;
             //Else continue. An API call may not need to return anything, after all.
           }
 
@@ -8333,10 +8303,10 @@ async function executeAPICall( name, controlValues ) {
               complete( false );
           }
           if( jsonResponse ) {
-            console.log( "Got response: ", jsonResponse );
+            console.log( "Got API JSON response: ", jsonResponse );
 
             for( const resultScheme of apiCall.results ) {
-              console.log( "Starting with result ", resultScheme );
+              //console.log( "Starting with result ", resultScheme );
               const resultSuccessful = await new Promise( proceed => {
                 const path = [ ...resultScheme.resultPath ];
                 results[ resultScheme.resultName ] = jsonResponse;
@@ -8371,12 +8341,12 @@ async function executeAPICall( name, controlValues ) {
                   proceed( true );
                 }
                 if( resultScheme.resultType === "array-string" ) {
-                  console.log( "Updated results: ", results );
+                  //console.log( "Updated results: ", results );
                   results[ resultScheme.resultName ] = results[ resultScheme.resultName ][ 0 ]; //THIS IS A BUG! I don't know why I need this line. :-|
                   proceed( true );
                 }
                 if( resultScheme.resultType === "string" ) {
-                  console.log( "Installed resultscheme string ")
+                  //console.log( "Installed resultscheme string ")
                   //this section of code is just for post-processing. For a simple string, we've already stored the result
                   //results[ resultScheme.resultName ] = response;
                   proceed( true );
@@ -8387,7 +8357,7 @@ async function executeAPICall( name, controlValues ) {
                 complete( false );
               }
             }
-            console.log( "Now have accumulated results: ", results );
+            //console.log( "Now have accumulated results: ", results );
             //populated all results
             complete( true );
           }
@@ -8395,7 +8365,7 @@ async function executeAPICall( name, controlValues ) {
       }
       //load api values from controls
       for( const controlScheme of apiFlow.controls ) {
-        console.log( "On controlscheme ", controlScheme.controlName );
+        //console.log( "On controlscheme ", controlScheme.controlName );
         if( controlScheme.controlPath[ 0 ] === apiCall.apiCallName || controlScheme.controlPath[ 0 ] === "controlValue" ) {
 
           let target;
@@ -8433,7 +8403,7 @@ async function executeAPICall( name, controlValues ) {
               //nothing to set yet in this call.
               continue;
             }
-            console.log( "Assigning result ", retrievedResult, " to target ", target[ controlPath[ 0 ] ] );
+            //console.log( "Assigning result ", retrievedResult, " to target ", target[ controlPath[ 0 ] ] );
             target[ controlPath.shift() ] = retrievedResult;
           }
 
@@ -8449,15 +8419,15 @@ async function executeAPICall( name, controlValues ) {
               if( typeof composePath === "string" ) composedString += composePath;
               else {
                 const controlName = compositionPath.shift();
-                console.log( "Looking up controlname for composition: ", controlName );
+                //console.log( "Looking up controlname for composition: ", controlName );
                 let lookup = apiFlow.controls.find( c => c.controlName === controlName );
                 for( let i=0; i<compositionPath.length; i++ ) 
                   lookup = lookup[ compositionPath[ i ] ]; //incase controlValue is an obj{} IDK
-                console.log( "Got loookup ", lookup, " from path ", compositionPath );
+                //console.log( "Got loookup ", lookup, " from path ", compositionPath );
                 composedString += lookup;
               }
             }
-            console.log( "Installing composed string ", composedString, " onto target ", target[ controlPath[ 0 ] ] );
+            //console.log( "Installing composed string ", composedString, " onto target ", target[ controlPath[ 0 ] ] );
             target[ controlPath.shift() ] = composedString;
           }
 
@@ -8476,6 +8446,8 @@ async function executeAPICall( name, controlValues ) {
             path: apiCall.apiPath,//path: "/sdapi/v1/txt2img",
             host: "device",
             port: apiCall.port, //port: '7860',
+            dataFormat: apiCall.dataFormat,
+            convertDataImages: !!apiCall.convertDataImages,
             apiData: apiCall.api
           }
           xhr.open( "POST", "/api" );
@@ -8502,7 +8474,7 @@ async function executeAPICall( name, controlValues ) {
     } );
     if( completionStatus === true ) {
       apiResults[ apiCall.apiCallName ] = results;
-      console.log( "Finished API call successfully with results: ", results );
+      //console.log( "Finished API call successfully with results: ", results );
       ++i;
       retryCount = 0;
     }
@@ -8524,7 +8496,7 @@ async function executeAPICall( name, controlValues ) {
       outputs[ outputScheme.outputName ] = result;
     }
     if( outputScheme.outputType === "assets" ) {
-      console.log( "Mapping outputscheme ", outputScheme, " with result ", result );
+      //console.log( "Mapping outputscheme ", outputScheme, " with result ", result );
       const library = assetsLibrary[ outputScheme.outputLibraryName ] ||= [];
       const mappedAssets = [];
       for( const resultEntry of result ) {
@@ -8548,6 +8520,9 @@ async function executeAPICall( name, controlValues ) {
 }
 
 const assetsLibrary = {}
+
+//a 3w*2h image with random colors and a solid alpha channel
+const testImageURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAI0lEQVQIW2P86qL8/+hjPoazEzYzME5ljf5/WzOWQf6GJgMAnNkKmdnTKGIAAAAASUVORK5CYII=";
 
 /* 
 
@@ -8593,6 +8568,30 @@ const apiFlows = [
   },
   {
     isDemo: true,
+    apiFlowName: "Comfy Image Upload Test",
+    apiFlowType: "debug",
+    outputs: [],
+    controls: [
+      { controlName: "img2img", controlHint: "img", controlType: "image", controlValue: testImageURL, controlLayer: null, controlPath: [ "upload-image", "api", "image" ] },
+    ],
+    apiCalls: [
+      {
+        apiCallName: "upload-image",
+        results: [], //IDK yet
+        host: "device",
+        port: 8188,
+        apiPath: "/upload/image",
+        method: "POST",
+        dataFormat: "FORM",
+        convertDataImages: true,
+        api: {
+          image: testImageURL,
+        }
+      }
+    ]
+  },
+  {
+    isDemo: true,
     apiFlowName: "A1111 Upscale Demo",
     apiFlowType: "generative",
     outputs: [
@@ -8622,6 +8621,8 @@ const apiFlows = [
         port: 7860,
         apiPath: "/sdapi/v1/extra-single-image",
         method: "POST",
+        dataFormat: "JSON",
+        convertDataImages: false,
         api: {
           "resize_mode": 0, //0 - upscaling_resize, 1 - _w/_h
           "show_extras_results": true,
@@ -8675,6 +8676,8 @@ const apiFlows = [
         host: "device",
         port: 7860,
         method: "GET",
+        dataFormat: null,
+        convertDataImages: false,
         apiPath: "/sdapi/v1/upscalers"
       }
     ],
@@ -8784,12 +8787,14 @@ const apiFlows = [
         host: "device",
         port: 8188,
         method: "GET",
+        dataFormat: null,
+        convertDataImages: false,
         apiPath: "/object_info"
       }
     ],
   },
   {
-    apiFlowName: "Comfy SD1.5/SDXL",
+    apiFlowName: "Comfy SD1.5/SDXL txt2img",
     apiFlowType: "generative",
     outputs: [
       {
@@ -8804,7 +8809,7 @@ const apiFlows = [
       { controlName: "Steps", controlType: "number", min:1, max:100, step:1, controlValue:4, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "steps" ], },
       { controlName: "CFG", controlType: "number", min:1, max:50, step:0.25, controlValue:1.5, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "cfg" ], },
 
-      { controlName: "Model", controlType: "asset", assetName:"Comfy Models", controlValue:"juggernautXL_v9Rdphoto2Lightning.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "61", "inputs", "ckpt_name" ], },
+      { controlName: "Model", controlType: "asset", assetName:"Comfy Models", controlValue:"--no model--", controlPath: [ "sd-prompt", "api", "prompt", "61", "inputs", "ckpt_name" ], },
       /* { controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "29", "inputs", "vae_name" ], }, */
 
       { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "seed" ], },
@@ -8835,6 +8840,8 @@ const apiFlows = [
         port: 8188,
         apiPath: "/prompt",
         method: "POST",
+        dataFormat: "JSON",
+        convertDataImages: false,
         api: {
           prompt: {
             "60": {
@@ -8963,6 +8970,8 @@ const apiFlows = [
         host: "device",
         port: 8188,
         method: "GET",
+        dataFormat: null,
+        convertDataImages: false,
         apiPath: "/history/{UID}"
       },
       {
@@ -8977,6 +8986,247 @@ const apiFlows = [
         host: "device",
         port: 8188,
         method: "GET",
+        dataFormat: null,
+        convertDataImages: false,
+        apiPath: "/view?filename={FILENAME}"
+      }
+    ]
+  },
+  {
+    apiFlowName: "Comfy SD1.5/SDXL img2img",
+    apiFlowType: "generative",
+    outputs: [
+      {
+        outputName: "generated-image",
+        outputType: "image", //could be images array maybe
+        outputResultPath: [ "view", "generated-image" ]
+      }
+    ],
+    controls: [
+      { controlName: "img2img", controlHint: "i2i", controlType: "image", controlValue: "", controlLayer: null, controlPath: [ "upload-image", "api", "image" ] },
+
+      { controlName: "i2i-image-filename", controlType: "api-result", resultPath: [ "upload-image", "image-filename" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with uploadname" },
+
+      { controlName: "Prompt", controlType: "text", controlValue: "desktop cat", controlPath: [ "sd-prompt", "api", "prompt", "62", "inputs", "text" ], },
+      { controlName: "Negative Prompt", controlType: "text", controlValue: "", controlPath: [ "sd-prompt", "api", "prompt", "63", "inputs", "text" ], },
+      { controlName: "Steps", controlType: "number", min:1, max:100, step:1, controlValue:4, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "steps" ], },
+      { controlName: "CFG", controlType: "number", min:1, max:50, step:0.25, controlValue:1.5, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "cfg" ], },
+      { controlName: "Denoise", controlType: "number", min:0, max:1, step:0.01, controlValue:0.5, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "denoise" ], },
+
+      { controlName: "Model", controlType: "asset", assetName:"Comfy Models", controlValue:"--no model--", controlPath: [ "sd-prompt", "api", "prompt", "61", "inputs", "ckpt_name" ], },
+      /* { controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "29", "inputs", "vae_name" ], }, */
+
+      { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "seed" ], },
+      //{ controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlPath: [ "sd-prompt", "api", "prompt", "66", "inputs", "width" ], },
+      //{ controlName: "height", controlType: "layer-input", layerPath: ["h"], controlValue:1024, controlPath: [ "sd-prompt", "api", "prompt", "66", "inputs", "height" ], },
+      { controlName: "prompt-i2i-filename", controlType: "string-compose", composePaths: [ "", [ "i2i-image-filename", "controlValue" ] ], controlPath: [ "sd-prompt", "api", "prompt", "67", "inputs", "image" ], },
+
+      { controlName: "UID", controlType: "api-result", resultPath: [ "sd-prompt", "prompt_id" ], controlPath: [ "controlValue" ], controlValue: "to overwrite" },
+      //string-compose lets you compose controlValues and constants into a new string
+      { controlName: "history-path", controlType: "string-compose", composePaths: [ "/history/", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "apiPath" ] },
+      { controlName: "result-history-filename", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 0, "resultPath", 0 ] },
+      { controlName: "result-history-subfolder", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 1, "resultPath", 0 ] },
+      { controlName: "filename", controlType: "api-result", resultPath: [ "get-filename", "image-filename" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filename" },
+      //{ controlName: "filefolder", controlType: "api-result", resultPath: [ "get-filename", "image-subfolder" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filefolder" },
+      
+      { controlName: "view-filename", controlType: "string-compose", composePaths: [ "/view?filename=", [ "filename", "controlValue" ], "&subfolder=&type=output&rand=0.0923485734985" ], controlPath: [ "view", "apiPath" ] },
+    ],
+    apiCalls: [
+      {
+        apiCallName: "upload-image",
+        results: [
+          {
+            resultName: "image-filename",
+            resultType: "string",
+            resultPath: [ "name" ], //"subfolder","type"
+          }
+        ],
+        host: "device",
+        port: 8188,
+        apiPath: "/upload/image",
+        method: "POST",
+        dataFormat: "FORM",
+        convertDataImages: true,
+        api: {
+          image: "",
+        }
+      },
+      {
+        apiCallName: "sd-prompt",
+        results: [
+          {
+            resultName: "prompt_id",
+            resultType: "string",
+            resultPath: ["prompt_id"],
+          },
+        ],
+        host: "device",
+        port: 8188,
+        apiPath: "/prompt",
+        method: "POST",
+        dataFormat: "JSON",
+        convertDataImages: false,
+        api: {
+          prompt: {
+            "60": {
+              "inputs": {
+                "seed": 1037991131309544,
+                "steps": 4,
+                "cfg": 1.5,
+                "sampler_name": "dpmpp_sde",
+                "scheduler": "normal",
+                "denoise": 0.62,
+                "model": [
+                  "61",
+                  0
+                ],
+                "positive": [
+                  "62",
+                  0
+                ],
+                "negative": [
+                  "63",
+                  0
+                ],
+                "latent_image": [
+                  "68",
+                  0
+                ]
+              },
+              "class_type": "KSampler",
+              "_meta": {
+                "title": "KSampler"
+              }
+            },
+            "61": {
+              "inputs": {
+                "ckpt_name": "SDXL-Juggernaut-Lightning-4S.DPMppSDE.832x1216.CFG1-2.safetensors"
+              },
+              "class_type": "CheckpointLoaderSimple",
+              "_meta": {
+                "title": "Load Checkpoint"
+              }
+            },
+            "62": {
+              "inputs": {
+                "text": "test",
+                "clip": [
+                  "61",
+                  1
+                ]
+              },
+              "class_type": "CLIPTextEncode",
+              "_meta": {
+                "title": "CLIP Text Encode (Prompt)"
+              }
+            },
+            "63": {
+              "inputs": {
+                "text": "",
+                "clip": [
+                  "61",
+                  1
+                ]
+              },
+              "class_type": "CLIPTextEncode",
+              "_meta": {
+                "title": "CLIP Text Encode (Prompt)"
+              }
+            },
+            "64": {
+              "inputs": {
+                "samples": [
+                  "60",
+                  0
+                ],
+                "vae": [
+                  "61",
+                  2
+                ]
+              },
+              "class_type": "VAEDecode",
+              "_meta": {
+                "title": "VAE Decode"
+              }
+            },
+            "65": {
+              "inputs": {
+                "filename_prefix": "ComfyUI",
+                "images": [
+                  "64",
+                  0
+                ]
+              },
+              "class_type": "SaveImage",
+              "_meta": {
+                "title": "Save Image"
+              }
+            },
+            "67": {
+              "inputs": {
+                "image": "00008-3677720763.png",
+                "upload": "image"
+              },
+              "class_type": "LoadImage",
+              "_meta": {
+                "title": "Load Image"
+              }
+            },
+            "68": {
+              "inputs": {
+                "pixels": [
+                  "67",
+                  0
+                ],
+                "vae": [
+                  "61",
+                  2
+                ]
+              },
+              "class_type": "VAEEncode",
+              "_meta": {
+                "title": "VAE Encode"
+              }
+            }
+          }
+        },
+      },
+      {
+        retryOnEmpty: true,
+        apiCallName: "get-filename",
+        results: [
+          {
+            resultName: "image-filename",
+            resultType: "string",
+            resultPath: [ "{UID for filename}", "outputs", 65, "images", 0, "filename" ],
+          },
+          {
+            resultName: "image-subfolder",
+            resultType: "string",
+            resultPath: [ "{UID for subfolder}", "outputs", 65, "images", 0, "subfolder" ],
+          },
+        ],
+        host: "device",
+        port: 8188,
+        method: "GET",
+        dataFormat: null,
+        convertDataImages: false,
+        apiPath: "/history/{UID}"
+      },
+      {
+        apiCallName: "view",
+        results: [
+          {
+            resultName: "generated-image",
+            resultType: "file-image",
+            resultPath: "file"
+          }
+        ],
+        host: "device",
+        port: 8188,
+        method: "GET",
+        dataFormat: null,
+        convertDataImages: false,
         apiPath: "/view?filename={FILENAME}"
       }
     ]
@@ -9031,6 +9281,8 @@ const apiFlows = [
         port: 8188,
         apiPath: "/prompt",
         method: "POST",
+        dataFormat: "JSON",
+        convertDataImages: false,
         api: { prompt: {
           "3": {
             "inputs": {
@@ -9257,6 +9509,8 @@ const apiFlows = [
         host: "device",
         port: 8188,
         method: "GET",
+        dataFormat: null,
+        convertDataImages: false,
         apiPath: "/history/{UID}"
       },
       {
@@ -9271,6 +9525,8 @@ const apiFlows = [
         host: "device",
         port: 8188,
         method: "GET",
+        dataFormat: null,
+        convertDataImages: false,
         apiPath: "/view?filename={FILENAME}"
       }
     ]
@@ -9306,6 +9562,8 @@ const apiFlows = [
         port: 7860,
         apiPath: "/controlnet/detect",
         method: "POST",
+        dataFormat: "JSON",
+        convertDataImages: false,
         api: {
           "controlnet_module": "none",
           "controlnet_input_images": [ "" ],
@@ -9356,6 +9614,8 @@ const apiFlows = [
         port: 7860,
         apiPath: "/sdapi/v1/img2img",
         method: "POST",
+        dataFormat: "JSON",
+        convertDataImages: false,
         api: {
           "denoising_strength": 0.74,
           "image_cfg_scale": 1.5,
@@ -9432,6 +9692,8 @@ const apiFlows = [
         port: 7860,
         apiPath: "/sdapi/v1/txt2img",
         method: "POST",
+        dataFormat: "JSON",
+        convertDataImages: false,
         api: {
           "batch_size": 1,
           "cfg_scale": 7,
@@ -9499,6 +9761,8 @@ const apiFlows = [
         port: 7860,
         apiPath: "/sdapi/v1/txt2img",
         method: "POST",
+        dataFormat: "JSON",
+        convertDataImages: false,
         api: {
           "alwayson_scripts": {
             "ControlNet": {

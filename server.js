@@ -1,6 +1,9 @@
 "use strict";
 
-const { networkInterfaces } = require("os");
+const {Readable} = require('stream');
+
+const { networkInterfaces, type } = require("os");
+
 const nets = networkInterfaces();
 const results = [];
 
@@ -27,7 +30,7 @@ const fss = require( "fs" );
 const host = ipAddress;
 const port = 6789;
 
-console.log( "TODO: serve generic resource names" );
+//console.log( "TODO: serve generic resource names" );
 
 const server = http.createServer(
     async ( request , response ) => {
@@ -114,7 +117,7 @@ const server = http.createServer(
 
         }
         if( method === 'POST' ) {
-            console.log( "incoming POST connection: " , method , url , headers );
+            //console.log( "incoming POST connection: " , method , url , headers );
             if( url === '/api' ) {
                 let body = [];
                 request.on( "data", d => body.push( d ) )
@@ -129,7 +132,7 @@ const server = http.createServer(
                         response.end( "Bad JSON." );
                     }
                     if( json ) {
-                        console.log( "Received JSON POST from client." );
+                        //console.log( "Received JSON POST from client." );
                         //let's make the post request to the URL given in the data.
 
                         const apiString = (json.method === "POST") ? JSON.stringify( json.apiData ) : null;
@@ -143,10 +146,10 @@ const server = http.createServer(
                             host: json.host === "device" ? ipAddress : json.host,
                             port: json.port,
                             path: json.path,
-                            method: json.method === "POST" ? 'POST' : 'GET', //json.method
+                            method: json.method === "POST" ? 'POST' : 'GET',
                         }
 
-                        if( json.method === "POST" ) {
+                        if( json.method === "POST" && json.dataFormat === "JSON" ) {
                             requestOptions.headers = {
                                 'Content-Type': 'application/json',
                                 'Content-Length': Buffer.byteLength( apiString ),
@@ -156,9 +159,80 @@ const server = http.createServer(
                         let responseData = [];
 
                         if( requestOptions.method === "POST" ) {
-                            //console.log( "POSTing with options ", JSON.stringify( postOptions ) );
                             //console.log( "POSTing to URL, ", `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}` );
     
+                            let postBinary;
+                            if( json.dataFormat === "FORM" ) {
+                                /* 
+
+                                headers
+                                    Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryePkpFF7tjBAqx29L
+
+                                body
+                                    Content-Disposition: form-data; name="uploadedfile"; filename="hello.o"\r\n
+                                    Content-Type: application/x-object\r\n
+                                    \r\n... contents of file goes here ...
+                                    \r\n------WebKitFormBoundaryePkpFF7tjBAqx29L--\r\n
+
+                                */
+
+                                //console.log( "Posting Form Data" );
+                                const boundary = "-----------------------------81138824917293574772476006527"
+                                const preBuffers = [
+                                        //Buffer.from( `Content-Type: multipart/form-data; boundary=${boundary}\n\n--${boundary}` ),
+                                        Buffer.from( `--${boundary}` ),
+                                    ],
+                                    buffers = [];
+                                for( const key in json.apiData ) {
+                                    const value = json.apiData[ key ];
+                                    //console.log( "Adding to multipart data key: ", key );
+                                    if( typeof value !== "object" ) {
+                                        if( json.convertDataImages === true && typeof value === "string" && /^data:image\//.test( value ) ) {
+
+                                            const [ , mimeType, base64encoded ] = value.match( 'data:(image/.*);base64,(.*)' );
+
+                                            let filename = `Tempera - upload ${parseInt(Math.random() * 9999999999)}`;
+                                            if( mimeType === "image/png" ) filename += ".png";
+                                            if( mimeType === "image/jpg" || mimeType == "image/jpeg" ) filename += ".jpg";
+                                            if( mimeType === "image/webp" ) filename += ".webp";
+
+                                            const multipartDataLine = `\r\nContent-Disposition: form-data; name="${key}"; filename="${filename}"\r\nContent-Type: ${mimeType}\r\n\r\n`;
+
+                                            //console.log( "Adding multipart dataline: ", multipartDataLine );
+
+                                            buffers.push( Buffer.from( multipartDataLine ) );
+                                            buffers.push( Buffer.from( base64encoded, "base64" ) );
+                                            buffers.push( Buffer.from( `\r\n--${boundary}` ) );
+
+                                            //alternatively: buffers.push( Buffer.from( `\n--${boundary}` ) );
+
+                                        }
+                                    }
+                                }
+
+                                buffers.push( Buffer.from( `--\n\n` ) ); //two more dashes after last boundary
+
+                                const compiledBuffersArray = preBuffers.concat( buffers );
+                                const streamableBuffer = Buffer.concat( compiledBuffersArray );
+                                //const readableStream = Readable.from( streamableBuffer );
+
+                                requestOptions.headers = {
+                                    "Accept": "*/*",
+                                    //Accept-Language: en-US,en;q=0.5
+                                    //Accept-Encoding: gzip, deflate, br
+                                    "Content-Type": "multipart/form-data; boundary=" + boundary,
+                                    //"Content-Type": "multipart/form-data"
+                                    "Content-Length": streamableBuffer.length
+                                }
+
+                                //console.log( "Headers: ", requestOptions.headers )
+
+                                postBinary = streamableBuffer;
+
+                                //readableStream.pipe( postRequest );
+
+                            }
+
                             const postRequest = http.request(
                                 `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}`,
                                 requestOptions,
@@ -169,7 +243,7 @@ const server = http.createServer(
                                         responseData.push( chunk );
                                     } );
                                     forwardedResponse.on( 'end', () => {
-                                        console.log( "Responding with reflected POST..." );
+                                        console.log( "Responding with reflected POST: ", responseData );
                                         const responseString = responseData.join( "" );
                                         //console.log( "Reflected response: ", responseString );
                                         response.writeHead( 200 , {
@@ -183,8 +257,15 @@ const server = http.createServer(
     
                             postRequest.on( "error", e => console.error( "Forwarded POST request error ",  e ) );
                             console.log( "Reflecting client POST." );
-                            console.log( "Writing APIString: " + apiString.substring( 0, 20 ) + "..." );
-                            postRequest.write( apiString );
+                            if( json.dataFormat === "JSON" ) {
+                                //console.log( "Writing APIString: " + apiString.substring( 0, 20 ) + "..." );
+                                postRequest.write( apiString );
+                            }
+                            if( json.dataFormat === "FORM" ) {
+                                //console.log( "Streaming post data now...", postBinary.toString() );
+                                postRequest.write( postBinary );
+                            }
+                            //console.log( "Finished posting any relevant data." );
                             postRequest.end();    
                         }
                         

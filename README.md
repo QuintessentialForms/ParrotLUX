@@ -7,7 +7,7 @@ A Pen-Tablet Painting App for Open-Source AI
 Do you want the power and convenience of a modern touchscreen-tablet painting app combined with easy text-to-image, image-to-image, and controlnet?  
 Tempera is an open-source art app, built around open-source AI, designed for artists.
 
-Run Stable Diffusion on your PC using A1111 or Comfy, and connect to it via the art app on your tablet. Alternatively, run literally any other platform on any device or in the cloud. Tempera supports all network-based APIs by implementing a universal, user-customizable APIFlow system. Create, download, and share APIFlows complete with sleek in-app controls.
+Run Stable Diffusion on your PC using A1111 or Comfy, and connect to it via the art app on your tablet. Alternatively, run any other platform on any device or in the cloud. Tempera supports all network-based APIs by implementing a universal, user-customizable APIFlow system. Create, download, and share APIFlows complete with sleek in-app controls.
 
 **But, again, it's currently in pre-alpha!** Please be patient for all the awesomeness to come.
 
@@ -16,7 +16,7 @@ The sleek multi-touch interface and fine-tuned brush controls match standard pai
 
 ![image](demo-paint.jpg "Painting")
 ## Text-to-Image + Painting
-Generate images with text-to-image, powered by Stable Diffusion running on your local PC (or via any network API), using whatever models and custom tooling you want. Adjust generation settings from the app's clean and intuitive interface. **Currently in pre-alpha! Stay tuned for a full suite of settings and API interfaces, plus the ability to easily and quickly make your own.** Slightly more customizable than Comfy, yet more beautiful and intuitive than A1111. Convert the generated image to a paint layer, and paint away.
+Generate images with text-to-image, powered by Stable Diffusion running on your local PC (or via any network API), using whatever models and custom tooling you want. Adjust generation settings from the app's clean and intuitive interface. **Currently in pre-alpha! Stay tuned for a full suite of settings and API interfaces, plus the ability to easily and quickly make your own.** As powerful as your backend, yet as intuitive as an art app. Convert the generated image to a paint layer, and paint away.
 
 ![image](demo-t2i+paint.jpg "Text-to-Image and Painting")
 ## Image-to-Image from Painted Layers
@@ -29,9 +29,11 @@ Coming very soon! Lineart, upscaling, pose, and much more. :-)
 ## Installation
 
 ### Requirements
-* A PC running Automatic1111 stable-diffusion-webui. You can install it from [https://github.com/AUTOMATIC1111/stable-diffusion-webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui).
-    * Launch with command line arguments `--listen` and `--api`, running on port 7860
-    * Comfy will also be supported by default soon.
+* Either: a PC running ComfyUI. You can install it from [https://github.com/comfyanonymous/ComfyUI](https://github.com/comfyanonymous/ComfyUI).
+    * Run on port 8188
+* Or: a PC running Automatic1111 stable-diffusion-webui. You can install it from [https://github.com/AUTOMATIC1111/stable-diffusion-webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui).
+    * Launch with command line arguments `--listen` and `--api`
+    * Run on port 7860
 * An Android tablet with a pen stylus input (for example, a Samsung Galaxy Tab), with Chrome installed.
     * iPad and Safari may be supported in the future.
 
@@ -106,8 +108,8 @@ Coming very soon! Windows binary and Android APK will be available.
         - ❌ A1111 controlnet (demo)
         - ✅ A1111 controlnet preprocessor (demo)
         - ~~❌ A1111 upscale (demo)~~ (A1111 extras API currently broken)
-        - ❌ Comfy img2img / inpainting-with-mask (demo)
-        - ❌ Comfy txt2img (demo)
+        - ✅ Comfy img2img / inpainting-with-mask (demo)
+        - ✅ Comfy txt2img
         - ❌ Comfy controlnet (demo)
         - ❌ Comfy controlnet preprocessor (demo)
         - ❌ Comfy upscale (demo)
