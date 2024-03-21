@@ -1378,6 +1378,157 @@ function testPointsInLayer( layer, testPoints, screenSpacePoints = false ) {
 
 }
 
+function floodFillLayer( layer, layerX, layerY ) {
+
+  const imageData = layer.context.getImageData( 0, 0, layer.w, layer.h );
+  const island = new Uint8ClampedArray( imageData.data.length / 4 );
+
+  
+  //get color
+  let lr,lg,lb,la;
+  {
+    let x = layerX,
+      y = layerY * layer.w,
+      i = ( y + x ) * 4;
+    lr = imageData.data[ i+0 ];
+    lg = imageData.data[ i+1 ];
+    lb = imageData.data[ i+2 ];
+    la = imageData.data[ i+3 ];
+    //set our island pixel
+    island[ i / 4 ] = 255;
+  }
+
+  let { tolerance, floodTarget } = uiSettings.toolsSettings[ "flood-fill" ];
+  tolerance *= Math.sqrt( 255**2 * 4 );
+  const [ r,g,b ] = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes[uiSettings.toolsSettings.paint.modeSettings.brush.colorMode ].getRGB();
+  //const a = uiSettings.toolsSettings.paint.modeSettings.all.brushOpacity;
+
+  const {w,h} = layer;
+  const d = imageData.data;
+
+  let minX = w,
+    minY = h,
+    maxX = 0,
+    maxY = 0;
+  
+  if( floodTarget === "area" ) {
+
+      //edge marching doesn't work. :-/ We have to do crawling.
+      const crawledPixels = [ [ layerX, layerY ] ];
+
+      //turn this into a 1-deep loop
+
+      while( crawledPixels.length !== 0 ) {
+        let [x,y] = crawledPixels.pop(),
+          i = ((y*w)+x) * 4,
+          dr, dg, db, da,
+          dist;
+        
+        //to the left
+        i = ((y*w)+x-1) * 4;
+        if( island[ i/4 ] === 0 ) {
+          dr = d[ i ] - lr; dg = d[ i+1 ] - lg; db = d[ i+2 ] - lb; da = d[ i+3 ] - la;
+          dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
+          if( dist < tolerance ) {
+            d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255;
+            crawledPixels.push( [x-1,y] );
+            island[ i/4 ] = 255;
+            minX = Math.min( minX, x-1 );
+            maxX = Math.max( maxX, x-1 );
+            minY = Math.min( minY, y );
+            maxY = Math.max( maxY, y );
+          }
+        }
+
+        //to the right
+        i = ((y*w)+x+1) * 4;
+        if( island[ i/4 ] === 0 ) {
+          dr = d[ i ] - lr; dg = d[ i+1 ] - lg; db = d[ i+2 ] - lb; da = d[ i+3 ] - la;
+          dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
+          if( dist < tolerance ) {
+            d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255;
+            crawledPixels.push( [x+1,y] );
+            island[ i/4 ] = 255;
+            minX = Math.min( minX, x+1 );
+            maxX = Math.max( maxX, x+1 );
+            minY = Math.min( minY, y );
+            maxY = Math.max( maxY, y );
+          }
+        }
+
+        //to the top
+        i = (((y-1)*w)+x) * 4;
+        if( island[ i/4 ] === 0 ) {
+          dr = d[ i ] - lr; dg = d[ i+1 ] - lg; db = d[ i+2 ] - lb; da = d[ i+3 ] - la;
+          dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
+          if( dist < tolerance ) {
+            d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255;
+            crawledPixels.push( [x,y-1] );
+            island[ i/4 ] = 255;
+            minX = Math.min( minX, x );
+            maxX = Math.max( maxX, x );
+            minY = Math.min( minY, y-1 );
+            maxY = Math.max( maxY, y-1 );
+          }
+        }
+
+        //to the bottom
+        i = (((y+1)*w)+x) * 4;
+        if( island[ i/4 ] === 0 ) {
+          dr = d[ i ] - lr; dg = d[ i+1 ] - lg; db = d[ i+2 ] - lb; da = d[ i+3 ] - la;
+          dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
+          if( dist < tolerance ) {
+            d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255;
+            crawledPixels.push( [x,y+1] );
+            island[ i/4 ] = 255;
+            minX = Math.min( minX, x );
+            maxX = Math.max( maxX, x );
+            minY = Math.min( minY, y+1 );
+            maxY = Math.max( maxY, y+1 );
+          }
+        }
+        
+      }
+
+  }
+
+  const changedRect = {
+    x: minX,
+    y: minY,
+    w: maxX - minX,
+    h: maxY - minY
+  }
+
+  //get the old data
+  const oldData = layer.context.getImageData( changedRect.x, changedRect.y, changedRect.w, changedRect.h );
+
+  //blit the flood fill
+  layer.context.putImageData( imageData, 0, 0 );
+
+  //get the new data
+  const newData = layer.context.getImageData( changedRect.x, changedRect.y, changedRect.w, changedRect.h );
+
+  const historyEntry = {
+    layer,
+    oldData,
+    newData,
+    changedRect,
+    undo: () => {
+      historyEntry.layer.context.putImageData( historyEntry.oldData, historyEntry.changedRect.x, historyEntry.changedRect.y );
+      flagLayerTextureChanged( layer, historyEntry.changedRect );
+    },
+    redo: () => {
+      historyEntry.layer.context.putImageData( historyEntry.newData, historyEntry.changedRect.x, historyEntry.changedRect.y );
+      flagLayerTextureChanged( layer, historyEntry.changedRect );
+    }
+  }
+
+  recordHistoryEntry( historyEntry );
+
+  flagLayerTextureChanged( layer, changedRect );
+
+}
+
 function composeLayers( destinationLayer, layers, pixelScale=1 ) {
 
   let minX = Infinity, minY = Infinity,
@@ -2262,6 +2413,10 @@ let uiSettings = {
                 const [r,g,b] = hslToRgb( h,s,l );
                 return `rgb(${r},${g},${b})`;
               },
+              getRGB: () => {
+                const {h,s,l} = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
+                return hslToRgb( h,s,l );
+              },
               getRGBFloat: () => {
                 const {h,s,l} = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
                 const [r,g,b] = hslToRgb( h,s,l );
@@ -2286,6 +2441,10 @@ let uiSettings = {
     "transform": {
       current: true,
       transformingLayers: [],
+    },
+    "flood-fill": {
+      tolerance: 0.1,
+      floodTarget: "area", //"area" | "color"
     }
   },
 
@@ -2598,14 +2757,16 @@ function setupUI() {
     //the flood fill button
     {
       const floodFillButton = document.createElement( "div" );
-      floodFillButton.classList.add( "tools-column-flood-fill-button", "round-toggle", "animated", "unimplemented", "unavailable" );
+      floodFillButton.classList.add( "tools-column-flood-fill-button", "round-toggle", "animated", "unavailable" );
+      //floodFillButton.classList.add( "tools-column-flood-fill-button", "round-toggle", "animated", "unimplemented", "unavailable" );
       toolsColumn.appendChild( floodFillButton );
       UI.registerElement(
         floodFillButton,
         {
           onclick: () => {
             if( ! floodFillButton.classList.contains( "unavailable" ) && ! floodFillButton.classList.contains( "unimplemented" ) ) {
-              uiSettings.setActiveTool( "transform" )
+              console.log( "Setting active tool to floodfill." );
+              uiSettings.setActiveTool( "flood-fill" );
             }
           },
           updateContext: () => {
@@ -2624,7 +2785,9 @@ function setupUI() {
             } else {
               floodFillButton.classList.remove( "unavailable" );
               floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool";
-              if( uiSettings.activeTool === "flood-fill" ) floodFillButton.classList.add( "on" );
+              if( uiSettings.activeTool === "flood-fill" ) {
+                floodFillButton.classList.add( "on" );
+              }
               else floodFillButton.classList.remove( "on" );
             }
           },
@@ -2714,24 +2877,28 @@ function setupUI() {
   //the paint tool options
   {
     console.error( "UI.updateContext() needs to rebuild list of hidden elements, not check every mouse move." );
-    const paintToolOptionsRow = document.createElement( "div" );
-    paintToolOptionsRow.classList.add( "flex-row", "hidden", "animated" );
-    paintToolOptionsRow.id = "paint-tools-options-row";
-    uiContainer.appendChild( paintToolOptionsRow );
+    const paintToolsOptionsRow = document.createElement( "div" );
+    paintToolsOptionsRow.classList.add( "flex-row", "hidden", "animated" );
+    paintToolsOptionsRow.id = "paint-tools-options-row";
+    uiContainer.appendChild( paintToolsOptionsRow );
     UI.registerElement(
-      paintToolOptionsRow,
+      paintToolsOptionsRow,
       {
         updateContext: () => {
           if( uiSettings.activeTool === "paint" ) {
-            paintToolOptionsRow.classList.remove( "hidden" );
-            document.querySelector( ".paint-tools-options-color-well" ).classList.remove( "hidden" );
+            paintToolsOptionsRow.classList.remove( "hidden" );
+            const colorWell = document.querySelector( ".paint-tools-options-color-well" );
+            colorWell.classList.remove( "hidden" );
+            paintToolsOptionsRow.appendChild( colorWell );
           }
           else if( uiSettings.activeTool === "mask" ) {
-            paintToolOptionsRow.classList.remove( "hidden" );
-            document.querySelector( ".paint-tools-options-color-well" ).classList.add( "hidden" );
+            paintToolsOptionsRow.classList.remove( "hidden" );
+            const colorWell = document.querySelector( ".paint-tools-options-color-well" );
+            colorWell.classList.add( "hidden" );
+            paintToolsOptionsRow.appendChild( colorWell );
           }
           else {
-            paintToolOptionsRow.classList.add( "hidden" );
+            paintToolsOptionsRow.classList.add( "hidden" );
           }
         }
       },
@@ -2750,7 +2917,7 @@ function setupUI() {
         { onclick: () => console.log( "Open brush asset browser" ) },
         { tooltip: [ "!unimplemented! Select Brush", "below", "to-right-of-center" ], zIndex:10000, }
       );
-      paintToolOptionsRow.appendChild( brushSelectBrowseButton );
+      paintToolsOptionsRow.appendChild( brushSelectBrowseButton );
     }
   
     //the paint button
@@ -2769,7 +2936,7 @@ function setupUI() {
         },
         { tooltip: [ "Paint Mode", "below", "to-right-of-center" ], zIndex:10000, }
       );
-      paintToolOptionsRow.appendChild( paintModeButton );
+      paintToolsOptionsRow.appendChild( paintModeButton );
     }
     //the blend button
     {
@@ -2787,7 +2954,7 @@ function setupUI() {
         },
         { tooltip: [ "Blend Mode", "below", "to-right-of-center" ], zIndex:10000, }
       );
-      paintToolOptionsRow.appendChild( blendMode );
+      paintToolsOptionsRow.appendChild( blendMode );
     }
     //the erase button
     {
@@ -2805,7 +2972,7 @@ function setupUI() {
         },
         { tooltip: [ "Erase Mode", "below", "to-right-of-center" ], zIndex:10000, }
       );
-      paintToolOptionsRow.appendChild( eraseMode );
+      paintToolsOptionsRow.appendChild( eraseMode );
     }
     //the retractable size slider
     {
@@ -2861,7 +3028,7 @@ function setupUI() {
         },
         { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Brush Size <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
       );
-      paintToolOptionsRow.appendChild( retractableSizeSlider );
+      paintToolsOptionsRow.appendChild( retractableSizeSlider );
     }
     //the retractable softness slider
     {
@@ -2916,7 +3083,7 @@ function setupUI() {
         },
         { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Brush Softness <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
       );
-      paintToolOptionsRow.appendChild( retractableSoftnessSlider );
+      paintToolsOptionsRow.appendChild( retractableSoftnessSlider );
     }
     //the retractable opacity slider
     {
@@ -2972,7 +3139,7 @@ function setupUI() {
         },
         { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Brush Opacity <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
       );
-      paintToolOptionsRow.appendChild( retractableOpacitySlider );
+      paintToolsOptionsRow.appendChild( retractableOpacitySlider );
     }
     //the colorwell
     {
@@ -2991,7 +3158,7 @@ function setupUI() {
           tooltip: [ "Change Color", "below", "to-left-of-center" ], zIndex:10000,
         }
       );
-      paintToolOptionsRow.appendChild( colorWell );
+      paintToolsOptionsRow.appendChild( colorWell );
     }
   }
 
@@ -3019,7 +3186,7 @@ function setupUI() {
       }
     );
 
-    
+
     //the width slider
     if( false ) {
       const layerWidthSlider = document.createElement( "div" );
@@ -3068,6 +3235,40 @@ function setupUI() {
       );
       transformToolOptionsRow.appendChild( layerWidthSlider );
     }
+
+  }
+
+  //the flood fill tool options
+  {
+    const floodFillOptionsRow = document.createElement( "div" );
+    floodFillOptionsRow.classList.add( "flex-row", "hidden", "animated" );
+    floodFillOptionsRow.id = "paint-tools-options-row";
+    uiContainer.appendChild( floodFillOptionsRow );
+    UI.registerElement(
+      floodFillOptionsRow,
+      {
+        updateContext: () => {
+          if( uiSettings.activeTool === "flood-fill" ) {
+            floodFillOptionsRow.classList.remove( "hidden" );
+            const colorWell = document.querySelector( ".paint-tools-options-color-well" );
+            colorWell.classList.remove( "hidden" );
+            floodFillOptionsRow.appendChild( colorWell );
+          }
+          else {
+            floodFillOptionsRow.classList.add( "hidden" );
+          }
+        }
+      },
+      {
+        zIndex: 1000,
+      }
+    );
+
+    //the colorwell is here, but it's swiped from the paint tools
+    //need a toggle for fill vs. erase
+    //need a toggle for area vs. color
+    //need a slider for tolerance
+    //need a slider for padding
 
   }
 
@@ -5192,6 +5393,10 @@ const moveHandler = ( p, pseudo = false ) => {
             cursor.current.x = x;
             cursor.current.y = y;
         }
+        if( uiSettings.activeTool === "flood-fill" ) {
+          cursor.current.x = x;
+          cursor.current.y = y;
+        }
         if( painter.active === true ) {
             const point = [ x , y , 1, p.pressure, p.altitudeAngle || 1.5707963267948966, p.azimuthAngle || 0 ];
             
@@ -5247,6 +5452,52 @@ const stopHandler = p => {
     moveHandler( p, true );
 
     if( pointers.count === 1 ) {
+        if( uiSettings.activeTool === "flood-fill" && painter.active === false && cursor.mode === "none" && selectedLayer?.layerType === "paint" ) {
+          //get our global coordinate
+          
+          const point = [ cursor.current.x , cursor.current.y, 1 ];
+          
+          _originMatrix[ 2 ] = -view.origin.x;
+          _originMatrix[ 5 ] = -view.origin.y;
+          _positionMatrix[ 2 ] = view.origin.x;
+          _positionMatrix[ 5 ] = view.origin.y;
+
+          mul3x3( viewMatrices.current , _originMatrix , _inverter );
+          mul3x3( _inverter , viewMatrices.moving , _inverter );
+          mul3x3( _inverter , _positionMatrix , _inverter );
+          inv( _inverter , _inverter );
+          mul3x1( _inverter , point , point );
+
+          //cast to our layer
+          
+          //get our selected layer's space (I should really put this in some kind of function? It's so duplicated)
+          let origin = { x:selectedLayer.topLeft[0], y:selectedLayer.topLeft[1] },
+            xLeg = { x:selectedLayer.topRight[0] - origin.x, y: selectedLayer.topRight[1] - origin.y },
+            xLegLength = Math.sqrt( xLeg.x**2 + xLeg.y**2 ),
+            normalizedXLeg = { x:xLeg.x/xLegLength, y:xLeg.y/xLegLength },
+            yLeg = { x:selectedLayer.bottomLeft[0] - origin.x, y: selectedLayer.bottomLeft[1] - origin.y },
+            yLegLength = Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
+            normalizedYLeg = { x:yLeg.x/yLegLength, y:yLeg.y/yLegLength };
+
+          let layerX, layerY;
+          {
+            let [x,y] = point;
+            //translate from origin
+            x -= origin.x; y -= origin.y;
+            //project on normals
+            let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
+            let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
+            //unnormalize
+            xProjection *= selectedLayer.w / xLegLength;
+            yProjection *= selectedLayer.h / yLegLength;
+            layerX = parseInt( xProjection );
+            layerY = parseInt( yProjection );
+          }
+
+          if( layerX >= 0 && layerY >= 0 && layerX <= selectedLayer.w && layerY <= selectedLayer.h )
+            floodFillLayer( selectedLayer, layerX, layerY );
+          
+        }
         if( cursor.mode !== "none" ) {
             if( cursor.mode === "ui" ) {
               cursor.inUIRect.activate();

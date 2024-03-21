@@ -123,6 +123,7 @@ Coming very soon! Windows binary and Android APK will be available.
     - ✅ Translate
     - ✅ Scale
     - ✅ Rotate
+    - ❌ Pixel Dimensions
     - ❌ Flip
     - ❌ Crop / Uncrop
     - ❌ Snap
@@ -134,7 +135,9 @@ Coming very soon! Windows binary and Android APK will be available.
 - ❌ Text
     - ❌ Text layer
     - ❌ Import fonts in asset browser
-- ❌ Flood Fill
+- ✅ Flood Fill
+    - ❌ Erase
+    - ❌ Tolerance
 - ❌ Clone / Heal Tool
 - ❌ Geometry Lines & Shapes
 - ❌ One-click Install
