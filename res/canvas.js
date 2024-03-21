@@ -163,7 +163,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     layerName: "Layer " + (++layersAddedCount),
     layerId: layersAddedCount,
     layerGroupId: null,
-    groupCompositeUpToDate: true,
+    groupCompositeUpToDate: false,
     groupClosed: false,
 
     visible: true,
@@ -238,6 +238,11 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
       const index = layersStack.layers.indexOf( nextSibling );
       newLayer.layerGroupId = selectedLayer.layerId;
       layersStack.layers.splice( index, 0, newLayer );
+    }
+    else if( nextSibling === selectedLayer && selectedLayer.layerGroupId !== null ) {
+      const index = layersStack.layers.indexOf( nextSibling );
+      newLayer.layerGroupId = selectedLayer.layerGroupId;
+      layersStack.layers.splice( index+1, 0, newLayer );
     }
     else {
       const index = layersStack.layers.indexOf( nextSibling );
@@ -778,9 +783,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
               domParent.removeChild( newLayer.layerButton );
               //select the lower layer
               selectLayer( lowerLayer );
-              //what happens to our nodes??? I don't even know. TBD
-              console.error( "Delete layer isn't dealing with node-links." );
-    
+              
               const historyEntry = {
                 index,
                 upperLayer: newLayer,
@@ -800,7 +803,10 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                   layersStack.layers.splice( historyEntry.index, 0, historyEntry.upperLayer );
                   //reinsert the upper layer into the DOM
                   historyEntry.domParent.insertBefore( historyEntry.upperLayer.layerButton, historyEntry.domSibling );
-                  //recompute nodes because why not
+                  
+                  reorganizeLayerButtons();
+                  UI.updateContext();
+
                 },
                 redo: () => {
                   //delete the upper layer from the stack
@@ -811,11 +817,18 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                   historyEntry.lowerLayer.context.putImageData( historyEntry.newData, 0, 0 );
                   //and flag for GPU upload
                   flagLayerTextureChanged( historyEntry.lowerLayer );
-                  //all done theoretically yay
-                  //seems all good for now
+                  
+                  reorganizeLayerButtons();
+                  UI.updateContext();
+
                 }
               }
               recordHistoryEntry( historyEntry );
+              
+              reorganizeLayerButtons();
+              UI.updateContext();
+
+
             } else {
               //Disable the merge button. We should never end up here, but who knows.
               mergeButton.classList.remove( "enabled" );
@@ -877,6 +890,10 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
               }
             }
 
+            //update the layer type icon
+            layerButton.querySelector( ".layer-type-icon" ).classList.remove( "generative" );
+            layerButton.querySelector( ".layer-type-icon" ).classList.add( "paint" );
+    
             selectLayer( newLayer );
     
             const historyEntry = {
@@ -887,6 +904,10 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                 //reinstall popped uplinks
                 for( const [uplinkingLayer,uplink] of historyEntry.poppedUplinks )
                   uplinkingLayer.nodeUplinks.add( uplink );
+                //update the layer type icon
+                layerButton.querySelector( ".layer-type-icon" ).classList.add( "generative" );
+                layerButton.querySelector( ".layer-type-icon" ).classList.remove( "paint" );
+          
                 UI.updateContext();
               },
               redo: () => {
@@ -894,6 +915,10 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                 //repop popped uplinks
                 for( const [uplinkingLayer,uplink] of historyEntry.poppedUplinks )
                   uplinkingLayer.nodeUplinks.delete( uplink );
+                //update the layer type icon
+                layerButton.querySelector( ".layer-type-icon" ).classList.remove( "generative" );
+                layerButton.querySelector( ".layer-type-icon" ).classList.add( "paint" );
+          
                 UI.updateContext();
               }
             }
@@ -1048,8 +1073,8 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
             layerButton.appendChild( nodeLinkSource );
 
             let handleIsVisible = true;
-            //if( ! (newLayer.layerType === "paint" || newLayer.layerType === "group" || newLayer.layerType === "text" || newLayer.layerType === "pose" ) )
-            if( ! (newLayer.layerType === "paint" || newLayer.layerType === "text" || newLayer.layerType === "pose" ) )
+            if( ! (newLayer.layerType === "paint" || newLayer.layerType === "group" || newLayer.layerType === "text" || newLayer.layerType === "pose" ) )
+            //if( ! (newLayer.layerType === "paint" || newLayer.layerType === "text" || newLayer.layerType === "pose" ) )
               handleIsVisible = false;
             //if( selectedLayer !== newLayer ) isVisible = false;
             if( handleIsVisible === false ) nodeLinkSource.classList.add( "hidden" );
@@ -1250,6 +1275,8 @@ function updateLayerGroupComposite( layer ) {
 
   //update
   composeLayers( layer, childLayers, 1 );
+  //document.body.appendChild( layer.canvas );
+  //layer.canvas.style = "position:absolute; left:10px; top:10px; width:100px; border:1px solid red; z-index:9999999999;";
 }
 
 function updateLayerGroupCoordinates( layerGroup ) {
@@ -1351,7 +1378,7 @@ function testPointsInLayer( layer, testPoints, screenSpacePoints = false ) {
 
 }
 
-function composeLayers( destinationLayer, layers, pixelScale ) {
+function composeLayers( destinationLayer, layers, pixelScale=1 ) {
 
   let minX = Infinity, minY = Infinity,
     maxX = -Infinity, maxY = -Infinity;
@@ -1703,6 +1730,7 @@ function Loop( t ) {
     const framesPerSecond = 1 / secondsPerFrame;
     fps = ( fps * 0.95 ) + framesPerSecond * 0.05;
 
+    if( false )
     document.querySelector("#console" ).textContent = 
 `20-frame FPS:  + ${fps.toString().substring(0,5)}
 Info: ${info}`;
@@ -2297,41 +2325,6 @@ function loadBrushTipsImages() {
 }
 
 loadBrushTipsImages();
-
-/* const uiControls = {
-  paintControlElements: [],
-  hidePaintControls: () => {
-    document.querySelector( "#paint-controls" ).style.display = "none";
-    uiControls.paintControlElements.forEach( e => e.uiActive = false );
-  },
-  showPaintControls: () => {
-    document.querySelector( "#paint-controls" ).style.display = "block";
-    document.querySelector( "#paint-controls" ).classList.remove( "mask" );
-    document.querySelector( ".paint-controls-label" ).textContent = "Paint";
-    uiControls.paintControlElements.forEach( e => e.uiActive = true );
-    uiSettings.activeTool = "paint";
-  },
-  showMaskControls: () => {
-    document.querySelector( "#paint-controls" ).style.display = "block";
-    document.querySelector( "#paint-controls" ).classList.add( "mask" );
-    document.querySelector( ".paint-controls-label" ).textContent = "Mask";
-    uiControls.paintControlElements.forEach( e => e.uiActive = true );
-    uiSettings.activeTool = "mask";
-    uiSettings.toolsSettings.paint.mode = "brush";
-    UI.updateContext(); //elements can check settings too, after all
-  },
-
-  genControlElements: [],
-  hideGenControls: () => {
-    document.querySelector( "#gen-controls" ).style.display = "none";
-    uiControls.genControlElements.forEach( e => e.uiActive = false );
-  },
-  showGenControls: () => {
-    document.querySelector( "#gen-controls" ).style.display = "block";
-    uiControls.genControlElements.forEach( e => e.uiActive = true );
-  },
-
-} */
 
 function setupUI() {
   
@@ -3002,6 +2995,82 @@ function setupUI() {
     }
   }
 
+  //the transform tool options
+  {
+    
+    const transformToolOptionsRow = document.createElement( "div" );
+    transformToolOptionsRow.classList.add( "flex-row", "hidden", "animated" );
+    transformToolOptionsRow.id = "transform-tools-options-row";
+    uiContainer.appendChild( transformToolOptionsRow );
+    UI.registerElement(
+      transformToolOptionsRow,
+      {
+        updateContext: () => {
+          if( uiSettings.activeTool === "transform" ) {
+            transformToolOptionsRow.classList.remove( "hidden" );
+          }
+          else {
+            transformToolOptionsRow.classList.add( "hidden" );
+          }
+        }
+      },
+      {
+        zIndex: 1000,
+      }
+    );
+
+    
+    //the width slider
+    if( false ) {
+      const layerWidthSlider = document.createElement( "div" );
+      layerWidthSlider.classList.add( "generative-controls-retractable-slider", "animated" );
+      const widthLabel = document.createElement( "div" );
+      widthLabel.classList.add( "control-element-label" );
+      layerWidthSlider.appendChild( widthLabel );
+      const leftArrow = layerWidthSlider.appendChild( document.createElement( "div" ) );
+      leftArrow.classList.add( "generative-controls-retractable-slider-left-arrow" );
+      const numberPreview = layerWidthSlider.appendChild( document.createElement( "div" ) );
+      numberPreview.classList.add( "generative-controls-retractable-slider-number-preview" );
+      numberPreview.textContent = 0;
+      const rightArrow = layerWidthSlider.appendChild( document.createElement( "div" ) );
+      rightArrow.classList.add( "generative-controls-retractable-slider-right-arrow" );
+      let min = 1,
+        //max = 2**14,
+        max = 2048,
+        step=1;
+      let startingNumber,
+        adjustmentScale;
+      UI.registerElement(
+        layerWidthSlider,
+        {
+          ondrag: ({ rect, start, current, ending, starting, element }) => {
+            if( starting ) {
+              layerWidthSlider.querySelector( ".tooltip" ).style.opacity = 0;
+              startingNumber = selectedLayer.w;
+              adjustmentScale = 1/ 3; //3 pixels to 1 pixel
+            }
+            const dx =  current.x - start.x;
+            const adjustment = dx * adjustmentScale;
+            let number = startingNumber + adjustment;
+            number = Math.max( min, Math.min( max, number ) );
+            number = parseInt( number / step ) * step;
+            
+            //setLayerSize( selectedLayer, number, selectedLayer.height );
+
+            numberPreview.textContent = number;
+            if( ending ) {
+              layerWidthSlider.querySelector( ".tooltip" ).style = "";
+            }
+          },
+          //updateContext: () => {}
+        },
+        { tooltip: [ '<img src="icon/arrow-left.png"> Adjust Layer Width <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
+      );
+      transformToolOptionsRow.appendChild( layerWidthSlider );
+    }
+
+  }
+
   //the generative controls
   {
 
@@ -3121,8 +3190,10 @@ function setupUI() {
                   console.error( "Generate is pulling a random layer for img2img if there's nothing linked up. Need to show error code." );
                   sourceLayer = layersStack.layers.find( l => l.layerType === "paint" );
                 }
-                if( sourceLayer.layerType === "group" && ! sourceLayer.groupCompositeUpToDate )
+                if( sourceLayer.layerType === "group" && ! sourceLayer.groupCompositeUpToDate ) {
+                  //replace source layer with composite
                   updateLayerGroupComposite( sourceLayer );
+                }
                 //cast source layer to generative layer's space
                 const previewLayer = layersStack.layers.find( l => l.layerType === "paint-preview" );
                 sampleLayerInLayer( sourceLayer, selectedLayer, previewLayer );
@@ -3264,243 +3335,10 @@ function setupUI() {
     }
   }
 
-  //the generative controls
-  /* {
-    const genControls = document.createElement( "div" );
-    genControls.id = "gen-controls";
-
-    const prompt = document.createElement( "input" );
-    prompt.type = "text";
-    prompt.value = "desktop cat";
-    prompt.id = "gen-prompt";
-    registerUIElement( prompt, { onclick: () => prompt.focus() } );
-    uiControls.genControlElements.push( prompt );
-    genControls.appendChild( prompt );
-
-    const gen = document.createElement( "button" );
-    gen.class = "generate";
-    gen.textContent = "Generate";
-    registerUIElement( gen, {onclick: async () => {
-      let api = "txt2img",
-       img2img = null,
-       denoise = 0;
-
-      //try to set img2img
-      if( genControls.classList.contains( "img2img" ) ) {
-        //lets find the image
-        for( const link of linkedNodes ) {
-          if( link.destinationNode.isNode === "img2img" &&
-              link.destinationLayer === selectedLayer ) {
-            //found the link!
-            const sourceLayer = link.sourceLayer;
-            const sourceCanvas = sourceLayer.canvas;
-            console.log( "Found img2img source canvas: ", sourceCanvas );
-            api = "img2img";
-            img2img = sourceCanvas.toDataURL();
-            denoise = document.querySelector("input.denoise").value*1;
-          }
-        }
-      }
-
-      //try to set inpainting
-      let inpaint = false,
-        inpaintFill = "original",
-        inpaintZoomed = false;
-      if( api === "img2img" ) {
-        if( selectedLayer.maskInitialized ) {
-          inpaint = true;
-          //default
-          //inpaint = "original";
-          const inpaintZoomedChecked = !!(document.querySelector( "input.inpaintZoomed" ).checked);
-          if( inpaintZoomedChecked ) inpaintZoomed = true;
-          else inpaintZoomed = false;
-        }
-      }
-
-      let usingLineart = false,
-        lineartStrength = 0
-
-      if( genControls.classList.contains( "lineart" ) ) {
-        //lets find the source lineart canvas
-        const layer = selectedLayer;
-        for( const link of linkedNodes ) {
-          if( link.destinationNode.isNode === "lineart" &&
-              link.destinationLayer === layer ) {
-            //found the link!
-            const sourceLayer = link.sourceLayer;
-            const paintPreviewLayer = layersStack.layers[ 0 ];
-            //convert lineart alpha to white-black
-            const lineartData = sourceLayer.context.getImageData(0,0,sourceLayer.w,sourceLayer.h),
-                d = lineartData.data;
-            for( let i=0; i<d.length; i+=4 ) {
-              d[i] = d[i+1] = d[i+2] = d[i+3];
-              d[i+3] = 255;
-            }
-            paintPreviewLayer.canvas.width = sourceLayer.w;
-            paintPreviewLayer.canvas.height = sourceLayer.h;
-            paintPreviewLayer.context.putImageData( lineartData,0,0 );
-            lineart = paintPreviewLayer.canvas.toDataURL();
-            paintPreviewLayer.context.clearRect(0,0,paintPreviewLayer.w,paintPreviewLayer.h);
-            lineartStrength = document.querySelector("input.lineart").value*1;
-            apisSettings.a1111.setControlNet( { enabled: true, slot:0, lineart, lineartStrength, model:"sai_xl_sketch_256lora [cd3389b1]" } )
-            usingLineart = true;
-          }
-        }
-      }
-      if( usingLineart === false )
-        apisSettings.a1111.setControlNet( { enabled: false, slot: 0 } );
-
-      console.log( "Doing: ", api, img2img, denoise, usingLineart, prompt );
-      const p = prompt.value;
-      const img = await getImageA1111( { api, prompt:p, img2img, denoise, inpaint, inpaintFill, inpaintZoomed } );
-      selectedLayer.context.drawImage( img, 0, 0 );
-      selectedLayer.textureChanged = true;
-      selectedLayer.textureChangedRect.x = 0;
-      selectedLayer.textureChangedRect.y = 0;
-      selectedLayer.textureChangedRect.w = selectedLayer.w;
-      selectedLayer.textureChangedRect.h = selectedLayer.h;
-    }});
-    uiControls.genControlElements.push( gen );
-    genControls.appendChild( gen );
-
-    {
-      const presetSelector = document.createElement( "select" );
-      for( const preset of ["fast","quality"] ) {
-        const opt = document.createElement( "option" );
-        opt.value = preset;
-        opt.textContent = preset;
-        presetSelector.appendChild( opt );
-      }
-      genControls.appendChild( document.createTextNode("Preset") );
-      genControls.appendChild( presetSelector );
-    }
-
-    {
-      const modelSelect = document.createElement( "select" );
-      for( const model of apisSettings.a1111.modelNames ) {
-        const opt = document.createElement( "option" );
-        opt.value = model;
-        opt.textContent = model;
-        modelSelect.appendChild( opt );
-      }
-      genControls.appendChild( document.createTextNode("Model") );
-      genControls.appendChild( modelSelect );
-    }
-
-    {
-      const cfg = document.createElement( "input" );
-      cfg.type = "number";
-      cfg.min = 1;
-      cfg.max = 20;
-      cfg.step = 0.5;
-      cfg.value = 1.0;
-      genControls.appendChild( document.createTextNode("CFG") );
-      genControls.appendChild( cfg );  
-    }
-
-    {
-      const steps = document.createElement( "input" );
-      steps.type = "number";
-      steps.min = 1;
-      steps.max = 100;
-      steps.step = 1;
-      steps.value = 4;
-      genControls.appendChild( document.createTextNode("Steps") );
-      genControls.appendChild( steps );  
-    }
-    {
-      const samplerSelect = document.createElement( "select" );
-      for( const sampler of apisSettings.a1111.samplerNames ) {
-        const opt = document.createElement( "option" );
-        opt.value = sampler;
-        opt.textContent = sampler;
-        samplerSelect.appendChild( opt );
-      }
-      genControls.appendChild( document.createTextNode("Sampler") );
-      genControls.appendChild( samplerSelect );
-    }
-    {
-      //img2img denoise slider
-      const denoiseSlider = document.createElement("input");
-      denoiseSlider.type = "range";
-      denoiseSlider.classList.add( "denoise" );
-      denoiseSlider.value = 0.8;
-      denoiseSlider.min = 0;
-      denoiseSlider.max = 1;
-      denoiseSlider.step = "any";
-      denoiseSlider.style.position = "static";
-      const updateDenoise =  ( {rect,current} ) => {
-        let {x,y} = current;
-        x -= rect.left; y -= rect.top;
-        x /= rect.width; y /= rect.height;
-        x = Math.max( 0, Math.min( 1, x ) );
-        y = Math.max( 0, Math.min( 1, y ) );
-        const p = x;
-        denoiseSlider.value = parseFloat(denoiseSlider.min) + (parseFloat(denoiseSlider.max) - parseFloat(denoiseSlider.min))*p;
-      };
-      registerUIElement( denoiseSlider, { ondrag: updateDenoise } );
-      uiControls.genControlElements.push( denoiseSlider );
-      const denoiseHolder = document.createElement( "div" );
-      denoiseHolder.classList.add( "img2img" );
-      denoiseHolder.style = "position:relative; width:auto;";
-      denoiseHolder.appendChild( document.createTextNode("Denoise") );
-      denoiseHolder.appendChild( denoiseSlider );
-      genControls.appendChild( denoiseHolder );
-    }
-    if( false ){
-      //inpainting zoomed check
-      const inpaintZoomed = document.createElement( "input" );
-      inpaintZoomed.type = "checkbox"
-      inpaintZoomed.classList.add( "inpaintZoomed" );
-      //inpaintZoomed.checked = false;
-      registerUIElement( inpaintZoomed, { onclick: () => { inpaintZoomed.checked = !inpaintZoomed.checked; } } );
-      uiControls.genControlElements.push( inpaintZoomed );
-      const inpaintZoomedHolder = document.createElement( "div" );
-      inpaintZoomedHolder.classList.add( "img2img" );
-      inpaintZoomedHolder.style = "position:relative; width:auto;";
-      inpaintZoomedHolder.appendChild( document.createTextNode("Inpaint Zoomed") );
-      inpaintZoomedHolder.appendChild( inpaintZoomed );
-      genControls.appendChild( inpaintZoomedHolder );
-    }
-    {
-      //controlnet lineart slider
-      const lineartStength = document.createElement("input");
-      lineartStength.type = "range";
-      lineartStength.classList.add( "lineart" );
-      lineartStength.value = 0.8;
-      lineartStength.min = 0;
-      lineartStength.max = 1;
-      lineartStength.step = "any";
-      lineartStength.style.position = "static";
-      const updateLineartStrength =  ( {rect,current} ) => {
-        let {x,y} = current;
-        x -= rect.left; y -= rect.top;
-        x /= rect.width; y /= rect.height;
-        x = Math.max( 0, Math.min( 1, x ) );
-        y = Math.max( 0, Math.min( 1, y ) );
-        const p = x;
-        lineartStength.value = parseFloat(lineartStength.min) + (parseFloat(lineartStength.max) - parseFloat(lineartStength.min))*p;
-      };
-      registerUIElement( lineartStength, { ondrag: updateLineartStrength } );
-      uiControls.genControlElements.push( lineartStength );
-      const lineartStrengthHolder = document.createElement( "div" );
-      lineartStrengthHolder.classList.add( "lineart" );
-      lineartStrengthHolder.style = "position:relative; width:auto;";
-      lineartStrengthHolder.appendChild( document.createTextNode("Lineart Strength") );
-      lineartStrengthHolder.appendChild( lineartStength );
-      genControls.appendChild( lineartStrengthHolder );
-    }
-
-    genControls.style.display = "none";
-    ui.appendChild( genControls );
-
-    
-
-  } */
 
   //the console
-  const consoleElement = uiContainer.appendChild( document.createElement( "div" ) );
-  consoleElement.id = "console";
+  /* const consoleElement = uiContainer.appendChild( document.createElement( "div" ) );
+  consoleElement.id = "console"; */
 
   //undo/redo
   {
@@ -3834,6 +3672,7 @@ function setupUI() {
     uiContainer.appendChild( airInputElement );
   }
 
+  //the colorwheel
   {
 
     const updateColorWheelPreview = () => {
@@ -8480,6 +8319,8 @@ async function executeAPICall( name, controlValues ) {
     }
     else if( completionStatus === false ) {
       console.error( "Failed to complete apicall." );
+      apiExecutionQueue.splice( apiExecutionQueue.indexOf( selfQueue ), 1 );
+    
       return false;
     }
     else if( completionStatus === "retry" ) {

@@ -77,7 +77,7 @@ Coming very soon! Windows binary and Android APK will be available.
     - ✅ Rename
     - ✅ Reorganize
     - ✅ Layer Groups
-        - ❌ Use as Gen Souce
+        - ✅ Use as Gen Souce
         - ❌ Flatten
 - ✅ Undo / Redo
 - ✅ Save / Load
