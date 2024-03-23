@@ -118,12 +118,14 @@ Coming very soon! Windows binary and Android APK will be available.
 - ✅ Layer Masks
     - ✅ Paint
     - ✅ Erase
-    - ❌ Blend
+    - ✅ Blend
 - ✅ Layer Transforms
     - ✅ Translate
     - ✅ Scale
     - ✅ Rotate
     - ❌ Pixel Dimensions
+        - ✅ Generative Layers
+        - ❌ Other Layers
     - ❌ Flip
     - ❌ Crop / Uncrop
     - ❌ Snap

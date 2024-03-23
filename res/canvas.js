@@ -200,6 +200,8 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     maskContext: null,
     maskInitialized: false,
 
+    dataCache: [],
+
     glTexture: null,
     textureChanged: false,
     textureChangedRect: {x:0,y:0,w:layerWidth,h:layerHeight},
@@ -307,7 +309,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         ondrag: ({start,current,ending}) => {
           const dy = current.y - start.y,
             dt = current.t - start.t;
-          if( !currentlyScrolling && ending === true && dt < 200 && Math.abs(dy) < 5 ) {
+          if( !currentlyScrolling && ending === true && dt < uiSettings.clickTimeMS && Math.abs(dy) < 5 ) {
             if( newLayer !== selectedLayer ) {
               selectLayer( newLayer );
             }
@@ -316,7 +318,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
               reorganizeLayerButtons();
             }
           }
-          if( !currentlyScrolling && ( Math.abs( dy ) > 5 || dt > 200 ) ) {
+          if( !currentlyScrolling && ( Math.abs( dy ) > 5 || dt > uiSettings.clickTimeMS ) ) {
             currentlyScrolling = true;
             layersColumn = document.querySelector( "#layers-column" );
             layersColumn.classList.remove( "animated" );
@@ -672,36 +674,35 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         layerName,
         {
           onclick: () => {
-            console.log( "Showing." );
-            const textInput = document.querySelector( "#multiline-text-input-overlay" );
-            textInput.setText( newLayer.layerName );
-            textInput.onapply = text => {
-              //get old and new values
-              const oldLayerName = newLayer.layerName;
-              const newLayerName = text;
-              
-              newLayer.layerName = text;
-              layerNameText.textContent = newLayer.layerName;
-              layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
-
-              const historyEntry = {
-                oldLayerName,
-                newLayerName,
-                targetLayer: newLayer,
-                undo: () => {
-                  newLayer.layerName = oldLayerName;
-                  layerNameText.textContent = newLayer.layerName;
-                  layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
-                },
-                redo: () => {
-                  newLayer.layerName = newLayerName;
-                  layerNameText.textContent = newLayer.layerName;
-                  layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
+            UI.showOverlay.text({
+              value: newLayer.layerName,
+              onapply: text => {
+                //get old and new values
+                const oldLayerName = newLayer.layerName;
+                const newLayerName = text;
+                
+                newLayer.layerName = text;
+                layerNameText.textContent = newLayer.layerName;
+                layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
+  
+                const historyEntry = {
+                  oldLayerName,
+                  newLayerName,
+                  targetLayer: newLayer,
+                  undo: () => {
+                    newLayer.layerName = oldLayerName;
+                    layerNameText.textContent = newLayer.layerName;
+                    layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
+                  },
+                  redo: () => {
+                    newLayer.layerName = newLayerName;
+                    layerNameText.textContent = newLayer.layerName;
+                    layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
+                  }
                 }
+                recordHistoryEntry( historyEntry );
               }
-              recordHistoryEntry( historyEntry );
-            }
-            textInput.show();
+            });
           },
           updateContext: () => {
             layerNameText.textContent = newLayer.layerName;
@@ -1240,8 +1241,6 @@ function sampleLayerInLayer( sourceLayer, rectLayer, compositingLayer ) {
   //in this new space, get sourceLayer's rotation
   const sourceRotation = Math.atan2( sourceTopLeg.dy, sourceTopLeg.dx );
   
-  console.log( castPoints, sourceRotation, sourceToplegLength, sourceSideLegLength );
-
   //draw to the compositing layer
   const ctx = compositingLayer.context;
   ctx.save();
@@ -1567,7 +1566,7 @@ function composeLayers( destinationLayer, layers, pixelScale=1 ) {
       ctx.save();
       ctx.translate( x, y );
       ctx.rotate( Math.atan2( dy, dx ) );
-      ctx.scale( l / layer.w, l / layer.h );
+      ctx.scale( l / layer.w, l / layer.w );
       ctx.globalAlpha = layer.opacity;
       if( layer.maskInitialized === true ) {
         //if our layer is masked, clip it
@@ -1596,6 +1595,15 @@ function composeLayers( destinationLayer, layers, pixelScale=1 ) {
   
 }
 
+function flagLayerGroupChanged( layer ) {
+  let groupChainLayer = layer;
+  while( groupChainLayer.layerGroupId !== null ) {
+    const groupLayer = layersStack.layers.find( l => l.layerId ===groupChainLayer.layerGroupId )
+    //if( ! groupLayer ) { console.error( "Layer missing declared group: ", groupChainLayer ); }
+    groupLayer.groupCompositeUpToDate = false;
+    groupChainLayer = groupLayer;
+  }
+}
 function flagLayerTextureChanged( layer, rect=null ) {
   layer.textureChanged = true;
   if( rect === null ) {
@@ -1609,13 +1617,7 @@ function flagLayerTextureChanged( layer, rect=null ) {
     layer.textureChangedRect.w = rect.w;
     layer.textureChangedRect.h = rect.h;
   }
-  let groupChainLayer = layer;
-  while( groupChainLayer.layerGroupId !== null ) {
-    const groupLayer = layersStack.layers.find( l => l.layerId ===groupChainLayer.layerGroupId )
-    //if( ! groupLayer ) { console.error( "Layer missing declared group: ", groupChainLayer ); }
-    groupLayer.groupCompositeUpToDate = false;
-    groupChainLayer = groupLayer;
-  }
+  flagLayerGroupChanged( layer );
 }
 function flagLayerMaskChanged( layer, rect=null ) {
   layer.maskChanged = true;
@@ -1630,13 +1632,7 @@ function flagLayerMaskChanged( layer, rect=null ) {
     layer.maskChangedRect.w = rect.w;
     layer.maskChangedRect.h = rect.h;
   }
-  let groupChainLayer = layer;
-  while( groupChainLayer.layerGroupId !== null ) {
-    const groupLayer = layersStack.layers.find( l => l.layerId ===groupChainLayer.layerGroupId )
-    //if( ! groupLayer ) { console.error( "Layer missing declared group: ", groupChainLayer ); }
-    groupLayer.groupCompositeUpToDate = false;
-    groupChainLayer = groupLayer;
-  }
+  flagLayerGroupChanged( layer );
 }
 
 function collectGroupedLayersAsFlatList( groupLayerId ) {
@@ -1696,10 +1692,25 @@ function getLayerOpacity( layer ) {
   return alpha * getLayerOpacity( layersStack.layers.find( l => l.layerId === layer.layerGroupId ) );
 }
 
-async function resetLayerSize( layer, width, height ) {
+function clearDataCache( layer ) {
+  layer.dataCache.length = 0;
+}
+function buildDataCache( layer ) {
+  clearDataCache( layer );
+  layer.dataCache.push( layer.context.getImageData( 0, 0, layer.w, layer.h ) );
+  if( layer.maskInitialized ) layer.dataCache.push( layer.maskContext.getImageData( 0,0,layer.w,layer.h ) );
+}
+
+async function cropLayerSize( layer, width, height, x=null, y=null ) {
+
+  if( ! layer.dataCache.length ) buildDataCache( layer );
 
   const widthScale = width / layer.w,
     heightScale = height / layer.h;
+
+  if( x === null ) x = parseInt( ( width - layer.dataCache[0].width ) / 2 );
+  if( y === null ) y = parseInt( ( height - layer.dataCache[0].height ) / 2 );
+
   layer.canvas.width = layer.maskCanvas.width = layer.w = width;
   layer.canvas.height = layer.maskCanvas.height = layer.h = height;
   
@@ -1731,6 +1742,11 @@ async function resetLayerSize( layer, width, height ) {
   }
 
   //whatever process called this function had better flag it for upload!
+  layer.context.putImageData( layer.dataCache[ 0 ], x, y );
+  if( layer.maskInitialized ) layer.maskColor.putImageData( layer.dataCache[ 1 ], x, y );
+
+  flagLayerTextureChanged( layer );
+  if( layer.maskInitialized ) flagLayerMaskChanged( layer );
 
 }
 
@@ -2382,6 +2398,8 @@ let uiSettings = {
   defaultAPIFlowName: "Comfy SD1.5/SDXL txt2img",
   retryAPIDelay: 2000,
 
+  clickTimeMS: 350,
+
   setActiveTool: tool => {
     uiSettings.activeTool = tool;
     UI.updateContext();
@@ -2440,7 +2458,7 @@ let uiSettings = {
           reblendSpacing: 0.05,
           reblendAlpha: 0.1, */
 
-          blendPull: (()=>(console.error("UI needs to expose blend pull w/ non-linear function."),0.95))(), //0.99 is a decently long pull, this is not linear
+          blendPull: 0.99,
           blendAlpha: 0, //blendAlpha is a mix ratio. 0=pure pigment, 1=pure blend
         },
         "erase": {
@@ -3252,7 +3270,18 @@ function setupUI() {
       transformToolOptionsRow,
       {
         updateContext: () => {
-          if( uiSettings.activeTool === "transform" ) {
+          if( uiSettings.activeTool === "transform" && selectedLayer ) {
+            if( selectedLayer.layerType === "generative" ) {
+              clearDataCache( selectedLayer );
+              //update the tools
+              transformToolOptionsRow.querySelector( ".width-slider" ).loadLayer( selectedLayer );
+              transformToolOptionsRow.querySelector( ".width-slider" ).classList.remove( "hidden" );
+              transformToolOptionsRow.querySelector( ".height-slider" ).loadLayer( selectedLayer );
+              transformToolOptionsRow.querySelector( ".height-slider" ).classList.remove( "hidden" );
+            } else {
+              transformToolOptionsRow.querySelector( ".width-slider" ).classList.add( "hidden" );
+              transformToolOptionsRow.querySelector( ".height-slider" ).classList.add( "hidden" );
+            }
             transformToolOptionsRow.classList.remove( "hidden" );
           }
           else {
@@ -3267,52 +3296,30 @@ function setupUI() {
 
 
     //the width slider
-    if( false ) {
-      const layerWidthSlider = document.createElement( "div" );
-      layerWidthSlider.classList.add( "generative-controls-retractable-slider", "animated" );
-      const widthLabel = document.createElement( "div" );
-      widthLabel.classList.add( "control-element-label" );
-      layerWidthSlider.appendChild( widthLabel );
-      const leftArrow = layerWidthSlider.appendChild( document.createElement( "div" ) );
-      leftArrow.classList.add( "generative-controls-retractable-slider-left-arrow" );
-      const numberPreview = layerWidthSlider.appendChild( document.createElement( "div" ) );
-      numberPreview.classList.add( "generative-controls-retractable-slider-number-preview" );
-      numberPreview.textContent = 0;
-      const rightArrow = layerWidthSlider.appendChild( document.createElement( "div" ) );
-      rightArrow.classList.add( "generative-controls-retractable-slider-right-arrow" );
-      let min = 1,
-        //max = 2**14,
-        max = 2048,
-        step=1;
-      let startingNumber,
-        adjustmentScale;
-      UI.registerElement(
-        layerWidthSlider,
-        {
-          ondrag: ({ rect, start, current, ending, starting, element }) => {
-            if( starting ) {
-              layerWidthSlider.querySelector( ".tooltip" ).style.opacity = 0;
-              startingNumber = selectedLayer.w;
-              adjustmentScale = 1/ 3; //3 pixels to 1 pixel
-            }
-            const dx =  current.x - start.x;
-            const adjustment = dx * adjustmentScale;
-            let number = startingNumber + adjustment;
-            number = Math.max( min, Math.min( max, number ) );
-            number = parseInt( number / step ) * step;
-            
-            //setLayerSize( selectedLayer, number, selectedLayer.height );
-
-            numberPreview.textContent = number;
-            if( ending ) {
-              layerWidthSlider.querySelector( ".tooltip" ).style = "";
-            }
-          },
-          //updateContext: () => {}
-        },
-        { tooltip: [ '<img src="icon/arrow-left.png"> Adjust Layer Width <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      transformToolOptionsRow.appendChild( layerWidthSlider );
+    {
+      const widthSlider = UI.make.numberSlider({
+        label: "width", slideMode: "contain-step",
+        value: 512, min: 0, max: 4096, step: 1
+      });
+      widthSlider.classList.add( "width-slider" );
+      widthSlider.loadLayer = layer => {
+        widthSlider.setValue( layer.w );
+        widthSlider.onend = width => cropLayerSize( layer, width, layer.h );
+      }
+      transformToolOptionsRow.appendChild( widthSlider );
+    }
+    //the height slider
+    {
+      const heightSlider = UI.make.numberSlider({
+        label: "height", slideMode: "contain-step",
+        value: 512, min: 0, max: 4096, step: 1
+      });
+      heightSlider.classList.add( "height-slider" );
+      heightSlider.loadLayer = layer => {
+        heightSlider.setValue( layer.h );
+        heightSlider.onend = height => cropLayerSize( layer, layer.w, height );
+      }
+      transformToolOptionsRow.appendChild( heightSlider );
     }
 
   }
@@ -3480,27 +3487,24 @@ function setupUI() {
                 const dataURL = previewLayer.canvas.toDataURL();
                 //controlValues[ control.controlName ] = dataURL.substring( dataURL.indexOf( "," ) + 1 );
                 controlValues[ control.controlName ] = dataURL;
-                if( false ) {
-                  const output = document.body.appendChild( document.createElement( "div" ) );
-                  output.style = "position:absolute; left:0; top:0; color:red; border:1px solid red; width:25vw; height:25vh; font-size:4px; overflow-y:scroll; pointer-events:all; z-index:999999999";
-                  output.textContent = controlValues[ control.controlName ];
-                  //console.log( controlValues[ control.controlName ] );
-                }
               }
             }
 
             //for any values not provided, executeAPICall will retain the default values encoded in those controls, including "static" controltypes
 
             //do the generation
+            UI.showOverlay.generating();
             const result = await executeAPICall( apiFlowName, controlValues );
-            //absolutely everywhere I reference CTX calls like this will need to change with GPU paint?
-            //Or... Hmm. Maybe I use those pixelreads to update these canvases.
-            //Well... I have to keep the canvases anyway, right??? For previews. So no change???
-            const image = result[ "generated-image" ];
-            if( image.width !== selectedLayer.w || image.height !== selectedLayer.h )
-              resetLayerSize( selectedLayer, image.width, image.height );
-            selectedLayer.context.drawImage( result[ "generated-image" ], 0, 0 );
-            flagLayerTextureChanged( selectedLayer );
+            UI.hideOverlay.generating();
+            if( result === false ) {
+              UI.showOverlay.error( 'Generation failed. Stuff to check:<ul style="font-size:0.825rem; text-align:left; margin:0; padding:1rem; padding-right:0;"><li>Are the settings right?</li><li>Are the image inputs connected?</li><li>Is Comfy/A1111 running?</li><li>Do you have all this API\'s nodes/extensions?</li><li>If this is your custom APIFlow, check the dev tools for more info.</li></ul>' );
+            } else {
+              const image = result[ "generated-image" ];
+              if( image.width !== selectedLayer.w || image.height !== selectedLayer.h )
+                cropLayerSize( selectedLayer, image.width, image.height );
+              selectedLayer.context.drawImage( result[ "generated-image" ], 0, 0 );
+              flagLayerTextureChanged( selectedLayer );
+            }
           }
         },
         { tooltip: [ "Generate", "below", "to-left-of-center" ], zIndex:10000, },
@@ -3529,10 +3533,16 @@ function setupUI() {
         enableKeyTrapping();
         textInputOverlay.classList.add( "hidden" );
       }
+      closeButton.role = "button"; closeButton.tabIndex = "0";
+      closeButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick(); }
       textInputOverlay.appendChild( closeButton );
       //text input
       const textInput = document.createElement( "textarea" );
       textInput.classList.add( "overlay-text-input", "overlay-element", "animated" );
+      textInput.onkeydown = e => {
+        if( e.code === "Escape" ) closeButton.onclick();
+        if( e.code === "Enter" && e.ctrlKey === true ) applyButton.onclick();
+      }
       textInputOverlay.appendChild( textInput );
       //the apply/save button
       const applyButton = document.createElement( "div" );
@@ -3544,9 +3554,274 @@ function setupUI() {
         textInputOverlay.classList.add( "hidden" );
         textInputOverlay.onapply( textInput.value );
       }
+      applyButton.role = "button"; applyButton.tabIndex = "0";
+      applyButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) applyButton.onclick(); }
       textInputOverlay.appendChild( applyButton );
 
       overlayContainer.appendChild( textInputOverlay );
+    }
+
+    //the number-input overlay
+    {
+      //full-screen overlay
+      const numberInputOverlay = document.createElement( "div" );
+      numberInputOverlay.classList.add( "overlay-background", "hidden", "real-input", "animated" );
+      numberInputOverlay.id = "number-input-overlay";
+      numberInputOverlay.onapply = () => {};
+      numberInputOverlay.show = () => {
+        numberInputOverlay.classList.remove( "hidden" );
+        numberInput.focus();
+        disableKeyTrapping();
+      };
+      //back/close button
+      const closeButton = document.createElement( "div" );
+      closeButton.classList.add( "overlay-close-button", "overlay-element", "animated" );
+      closeButton.onclick = () => {
+        closeButton.classList.add( "pushed" );
+        setTimeout( ()=>closeButton.classList.remove("pushed"), UI.animationMS );
+        enableKeyTrapping();
+        numberInputOverlay.classList.add( "hidden" );
+      }
+      closeButton.role = "button"; closeButton.tabIndex = "0";
+      closeButton.onkeydown = e => {
+        if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick();
+        if( e.code === "Enter" && e.ctrlKey === true ) applyButton.onclick();
+      }
+      numberInputOverlay.appendChild( closeButton );
+      //text input
+      const numberInput = document.createElement( "input" );
+      numberInput.type = "number";
+      numberInput.min = 0;
+      numberInput.max = 1;
+      numberInput.step = 0.01;
+      numberInput.value = 0.5;
+      numberInput.classList.add( "overlay-number-input", "overlay-element", "animated" );
+      numberInputOverlay.appendChild( numberInput );
+      //the apply/save button
+      const applyButton = document.createElement( "div" );
+      applyButton.classList.add( "overlay-apply-button", "overlay-element", "animated" );
+      applyButton.onclick = () => {
+        applyButton.classList.add( "pushed" );
+        setTimeout( ()=>applyButton.classList.remove("pushed"), UI.animationMS );
+        enableKeyTrapping();
+        numberInputOverlay.classList.add( "hidden" );
+        numberInputOverlay.onapply( numberInput.value );
+      }
+      applyButton.role = "button"; applyButton.tabIndex = "0";
+      applyButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) applyButton.onclick(); }
+      numberInputOverlay.appendChild( applyButton );
+
+      overlayContainer.appendChild( numberInputOverlay );
+    }
+
+    //the error notification overlay
+    {
+      //full-screen overlay
+      const errorNotificationOverlay = document.createElement( "div" );
+      errorNotificationOverlay.classList.add( "overlay-background", "hidden", "real-input", "animated" );
+      errorNotificationOverlay.id = "error-notification-overlay";
+      errorNotificationOverlay.show = () => {
+        errorNotificationOverlay.classList.remove( "hidden" );
+        disableKeyTrapping();
+      };
+      //back/close button
+      const closeButton = document.createElement( "div" );
+      closeButton.classList.add( "overlay-close-button", "overlay-element", "animated" );
+      closeButton.onclick = () => {
+        closeButton.classList.add( "pushed" );
+        setTimeout( ()=>closeButton.classList.remove("pushed"), UI.animationMS );
+        enableKeyTrapping();
+        errorNotificationOverlay.classList.add( "hidden" );
+      }
+      closeButton.role = "button"; closeButton.tabIndex = "0";
+      closeButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick(); }
+      errorNotificationOverlay.appendChild( closeButton );
+      //text input
+      const errorText = document.createElement( "div" );
+      errorText.textContent = "Error.";
+      errorText.classList.add( "overlay-error-notification", "overlay-element", "animated" );
+      errorNotificationOverlay.appendChild( errorText );
+      //the accept button
+      const acceptButton = document.createElement( "div" );
+      acceptButton.classList.add( "overlay-accept-button", "overlay-element", "animated" );
+      acceptButton.onclick = () => {
+        acceptButton.classList.add( "pushed" );
+        setTimeout( ()=>acceptButton.classList.remove("pushed"), UI.animationMS );
+        enableKeyTrapping();
+        errorNotificationOverlay.classList.add( "hidden" );
+      }
+      acceptButton.role = "button"; acceptButton.tabIndex = "0";
+      acceptButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) acceptButton.onclick(); }
+      errorNotificationOverlay.appendChild( acceptButton );
+
+      overlayContainer.appendChild( errorNotificationOverlay );
+    }
+
+    //the generating overlay
+    {
+      //full-screen overlay
+      const generatingOverlay = document.createElement( "div" );
+      generatingOverlay.classList.add( "overlay-background", "hidden", "real-input", "animated" );
+      //generatingOverlay.classList.add( "overlay-background", "real-input", "animated" );
+      generatingOverlay.id = "generating-overlay";
+      generatingOverlay.show = () => {
+        generatingOverlay.classList.remove( "hidden" );
+        looping = true;
+        requestAnimationFrame( generatingAnimationLoop );
+        disableKeyTrapping();
+      };
+      generatingOverlay.hide = () => {
+        generatingOverlay.classList.add( "hidden" );
+        looping = false;
+        enableKeyTrapping();
+      };
+      const generatingCanvas = document.createElement( "canvas" );
+      generatingCanvas.classList.add( "animated" );
+      generatingCanvas.id = "generating-canvas";
+      generatingOverlay.appendChild( generatingCanvas );
+      generatingCanvas.width = 512;
+      generatingCanvas.height = 512;
+      generatingCanvas.style = `
+        width:${generatingCanvas.width/devicePixelRatio}px;
+        height:${generatingCanvas.height/devicePixelRatio}px;
+        left:calc( 50vw - ${0.5*generatingCanvas.width/devicePixelRatio}px );
+        top: max( 1rem, calc( 25vh - ${0.5*generatingCanvas.height/devicePixelRatio}px ) );
+      `;
+      const ctx = generatingCanvas.getContext( "2d" );
+
+      const imgs = {tophat:null,wand:null,star:null};
+      let imagesLoaded = 0;
+      for( const src in imgs ) {
+        imgs[ src ] = new Image();
+        imgs[ src ].onload = ()=>{if(++imagesLoaded===3)imagesLoaded=true;}
+        imgs[ src ].src = "icon/" + src + ".png";
+      }
+
+      overlayContainer.appendChild( generatingOverlay );
+
+      const stars = [];
+      const star = {
+        count: 5,
+        lastSpawned: -1,
+        spawnTime: 600,
+      }
+      const spawnStar = ( t ) => {
+        let fx = 0.5 - Math.random() * 0.25 + 0.125;
+        let fy = 0.55;
+        const x = fx * generatingCanvas.width,
+          y = fy * generatingCanvas.height;
+        let scale = 0.125 + Math.random() * 0.25;
+        let rotate = Math.random() * Math.PI * 2;
+        stars.push({
+          x, y,
+          vy: 0.00025 + Math.random() * 0.0005,
+          scale,
+          rotate,
+          t
+        })
+        star.lastSpawned = t;
+      }
+
+      let looping = false;
+      const generatingAnimationLoop = t => {
+
+        if( looping ) requestAnimationFrame( generatingAnimationLoop );
+
+        const w = generatingCanvas.width,
+          h = generatingCanvas.height;
+
+        if( imagesLoaded === true ) {
+          ctx.clearRect( 0,0,w,h );
+          ctx.save();
+          ctx.translate( w/2,h/2 );
+          ctx.scale( 0.25,0.25 );
+          //draw tophat
+          {
+            let rotation = 0;
+            {
+              const restTime = 5000,
+                rotateTime = 300;
+              if( t % (restTime+rotateTime) > restTime ) {
+                let f = (( t % (restTime+rotateTime) ) - restTime) / rotateTime;
+                rotation = Math.sin( f * Math.PI * 2 ) * 0.07;
+              }
+            }
+            let stretch = 0;
+            {
+              const stretchTime = 4000;
+              const tf = ( t % stretchTime ) / stretchTime;
+              const sawPhase = Math.abs( tf * 2 - 1 );
+              stretch = Math.pow( sawPhase * 2 - 1, 2 ) * 0.05;
+            }
+            ctx.save();
+            ctx.translate( 0, imgs.tophat.height );
+            ctx.scale( 1 + stretch, 1 - stretch );
+            ctx.rotate( rotation );
+            ctx.drawImage( imgs.tophat, -imgs.tophat.width/2, -imgs.tophat.height );
+            ctx.restore();
+          }
+          //draw wand
+          {
+            let dx, dy;
+            {
+              const orbitTime = 16000;
+              const orbitRadius = imgs.wand.width/8;
+              const tf = ( t % orbitTime ) / orbitTime;
+              const a = tf * Math.PI * 2;
+              dx = Math.cos( a ) * orbitRadius;
+              dy = Math.sin( a ) * orbitRadius;
+            }
+            let rotation;
+            {
+              const rotateTime = 7000;
+              const tf = ( t % rotateTime ) / rotateTime;
+              const a = tf * Math.PI * 2;
+              rotation = Math.sin( a ) * 0.1;
+            }
+            ctx.save();
+            ctx.translate( -imgs.tophat.width/2, -imgs.tophat.height*0.7 );
+            ctx.translate( dx, dy );
+            ctx.rotate( rotation );
+            ctx.drawImage( imgs.wand, -imgs.wand.width/2, -imgs.wand.height/2 );
+            ctx.restore();
+          }
+          ctx.restore();
+          //draw stars
+          {
+            if( stars.length < star.count && (t-star.lastSpawned) > star.spawnTime ) spawnStar( t );
+            for( let i=stars.length-1; i>=0; i-- ) {
+              const s = stars[ i ];
+              const dt = t - s.t;
+              s.y -= s.vy * dt;
+              ctx.save();
+              ctx.translate( s.x, s.y );
+              ctx.scale( s.scale, s.scale );
+              ctx.rotate( s.rotate );
+              let rotation = 0, scale = 1;
+              if( dt < 3000 ) {
+                const ft = dt / 3000;
+                const f = ( 1 - ft ) ** 2;
+                //rotation -= f * Math.PI * 12;
+                ctx.filter = `blur(${f*20}px)`;
+                scale = ft;
+              }
+              {
+                const ft = ( dt % 10000 ) / 10000;
+                rotation -= ( 1 - ft ) * Math.PI * 2;
+              }
+              ctx.scale( scale, scale );
+              ctx.rotate( rotation );
+              ctx.globalAlpha = Math.min( 1, Math.max( 0, (s.y - imgs.star.height*s.scale ) / (h*0.2) ) );
+              ctx.drawImage( imgs.star, -imgs.star.width/2, -imgs.star.height/2 );
+              ctx.restore();
+              if( (s.y + s.scale*scale*imgs.star.width*1.1) < 0 )
+                stars.splice( i, 1 );
+            }
+          }
+        }
+
+      }
+      
     }
 
   }
@@ -3807,7 +4082,7 @@ function setupUI() {
             setTimeout( () => addTextLayerButton.classList.remove( "pushed" ), UI.animationMS );
             //addCanvasLayer( "text" );
             UI.deleteContext( "add-layers-panel-visible" );
-            console.error( "Image import unimplemented." );
+            console.error( "Text layer unimplemented." );
           },
           updateContext: context => {
             if( context.has( "add-layers-panel-visible" ) ) addTextLayerButton.uiActive = true;
@@ -3834,7 +4109,7 @@ function setupUI() {
             setTimeout( () => addPoseLayerButton.classList.remove( "pushed" ), UI.animationMS );
             //addCanvasLayer( "pose" );
             UI.deleteContext( "add-layers-panel-visible" );
-            console.error( "Image import unimplemented." );
+            console.error( "Pose layer unimplemented." );
           },
           updateContext: context => {
             if( context.has( "add-layers-panel-visible" ) ) addPoseLayerButton.uiActive = true;
@@ -4335,7 +4610,8 @@ function setupUIGenerativeControls( apiFlowName ) {
           }
         },
         { tooltip: [ "Select " + control.assetName, "below", "to-right-of-center" ], zIndex:10000, },
-      )
+      );
+      setupUIGenerativeControls.registeredControls.push( assetSelectorButton );
       controlsPanel.appendChild( assetSelectorButton );
     }
     if( control.controlType === "text" ) {
@@ -4371,6 +4647,21 @@ function setupUIGenerativeControls( apiFlowName ) {
       controlsPanel.appendChild( controlElement );
     }
     if( control.controlType === "number" ) {
+      const controlElement = UI.make.numberSlider({
+        label: control.controlName,
+        value: control.controlValue,
+        max: control.max,
+        min: control.min,
+        step: control.step,
+        slideMode: "contain-step",
+        onstart: () => {},
+        onupdate: () => {},
+        onend: value => control.controlValue = value,
+      });
+      controlsPanel.appendChild( controlElement );
+      setupUIGenerativeControls.registeredControls.push( controlElement );
+    }
+    if( false && control.controlType === "number" ) {
       const controlElement = document.createElement( "div" );
       controlElement.classList.add( "generative-controls-retractable-slider", "animated" );
       controlElement.controlName = control.controlName;
@@ -4954,6 +5245,41 @@ const UI = {
 
   pointerHandlers: {},
 
+  showOverlay: {
+    text: ( { value="", onapply=txt=>console.log(txt) } ) => {
+      const textInput = document.querySelector( "#multiline-text-input-overlay" );
+      textInput.setText( value );
+      textInput.onapply = onapply;
+      textInput.show();
+    },
+    number: ( { value=0, min=0, max=1, step=0.1, onapply=num=>console.log(num) } ) => {
+      const numberInputOverlay = document.querySelector( "#number-input-overlay" ),
+        numberInput = numberInputOverlay.querySelector( "input" );
+      //numberInputOverlay.setText( value );
+      numberInput.value = value;
+      numberInput.min = min;
+      numberInput.max = max;
+      numberInput.step = step;
+      numberInputOverlay.onapply = onapply;
+      numberInputOverlay.show();
+    },
+    error: errorHTML => {
+      const errorNotificationOverlay = document.querySelector( "#error-notification-overlay" );
+      errorNotificationOverlay.querySelector( ".overlay-error-notification" ).innerHTML = errorHTML;
+      errorNotificationOverlay.show();
+    },
+    generating: () => {
+      const generatingOverlay = document.querySelector( "#generating-overlay" );
+      generatingOverlay.show();
+    }
+  },
+  hideOverlay: {
+    generating: () => {
+      const generatingOverlay = document.querySelector( "#generating-overlay" );
+      generatingOverlay.hide();
+    }
+  },
+
   make: {
     slider: ( { orientation, onchange, initialValue=1, min=0, max=1, tooltip, zIndex=0, updateContext=null } ) => {
       if( orientation === "horizontal" ) {
@@ -4989,6 +5315,144 @@ const UI = {
         return slider;
       }
     },
+    numberSlider: ( {
+      label="", value=0, min=0, max=1, step=0.1, slideMode="contain-range",
+      onstart=()=>{}, onupdate=()=>{}, onend=n=>console.log(n)
+    } ) => {
+
+      const sliderElement = document.createElement( "div" );
+
+      sliderElement.classList.add( "number-slider", "animated" );
+      //controlElement.controlName = control.controlName;
+
+      const sliderLabel = document.createElement( "div" );
+      sliderLabel.classList.add( "number-slider-label" );
+      sliderLabel.textContent = label;
+      sliderElement.appendChild( sliderLabel );
+
+      const leftArrow = sliderElement.appendChild( document.createElement( "div" ) );
+      leftArrow.classList.add( "number-slider-left-arrow" );
+
+      const numberPreview = sliderElement.appendChild( document.createElement( "div" ) );
+      numberPreview.classList.add( "number-slider-number-preview" );
+      numberPreview.textContent = value;
+      numberPreview.showValue = ()=> {
+        let number = value + "";
+        if( number.indexOf( "." ) !== -1 )  {
+          if( trimLength === 0 ) number = number.substring( 0, number.indexOf( "." ) );
+          else number = number.substring( 0, number.indexOf( "." )+1 + trimLength );
+        }
+        numberPreview.textContent = number;
+      }
+      numberPreview.updateTrimLength = () => {
+        trimLength = ( (''+step).indexOf( "." ) === -1 ) ? 0 : (''+step).substring( (''+step).indexOf( "." )+1 ).length;  
+      }
+      let trimLength;
+      numberPreview.updateTrimLength();
+
+      const rightArrow = sliderElement.appendChild( document.createElement( "div" ) );
+      rightArrow.classList.add( "number-slider-right-arrow" );
+
+      let startingNumber, adjustmentScale;
+
+      UI.registerElement(
+        sliderElement,
+        {
+          ondrag: ({ rect, start, current, ending, starting, element }) => {
+
+            let isClick = false;
+            const clickDriftLength = 10; //move to uiSettings? I think we have similar code on scroll afterall.
+            const dy = current.y - start.y,
+              dx = current.x - start.x,
+              d = Math.sqrt( dx**2 + dy**2 ),
+              dt = current.t - start.t;
+            let px;
+            if( d < clickDriftLength && dt < uiSettings.clickTimeMS ) {
+              const {x,y} = current,
+                {top,left,bottom,right} = rect;
+              if( typeof top !== "number" ) isClick = false;
+              else if( x < left || x > right || y < top || y > bottom ) isClick = false;
+              else {
+                isClick = true;
+                px = ( x - left ) / ( right - left );
+              }
+            }
+
+            if( starting ) {
+              sliderElement.onstart( value );
+              sliderElement.querySelector( ".tooltip" ).style.opacity = 0;
+              startingNumber = value;
+              if( slideMode === "contain-range" ) adjustmentScale = ( max - min ) / 300; //300 pixel screen-traverse
+              if( slideMode === "contain-step" ) adjustmentScale = step / 3; //1 step per every 3 pixels
+            }
+
+            const adjustment = dx * adjustmentScale;
+            let number = startingNumber + adjustment;
+            number = Math.max( min, Math.min( max, number ) );
+            number = parseInt( number / step ) * step;
+            value = number;
+
+            numberPreview.showValue();
+
+            if( isClick === false ) sliderElement.onupdate( value );
+            
+            if( ending ) {
+              sliderElement.querySelector( ".tooltip" ).style = "";
+              if( isClick === true ) {
+                if( px < 0.25 ) {
+                  //clicked left of input, decrement
+                  value -= step;
+                  value = Math.max( min, Math.min( max, value ) );
+                  numberPreview.showValue();
+                  sliderElement.onend( value );
+                }
+                else if( px > 0.75 ) {
+                  //clicked right of input, increment
+                  value += step;
+                  value = Math.max( min, Math.min( max, value ) );
+                  numberPreview.showValue();
+                  sliderElement.onend( value );
+                }
+                else {
+                  //clicked center of input, open number prompt
+                  UI.showOverlay.number( {
+                    value,min,max,step,
+                    onapply: v => {
+                      value = v;
+                      value = Math.max( min, Math.min( max, value ) );
+                      numberPreview.showValue();
+                      sliderElement.onend( value );
+                    }
+                  })
+                }
+              } else {
+                sliderElement.onend( value );
+              }
+            }
+          },
+          //updateContext: () => {}
+        },
+        { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust ' + label + ' <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
+      );
+
+      sliderElement.setValue = v => {
+        value = v;
+        numberPreview.showValue();
+      }
+      sliderElement.setMin = m => min = m;
+      sliderElement.setMax = m => max = m;
+      sliderElement.setStep = s => {
+        step = s;
+        numberPreview.updateTrimLength();
+      }
+      sliderElement.setSlide = s => slideMode = s;
+      sliderElement.onstart = onstart;
+      sliderElement.onupdate = onupdate;
+      sliderElement.onend = onend;
+
+      return sliderElement;
+
+    }
   },
 
   addContext: ( hint ) => {
@@ -7874,6 +8338,8 @@ function finalizeLayerTransform() {
       newData[ pointName ] = [ ...layerToTransform[ pointName ] ];
     }
 
+    flagLayerGroupChanged( layerToTransform );
+
     transformRecord.oldData = oldData;
     transformRecord.newData = newData;
     transformRecord.targetLayer = layerToTransform;
@@ -7905,6 +8371,7 @@ function finalizeLayerTransform() {
         for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
           targetLayer[ pointName ] = [ ...oldData[ pointName ] ]
         }
+        flagLayerGroupChanged( targetLayer );    
       }
     },
     redo: () => {
@@ -7915,6 +8382,7 @@ function finalizeLayerTransform() {
         for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
           targetLayer[ pointName ] = [ ...newData[ pointName ] ]
         }
+        flagLayerGroupChanged( targetLayer );    
       }
     },
   };

@@ -49,6 +49,12 @@ const server = http.createServer(
                 //response.end( '\n<!-- Comment at end of file! -->\n' );
                 response.end();
             }
+            if( url.indexOf( '/store.js' ) === 0 ) {
+                response.writeHead( 200 , { 'Content-Type': 'text/javascript' } );
+                const codeFile = await fs.readFile( 'res/store.js' );
+                response.write( codeFile );
+                response.end();
+            }
             if( url.indexOf( '/canvas.js' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'text/javascript' } );
                 const codeFile = await fs.readFile( 'res/canvas.js' );

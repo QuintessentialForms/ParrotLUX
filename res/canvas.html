@@ -5,6 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, touch-action:none, interactive-widget:resizes-content" />
         <title>AI Canvas</title>
         <link rel="stylesheet" type="text/css" href="canvas.css" />
+        <!--script type="text/javascript" src="store.js"></script-->
         <style>
 /* We have this inlined during dev b/c the stylesheet won't refresh on tablet. :-/ */
 body {
@@ -16,6 +17,7 @@ body {
     background-color: rgb(128,128,128);
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     user-select: none;
+    --animation-speed: 0.2s; /* also set in JS, as UI.animationMS */
 }
 #main, #cnv, #ui, #node-drag-overlay, #gnv {
     position: absolute;
@@ -51,6 +53,78 @@ body {
     background-color: rgba(0,0,0,0.75);
     z-index: 10001000;
 }
+
+.overlay-background.hidden > #generating-canvas {
+    filter:blur(20px);
+    transform: scale(0.9,0.9);
+    opacity: 0;
+}
+#generating-canvas {
+    position:absolute;
+    left:calc( 50vw - ( min( 100vw, 100vh ) / 6 ) );
+    top: 5rem;
+    width: calc( min( 100vw, 100vh ) / 3 );
+    height: calc( min( 100vw, 100vh ) / 3 );
+    box-sizing: border-box;
+    margin:0;
+}
+
+#error-notification-overlay .overlay-close-button:hover {
+    border: 1px solid var(--white);
+}
+#error-notification-overlay .overlay-close-button {
+    border: 1px solid transparent;
+    position:absolute;
+    left:calc( 50vw - ( min( 100vw, 100vh ) / 6 ) );
+    top: 1.5rem;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 1rem;
+    background-image: url('icon/x.png');
+    background-size:contain;
+    background-position:center;
+    background-repeat:no-repeat;
+    box-sizing: border-box;
+}
+#error-notification-overlay .overlay-error-notification {
+    position:absolute;
+    left:calc( 50vw - ( min( 100vw, 100vh ) / 6 ) );
+    top: 5rem;
+    width: calc( min( 100vw, 100vh ) / 3 );
+    height: calc( min( 100vw, 100vh ) / 6 );
+    resize: none;
+    box-sizing: border-box;
+    margin:0;
+    padding:1rem;
+    border-radius: 1rem;
+    border:1px solid var(--mid);
+    color: var(--white);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    text-align: center;
+    overflow-y: scroll;
+}
+#error-notification-overlay .overlay-accept-button:hover {
+    box-shadow: 0 0 1rem 0 var(--white);
+}
+#error-notification-overlay .overlay-accept-button {
+    position:absolute;
+    left:calc( ( 50vw + ( min( 100vw, 100vh ) / 6 ) ) - 6rem );
+    top: calc( ( min( 100vw, 100vh ) / 6 ) + 6rem );
+    width: 6rem;
+    height: 3rem;
+    border-radius: 1rem;
+    background-color: var(--high);
+    background-image: url('icon/check-black.png');
+    background-size:contain;
+    background-position:center;
+    background-repeat:no-repeat;
+    box-sizing: border-box;
+}
+
+
 #multiline-text-input-overlay .overlay-close-button:hover {
     border: 1px solid var(--white);
 }
@@ -86,13 +160,70 @@ body {
     outline:none;
     box-shadow: 0 0 1rem 0 var(--white);
 }
-#multiline-text-input-overlay .overlay-apply-button:hover {
+#multiline-text-input-overlay .overlay-apply-button:hover,
+#multiline-text-input-overlay .overlay-accept-button:hover {
     box-shadow: 0 0 1rem 0 var(--white);
 }
-#multiline-text-input-overlay .overlay-apply-button {
+#multiline-text-input-overlay .overlay-apply-button,
+#multiline-text-input-overlay .overlay-accept-button {
     position:absolute;
     left:calc( ( 50vw + ( min( 100vw, 100vh ) / 6 ) ) - 6rem );
     top: calc( ( min( 100vw, 100vh ) / 6 ) + 6rem );
+    width: 6rem;
+    height: 3rem;
+    border-radius: 1rem;
+    background-color: var(--high);
+    background-image: url('icon/check-black.png');
+    background-size:contain;
+    background-position:center;
+    background-repeat:no-repeat;
+    box-sizing: border-box;
+}
+
+
+#number-input-overlay .overlay-close-button:hover {
+    border: 1px solid var(--white);
+}
+#number-input-overlay .overlay-close-button {
+    border: 1px solid transparent;
+    position:absolute;
+    left:calc( 50vw - ( min( 100vw, 100vh ) / 6 ) );
+    top: 1.5rem;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 1rem;
+    background-image: url('icon/x.png');
+    background-size:contain;
+    background-position:center;
+    background-repeat:no-repeat;
+    box-sizing: border-box;
+}
+#number-input-overlay .overlay-number-input {
+    position:absolute;
+    left:calc( 50vw - ( min( 100vw, 100vh ) / 6 ) );
+    top: 5rem;
+    width: calc( min( 100vw, 100vh ) / 3 );
+    height: 2rem;
+    resize: none;
+    box-sizing: border-box;
+    margin:0;
+    padding:1rem;
+    border-radius: 1rem;
+    border:1px solid black;
+    background-color: var(--white);
+    text-align: center;
+}
+#number-input-overlay .overlay-number-input:focus {
+    outline:none;
+    box-shadow: 0 0 1rem 0 var(--white);
+}
+#number-input-overlay .overlay-apply-button:hover {
+    box-shadow: 0 0 1rem 0 var(--white);
+}
+#number-input-overlay .overlay-apply-button {
+    position:absolute;
+    left:calc( ( 50vw + ( min( 100vw, 100vh ) / 6 ) ) - 6rem );
+    top: 8rem;
     width: 6rem;
     height: 3rem;
     border-radius: 1rem;
@@ -618,6 +749,39 @@ body {
     opacity: 0;
     transform: scale(0.9,0.9);
 }
+#transform-tools-options-row > div {
+    position: relative;
+    z-index: 6000;
+}
+#transform-tools-options-row {
+    position:absolute;
+    left: 12.9rem;
+    width:calc( 100vw - 19.5rem );
+    height:3.5rem;
+    justify-content: center;
+    align-items: center;
+    gap:0.5rem;
+    z-index: 5000;
+}
+#transform-tools-options-row > div.hidden.animated {
+    transition:
+        opacity var(--animation-speed),
+        transform var(--animation-speed),
+        background-color var(--animation-speed),
+        border-color var(--animation-speed),
+        filter var(--animation-speed),
+        background-size var(--animation-speed),
+        top var(--animation-speed),
+        width 0s var(--animation-speed),
+        height 0s var(--animation-speed);
+    
+}
+#transform-tools-options-row > div.hidden {
+    width:1px;
+    height:1px;
+    transform: scale( 0.1, 0.1 );
+    opacity: 0;
+}
 
 
 #paint-tools-options-row.hidden {
@@ -800,7 +964,6 @@ body {
 }
 
 .animated {
-    --animation-speed: 0.2s; /* also set in JS, as UI.animationMS */
     transition:
         opacity var(--animation-speed),
         transform var(--animation-speed),
@@ -1262,6 +1425,60 @@ body {
     margin-left:-0.5rem;
 }
 
+
+.number-slider-left-arrow { background-image: url('icon/arrow-left.png'); }
+.number-slider-right-arrow { background-image: url('icon/arrow-right.png'); }
+.number-slider-left-arrow,
+.number-slider-right-arrow {
+    flex-grow: 0;
+    width:1rem;
+    height:2.5rem;
+    background-repeat: no-repeat;
+    background-size: contain;
+    background-position: center;
+}
+.number-slider-number-preview {
+    flex-grow: 1;
+}
+.number-slider {
+    position: relative;
+    flex-grow: 0;
+    width:5rem;
+    height:2.5rem;
+    background-color: var(--mid);
+    border:1px solid var(--high-mid);
+    box-sizing: border-box;
+    border-radius: 1rem;
+    line-height: 0;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    color: var(--very-dark);
+    z-index: 8000;
+}
+.number-slider-label {
+    position: absolute;
+    left:-0.33rem; top:-0.33rem;
+    background-color: var(--dark);
+    box-shadow:
+        0 0 0.5rem 0 var(--dark),
+        0 0 0.25rem 0 var(--dark),
+        0 0 0.125rem 0 var(--dark)
+        ;
+    height:1rem;
+    padding: 0 0.5rem;
+    box-sizing: border-box;
+    font-size: 0.67rem;
+    line-height: 0;
+    color:var(--white);
+    border-radius: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
 
 #undo-redo-row {
     position: absolute;
