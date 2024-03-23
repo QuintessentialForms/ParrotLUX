@@ -44,9 +44,9 @@ gnv.id = "gnv";
 let W = 0, H = 0;
 let currentImage = null,
   //currentArtCanvas = null,
-  selectedLayer = null,
-  selectedPaintLayer = null,
-  selectedGenLayer = null;
+  selectedLayer = null;
+  //selectedPaintLayer = null,
+  //selectedGenLayer = null;
 
 const demoPoints = [];
 
@@ -155,7 +155,6 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
   if( apiFlowName === null ) apiFlowName = uiSettings.defaultAPIFlowName;
 
   //create the back-end layer info
-  console.error( "On gen layer make, pull current / last used / first api flow controls" );
 
   const newLayer = {
     //layerOrder: layersStack.layers.length, //not implemented
@@ -1903,9 +1902,16 @@ Info: ${info}`;
       // if the layer has changed, reupload its canvas
       // draw the layer with a draw call (don't optimize, iterate)
       
+      gl.useProgram( glState.program );
+      gl.bindFramebuffer( gl.FRAMEBUFFER, null );
+      gl.viewport( 0, 0, gnv.width, gnv.height );
       gl.clearColor(0.26,0.26,0.26,1); //slight color to see clear effect
       gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
-      gl.useProgram( glState.program );
+      gl.disable(gl.DEPTH_TEST);
+      
+      gl.enable( gl.BLEND );
+      gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+    
       gl.bindVertexArray(glState.vao);
 
       //TODO: Here we need to collect all transforming layers, if any
@@ -2056,7 +2062,7 @@ Info: ${info}`;
         //set the layer's alpha
         gl.uniform1f( glState.alphaInputIndex, getLayerOpacity( layer ) );
         let maskVisibility = 0.0;
-        if( layer === selectedLayer && uiSettings.activeTool === "mask" && layer.maskInitialized && painter.active && painter.queue.length )
+        if( layer === selectedLayer && uiSettings.activeTool === "mask" && layer.maskInitialized )
           maskVisibility = 0.5;
         gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
         gl.uniform1f( glState.timeIndex, floatTime );
@@ -2111,6 +2117,8 @@ function setup() {
       //paperTexture = ctx.createPattern( img, "repeat" );
       //setup GL temporarily inside img onload for texture test
       setupGL( img );  
+      setupPaintGPU();
+  
     }
 
 
@@ -2210,18 +2218,20 @@ function setupGL( testImageTexture ) {
     out vec4 outColor;
     
     void main() {
-      vec4 lookup = texture(img,uv);
-      vec4 maskLookup = texture(imgMask,uv);
+      vec4 lookup = texture( img, uv );
+      vec4 maskLookup = texture( imgMask, uv );
       lookup.a *= alpha * maskLookup.a;
 
-      if( lookup.a < 0.01 ) {
-        lookup = vec4( 1.0,1.0,1.0, mask * maskLookup.a );
-      }
-
-      float onBorder = float( uv.x < borderWidth || uv.x > (1.0-borderWidth) || uv.y < borderWidth || uv.y > (1.0-borderWidth) );
       float borderShade = abs( mod( ( ( time - ( uv.x + uv.y ) ) * 0.1 / borderWidth ), 2.0 ) - 1.0 );
 
-      outColor = mix( lookup, vec4( borderShade,borderShade,borderShade,1.0 ), onBorder * borderVisibility );
+      float onBorder = float( uv.x < borderWidth || uv.x > (1.0-borderWidth) || uv.y < borderWidth || uv.y > (1.0-borderWidth) );
+
+      vec4 mainColor = mix( lookup, vec4( vec3(borderShade), 1.0 ), onBorder * borderVisibility );
+      vec4 maskColor = vec4( mix( vec3( 1.0 ), vec3( borderShade ), 0.5 ), mask * maskLookup.a );
+
+      //draw the mask under our mainColor, and with the mask 50% opacity, still see the layer beneath
+      outColor = vec4( mix( mix( maskColor.rgb, mainColor.rgb, ( 1.0 - maskColor.a ) ), mainColor.rgb, mainColor.a ), clamp( mainColor.a + maskColor.a, 0.0, 1.0 ) );
+      //outColor = vec4( maskColor.rgb, maskColor.a * ( 1.0 - mainColor.a ) ) + mainColor
 
     }`;
 
@@ -2362,7 +2372,7 @@ const nonSavedSettingsPaths = [
 
 let uiSettings = {
 
-  gpuPaint: false,
+  gpuPaint: true,
 
   maxUndoSteps: 20,
   defaultLayerWidth: 1024,
@@ -2394,7 +2404,7 @@ let uiSettings = {
           brushTiltMinAngle: 0.25, //~23 degrees
           brushSize: 14,
           minBrushSize: 2,
-          maxBrushSize: 16,
+          maxBrushSize: 256,
           brushOpacity: 1,
           brushBlur: 0,
           minBrushBlur: 0,
@@ -2426,17 +2436,21 @@ let uiSettings = {
           },
         },
         "blend": {
-          blendBlur: 0,
+          /* blendBlur: 0,
           reblendSpacing: 0.05,
-          reblendAlpha: 0.1,
+          reblendAlpha: 0.1, */
+
+          blendPull: (()=>(console.error("UI needs to expose blend pull w/ non-linear function."),0.95))(), //0.99 is a decently long pull, this is not linear
+          blendAlpha: 0, //blendAlpha is a mix ratio. 0=pure pigment, 1=pure blend
         },
         "erase": {
-
+          eraseAmount: 0,
         }
       },
     },
     "mask": {
       maskColor: "rgb(255,255,255)", //might make configurable or change eventually, but not implemented yet
+      maskRGBFloat: [1,1,1],
     },
     "transform": {
       current: true,
@@ -2778,7 +2792,7 @@ function setupUI() {
               return;
             }
             //if no layer selected, unavailable
-            if( ! selectedLayer?.layerType === "paint" ) {
+            if( selectedLayer?.layerType !== "paint" ) {
               floodFillButton.classList.add( "unavailable" );
               floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool [Select paint layer to enable]";
               floodFillButton.classList.remove( "on" );
@@ -2928,9 +2942,12 @@ function setupUI() {
       UI.registerElement(
         paintModeButton,
         {
-          ondrag: () => uiSettings.toolsSettings.paint.setMode( "brush" ),
+          ondrag: () => {
+            uiSettings.toolsSettings.paint.setMode( "brush" );
+            uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 0;
+          },
           updateContext: () => {
-            if( uiSettings.toolsSettings.paint.mode === "brush" ) paintModeButton.classList.add( "on" );
+            if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 0 ) paintModeButton.classList.add( "on" );
             else paintModeButton.classList.remove( "on" );
           }
         },
@@ -2939,7 +2956,7 @@ function setupUI() {
       paintToolsOptionsRow.appendChild( paintModeButton );
     }
     //the blend button
-    {
+    /* {
       const blendMode = document.createElement( "div" );
       //brushSelectBrowseButton.classList.add( "asset-browser-button" );
       blendMode.classList.add( "paint-tools-options-blend-mode", "round-toggle", "on" );
@@ -2955,7 +2972,7 @@ function setupUI() {
         { tooltip: [ "Blend Mode", "below", "to-right-of-center" ], zIndex:10000, }
       );
       paintToolsOptionsRow.appendChild( blendMode );
-    }
+    } */
     //the erase button
     {
       const eraseMode = document.createElement( "div" );
@@ -2964,9 +2981,13 @@ function setupUI() {
       UI.registerElement(
         eraseMode,
         {
-          ondrag: () => uiSettings.toolsSettings.paint.setMode( "erase" ),
+          ondrag: () => {
+            //uiSettings.toolsSettings.paint.setMode( "erase" );
+            uiSettings.toolsSettings.paint.setMode( "brush" );
+            uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 1;
+          },
           updateContext: () => {
-            if( uiSettings.toolsSettings.paint.mode === "erase" ) eraseMode.classList.add( "on" );
+            if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 1 ) eraseMode.classList.add( "on" );
             else eraseMode.classList.remove( "on" );
           }
         },
@@ -3141,6 +3162,64 @@ function setupUI() {
       );
       paintToolsOptionsRow.appendChild( retractableOpacitySlider );
     }
+
+    //the retractable blend amount slider
+    {
+      const retractableBlendnessSlider = document.createElement( "div" );
+      retractableBlendnessSlider.classList.add( "paint-tools-options-retractable-slider", "paint-tools-options-retractable-blendness-slider", "animated" );
+      /* const previewCore = retractableBlendnessSlider.appendChild( document.createElement( "div" ) );
+      previewCore.classList.add( "paint-tools-options-brush-blendness-preview-core" ); */
+      const previewNumberBlend = retractableBlendnessSlider.appendChild( document.createElement( "div" ) );
+      previewNumberBlend.classList.add( "paint-tools-options-preview-number", "animated" );
+      previewNumberBlend.style.opacity = 0;
+      
+      const updateBrushBlendnessPreview = ( brushBlendness = null ) => {
+        retractableBlendnessSlider.classList.remove( "hovering" );
+        const settings = uiSettings.toolsSettings.paint.modeSettings;
+        if( ! brushBlendness ) {
+          brushBlendness = settings.blend.blendAlpha;
+        }
+        //update preview number
+        let number = (parseInt( brushBlendness * 10 ) / 10).toString();
+        if( number.indexOf( "." ) === -1 ) number += ".0";
+        //get size percentage
+        const rate = brushBlendness;
+        const percent = parseInt( 100 * rate );
+        previewNumberBlend.textContent = percent + "%";
+        //previewCore.style.opacity = rate;
+      }
+      updateBrushBlendnessPreview();
+      let startingBrushBlendness,
+        adjustmentScale;
+      UI.registerElement(
+        retractableBlendnessSlider,
+        {
+          ondrag: ({ rect, start, current, ending, starting, element }) => {
+            const settings = uiSettings.toolsSettings.paint.modeSettings.blend;
+            if( starting ) {
+              previewNumberBlend.style.opacity = 1;
+              retractableBlendnessSlider.querySelector( ".tooltip" ).style.opacity = 0;
+              startingBrushBlendness = settings.blendAlpha;
+              adjustmentScale = 1 / 300; //300 pixel screen-traverse
+            }
+            const dx =  current.x - start.x;
+            const adjustment = dx * adjustmentScale;
+            let brushBlendness = startingBrushBlendness + adjustment;
+            brushBlendness = Math.max( 0, Math.min( 1, brushBlendness ) );
+            settings.blendAlpha = brushBlendness;
+            updateBrushBlendnessPreview( brushBlendness );
+            if( ending ) {
+              previewNumberBlend.style.opacity = 0;
+              retractableBlendnessSlider.querySelector( ".tooltip" ).style = "";
+            }
+          },
+          updateContext: () => updateBrushBlendnessPreview()
+        },
+        { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Blend Amount <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
+      );
+      paintToolsOptionsRow.appendChild( retractableBlendnessSlider );
+    }
+
     //the colorwell
     {
       const colorWell = document.createElement( "div" );
@@ -5244,7 +5323,8 @@ const startHandler = p => {
         }
         else if( p.pointerType !== "touch" && selectedLayer &&
           ( uiSettings.activeTool === "paint" || uiSettings.activeTool === "mask" ) ) {
-          beginPaint();
+          if( uiSettings.gpuPaint ) beginPaintGPU( selectedLayer );
+          else beginPaint();
         }
     }
     else {
@@ -5412,7 +5492,8 @@ const moveHandler = ( p, pseudo = false ) => {
             mul3x1( _inverter , point , point );
 
             painter.queue.push( point );
-            applyPaintStroke( painter.queue, layersStack.layers[0] );
+            if( uiSettings.gpuPaint ) paintGPU( painter.queue, selectedLayer )
+            else applyPaintStroke( painter.queue, layersStack.layers[0] );
         }
     }
     
@@ -5517,7 +5598,8 @@ const stopHandler = p => {
         }
         if( painter.active === true ) {
             painter.active = false;
-            finalizePaint( layersStack.layers[ 0 ], selectedLayer );
+            if( uiSettings.gpuPaint ) finalizePaintGPU( selectedLayer );
+            else finalizePaint( layersStack.layers[ 0 ], selectedLayer );
             painter.queue.length = 0;
         }
     }
@@ -5755,38 +5837,70 @@ function transformLayerPoint( p ) {
 const paintGPUResources = {
 
   brushTipTexture: null,
+  brushTipCanvas: document.createElement( "canvas" ),
+
+  blendSourceTexture: null, //this is a copy of the target layer
+  blendCompositeTexture: null, //this is a clear same-dim as the target layer
+
   renderTexture: null,
+  depthTexture: null,
   framebuffer: null,
 
+  //paint program components
   program: null,
+  vao: null,
   vertices: null,
   vertexBuffer: null,
-
-  paintColorIndex: null,
-  alphaIndex: null,
+  xyuvInputIndex: null,
+  rgbas: null,
+  rgbaBuffer: null,
+  rgbaInputIndex: null,
   brushTipIndex: null,
   blendSourceIndex: null,
+  blendCompositeIndex: null,
+  blendAlphaIndex: null,
+  eraseAmountIndex: null,
+  
+  //blend program components
+  blendProgram: null,
+  blendVao: null,
+  blendBrushTipIndex: null,
+  blendBlendSourceIndex: null,
+  blendCompositeIndex: null,
+  blendCompositeFramebuffer: null,
+  blendCompositeDepthTexture: null,
+  //blendSourceXYAs: null, //disposable array (not optimal, I know)
+  blendSourceXYABuffer: null,
+  blendSourceXYAIndex: null,
+  //blendDestXYUVs: null, //disposable array
+  blendDestXYUVBuffer: null,
+  blendDestXYUVIndex: null,
 
   modRect: {x:0,y:0,x2:0,y2:0,w:0,h:0},
-  //firstPaint: false,
   blendDistanceTraveled: 0,
   brushDistanceTraveled: 0,
+  pointHistory: [],
 
   ready: false,
+  starting: false,
+
 }
 function setupPaintGPU() {
   //set up our shaders and renderbuffer
   //push some code to the GPU
   const vertexShaderSource = `#version 300 es
     in vec4 xyuv;
+    in vec4 rgba;
 
     out vec2 brushTipUV;
     out vec2 blendUV;
+    out vec4 paintColor;
     
     void main() {
       brushTipUV = xyuv.zw;
       blendUV = xyuv.xy;
-      gl_Position = vec4(xyuv.xy,0.5,1);
+      paintColor = rgba;
+      gl_Position = vec4(xyuv.xy,rgba.a,1);
     }`;
   //gl_FragCoord: Represents the current fragment's window-relative coordinates and depth
   //gl_FrontFacing: Indicates if the fragment belongs to a front-facing geometric primitive
@@ -5795,27 +5909,55 @@ function setupPaintGPU() {
   const fragmentShaderSource = `#version 300 es
     precision highp float;
 
-    uniform vec3 paintColor;
-    uniform float alpha;
-    
     uniform sampler2D brushTip;
     uniform sampler2D blendSource;
+    uniform sampler2D blendComposite;
+
+    uniform float blendAlpha; //blendAlpha is a mixture ratio. 0=pure pigment; 1=pure blend
+    uniform float eraseAmount;
 
     in vec2 brushTipUV;
     in vec2 blendUV;
+    in vec4 paintColor; //meanwhile, paint alpha (brush opacity) controls how much we change our base canvas
 
     out vec4 outColor;
     
     void main() {
 
-      vec4 brushTipLookup = texture(brushTip,brushTipUV);
-      vec4 blendLookup = texture(blendSource,blendUV);
+      vec4 brushTipLookup = texture( brushTip, brushTipUV );
+      vec4 blendSourceLookup = texture( blendSource, ( blendUV + 1.0 ) / 2.0 );
+      vec4 blendCompositeLookup = texture( blendComposite, ( blendUV + 1.0 ) / 2.0 );
 
-      if( brushTipLookup.a === 0 ) {
-        discard;
-      }
+      if( brushTipLookup.a == 0.0 ) { discard; }
 
-      outColor = vec4( paintColor, alpha );
+      //let's mix the paint and the blend composite
+      vec4 mixedMedia = vec4(
+        sqrt( ( ( 1.0 - blendAlpha ) * pow( paintColor.r, 2.0 ) ) + ( blendAlpha * pow( blendCompositeLookup.r, 2.0 ) ) ),
+        sqrt( ( ( 1.0 - blendAlpha ) * pow( paintColor.g, 2.0 ) ) + ( blendAlpha * pow( blendCompositeLookup.g, 2.0 ) ) ),
+        sqrt( ( ( 1.0 - blendAlpha ) * pow( paintColor.b, 2.0 ) ) + ( blendAlpha * pow( blendCompositeLookup.b, 2.0 ) ) ),
+        ( ( 1.0 - blendAlpha ) * paintColor.a ) + ( blendAlpha * blendCompositeLookup.a )
+      );
+     
+
+      //pretty sure we want the mixed alpha here
+      float alpha = mixedMedia.a * brushTipLookup.a;
+      if( alpha == 0.0 ) { discard; }
+
+      //What if we're erasing? eraseAmount = 0, behave as normal. eraseAmount = 1, erase without polluting color
+      
+      gl_FragDepth = alpha;
+
+      //mix the blend source with the paint via the alpha
+      vec3 mixedPaint = vec3(
+        sqrt( ( ( 1.0 - alpha ) * pow( blendSourceLookup.r, 2.0 ) ) + ( alpha * pow( mixedMedia.r, 2.0 ) ) ),
+        sqrt( ( ( 1.0 - alpha ) * pow( blendSourceLookup.g, 2.0 ) ) + ( alpha * pow( mixedMedia.g, 2.0 ) ) ),
+        sqrt( ( ( 1.0 - alpha ) * pow( blendSourceLookup.b, 2.0 ) ) + ( alpha * pow( mixedMedia.b, 2.0 ) ) )
+      );
+
+      //if eraseAmount = 0, add alphas. If eraseAmount = 1, destination alpha = blendSourceLookup.a - alpha. :-)
+      float destinationAlpha = mix( clamp( blendSourceLookup.a + alpha, 0.0, 1.0 ), clamp( blendSourceLookup.a - alpha, 0.0, 1.0 ), eraseAmount );
+
+      outColor = vec4( mix( mixedPaint.rgb, blendSourceLookup.rgb, eraseAmount ), destinationAlpha );
       
     }`;
 
@@ -5832,7 +5974,12 @@ function setupPaintGPU() {
     gl.linkProgram(program);
     paintGPUResources.program = program;
 
-    console.log(gl.getProgramInfoLog(program));
+    //console.log( "SetupPaintGPU shader compilation log: ", gl.getProgramInfoLog(program) );
+
+    //set up a data-descriptor
+    const vao = gl.createVertexArray();
+    paintGPUResources.vao = vao;
+    gl.bindVertexArray(paintGPUResources.vao);
 
     //push some vertex and UV data to the GPU; will update live
     const xyuvs = [
@@ -5853,16 +6000,6 @@ function setupPaintGPU() {
     gl.bindBuffer(gl.ARRAY_BUFFER,paintGPUResources.vertexBuffer);
     gl.bufferData( gl.ARRAY_BUFFER, new Float32Array(paintGPUResources.vertices), gl.STREAM_DRAW );
 
-    paintGPUResources.paintColorIndex = gl.getUniformLocation( program, "paintColor" );
-    paintGPUResources.alphaIndex = gl.getUniformLocation( program, "alpha" );
-    paintGPUResources.brushTipIndex = gl.getUniformLocation( glState.program, "brushTip" );
-    paintGPUResources.blendSourceIndex = gl.getUniformLocation( glState.program, "blendSource" );
-
-    //set up a data-descriptor
-    const vao = gl.createVertexArray();
-    paintGPUResources.vao = vao;
-    gl.bindVertexArray(paintGPUResources.vao);
-
     //push a description of our vertex data's structure
     gl.enableVertexAttribArray( paintGPUResources.xyuvInputIndex );
     {
@@ -5870,74 +6007,423 @@ function setupPaintGPU() {
       gl.vertexAttribPointer( paintGPUResources.xyuvInputIndex, size, dType, normalize, stride, offset );
     }
 
-    paintGPUResources.brushTipTexture = gl.createTexture();
+    //this is color and opacity data (per-face color isn't entirely relevant ATM)
+    const rgbas = [
+      //top-left triangle
+      0,0, 0,1,
+      0,0, 0,1,
+      0,0, 0,1,
+      //bottom-right triangle
+      0,0, 0,1,
+      0,0, 0,1,
+      0,0, 0,1,
+    ];
+    {
+      const rgbaBuffer = gl.createBuffer();
+      const rgbaInputIndex = gl.getAttribLocation( program, "rgba" );
+      paintGPUResources.rgbaInputIndex = rgbaInputIndex;
+      paintGPUResources.rgbaBuffer = rgbaBuffer;
+      paintGPUResources.rgbas = rgbas;
+      gl.bindBuffer(gl.ARRAY_BUFFER,paintGPUResources.rgbaBuffer);
+      gl.bufferData( gl.ARRAY_BUFFER, new Float32Array(paintGPUResources.rgbas), gl.STREAM_DRAW );
+  
+      //push a description of our vertex data's structure
+      gl.enableVertexAttribArray( paintGPUResources.rgbaInputIndex );
+      {
+        const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+        gl.vertexAttribPointer( paintGPUResources.rgbaInputIndex, size, dType, normalize, stride, offset );
+      }
+    }
 
-    paintGPUResources.renderTexture = gl.createTexture();
+    //paintGPUResources.paintColorIndex = gl.getUniformLocation( program, "paintColor" );
+    //paintGPUResources.alphaIndex = gl.getUniformLocation( program, "alpha" );
+    paintGPUResources.brushTipIndex = gl.getUniformLocation( paintGPUResources.program, "brushTip" );
+    paintGPUResources.blendSourceIndex = gl.getUniformLocation( paintGPUResources.program, "blendSource" );
+    paintGPUResources.blendCompositeIndex = gl.getUniformLocation( paintGPUResources.program, "blendComposite" );
+    paintGPUResources.blendAlphaIndex = gl.getUniformLocation( paintGPUResources.program, "blendAlpha" );
+    paintGPUResources.eraseAmountIndex = gl.getUniformLocation( paintGPUResources.program, "eraseAmount" );
+
+
+    paintGPUResources.brushTipTexture = gl.createTexture();
+    paintGPUResources.blendSourceTexture = gl.createTexture();
+    paintGPUResources.blendCompositeTexture = gl.createTexture();
 
     const framebuffer = gl.createFramebuffer();
     paintGPUResources.framebuffer = framebuffer;
     gl.bindFramebuffer(gl.FRAMEBUFFER, paintGPUResources.framebuffer);
      
-    // attach the texture as the first color attachment
-    const attachmentPoint = gl.COLOR_ATTACHMENT0;
-    const level = 0;
-    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, paintGPUResources.renderTexture, level);
+    //set up the blank renderbuffer texture for rendering
+    //Isn't this never used??? I'm rendering directly to the target layer.
+    {
+      paintGPUResources.renderTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.renderTexture );
+      const level = 0;
+      const internalFormat = gl.RGBA;
+      const layerWidth = 64;
+      const layerHeight = 64;
+      const border = 0;
+      const format = gl.RGBA;
+      const type = gl.UNSIGNED_BYTE;
+      const data = null;
+      gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, layerWidth, layerHeight, border, format, type, data);
+     
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      // attach the texture as the first color attachment
+      const attachmentPoint = gl.COLOR_ATTACHMENT0;
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, paintGPUResources.renderTexture, level);
+  
+    }
+
+    //set up the depth texture
+    {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, paintGPUResources.framebuffer);
+      paintGPUResources.depthTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.depthTexture );
+      // define size and format of level 0
+      const level = 0;
+      const internalFormat = gl.DEPTH_COMPONENT24;
+      const border = 0;
+      const format = gl.DEPTH_COMPONENT;
+      const type = gl.UNSIGNED_INT;
+      const data = null;
+      gl.texImage2D(gl.TEXTURE_2D, level, internalFormat,
+                    64, 64, border,
+                    format, type, data);
+
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      //attach to framebuffer
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, paintGPUResources.depthTexture, level);
+    }
+
+
+    //----------------------------------------------------------------------------------------------------------
+    //set up the blend program
+    paintGPUResources.blendProgram = gl.createProgram();
+
+    {
+      const blendVertexShaderSource = `#version 300 es
+      in vec3 sourceXYA;
+      in vec4 destXYUV;
+  
+      out vec2 brushTipUV;
+      out vec3 blendSourceXYA;
+      
+      void main() {
+        brushTipUV = destXYUV.zw;
+        blendSourceXYA = sourceXYA;
+        gl_Position = vec4(destXYUV.xy,0.5,1); //not sure about depth yet
+      }`;
+      const blendFragmentShaderSource = `#version 300 es
+      precision highp float;
+  
+      uniform sampler2D brushTip;
+      uniform sampler2D blendSource;
+  
+      in vec2 brushTipUV;
+      in vec3 blendSourceXYA;
+  
+      out vec4 outColor;
+      
+      void main() {
+  
+        vec4 brushTipLookup = texture(brushTip,brushTipUV);
+        vec4 blendSourceLookup = texture(blendSource, ( blendSourceXYA.xy + 1.0 ) / 2.0 );
+  
+        float alpha = blendSourceLookup.a * blendSourceXYA.z * brushTipLookup.a;
+  
+        if( alpha == 0.0 ) { discard; }
+        
+        //gl_FragDepth = alpha; //not sure about depth
+
+        //just output the lookedup source, right? We're accumulating it... Which does not bode well for long blends
+        //I wonder if I can make this a high-precision texture and downgrade it in the paint lookup
+        outColor = vec4( blendSourceLookup.rgb, alpha );
+        
+      }`;
+
+      const blendVertexShader = gl.createShader( gl.VERTEX_SHADER );
+      gl.shaderSource( blendVertexShader, blendVertexShaderSource );
+      gl.compileShader( blendVertexShader );
+      const fragmentShader = gl.createShader( gl.FRAGMENT_SHADER );
+      gl.shaderSource( fragmentShader, blendFragmentShaderSource );
+      gl.compileShader( fragmentShader );
+  
+      gl.attachShader( paintGPUResources.blendProgram, blendVertexShader );
+      gl.attachShader( paintGPUResources.blendProgram, fragmentShader );
+      gl.linkProgram( paintGPUResources.blendProgram );
+  
+      //console.log( "SetupPaintGPU blend shader compilation log: ", gl.getProgramInfoLog(program) );
+
+      //set up a data-descriptor
+      const vao = gl.createVertexArray();
+      paintGPUResources.blendVao = vao;
+      gl.bindVertexArray(paintGPUResources.blendVao);
+      //push some vertex and UV data to the GPU; will update live
+      const blendXYAs = [
+        //top-left triangle
+        0,0, 1,
+        0,0, 1,
+        0,0, 1,
+        //bottom-right triangle
+        0,0, 1,
+        0,0, 1,
+        0,0, 1,
+      ];
+      paintGPUResources.blendSourceXYAIndex = gl.getAttribLocation( paintGPUResources.blendProgram, "sourceXYA" );
+      paintGPUResources.blendSourceXYABuffer = gl.createBuffer();
+      gl.bindBuffer( gl.ARRAY_BUFFER, paintGPUResources.blendSourceXYABuffer );
+      gl.bufferData( gl.ARRAY_BUFFER, new Float32Array(blendXYAs), gl.STREAM_DRAW );
+  
+      //push a description of our vertex data's structure
+      gl.enableVertexAttribArray( paintGPUResources.blendSourceXYAIndex );
+      {
+        const size = 3, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+        gl.vertexAttribPointer( paintGPUResources.blendSourceXYAIndex, size, dType, normalize, stride, offset );
+      }
+  
+      //this is color and opacity data (per-face color isn't entirely relevant ATM)
+      const destXYUVs = [
+        //top-left triangle
+        0,0, 0,1,
+        0,0, 0,1,
+        0,0, 0,1,
+        //bottom-right triangle
+        0,0, 0,1,
+        0,0, 0,1,
+        0,0, 0,1,
+      ];
+      {
+        paintGPUResources.blendDestXYUVIndex = gl.getAttribLocation( paintGPUResources.blendProgram, "destXYUV" );
+        paintGPUResources.blendDestXYUVBuffer = gl.createBuffer();
+        gl.bindBuffer( gl.ARRAY_BUFFER, paintGPUResources.blendDestXYUVBuffer );
+        gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( destXYUVs ), gl.STREAM_DRAW );
+    
+        //push a description of our vertex data's structure
+        gl.enableVertexAttribArray( paintGPUResources.blendDestXYUVIndex );
+        {
+          const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+          gl.vertexAttribPointer( paintGPUResources.blendDestXYUVIndex, size, dType, normalize, stride, offset );
+        }
+      }
+
+      paintGPUResources.blendBrushTipIndex = gl.getUniformLocation( paintGPUResources.blendProgram, "brushTip" );
+      paintGPUResources.blendBlendSourceIndex = gl.getUniformLocation( paintGPUResources.blendProgram, "blendSource" );
+      
+    }
+
+    //create the compositing framebuffer
+    const blendCompositeFramebuffer = gl.createFramebuffer();
+    paintGPUResources.blendCompositeFramebuffer = blendCompositeFramebuffer;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, paintGPUResources.blendCompositeFramebuffer);
+
+    //we're rendering to the blendCompositeTexture
+    {
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.blendCompositeTexture );
+      const level = 0;
+      const internalFormat = gl.RGBA;
+      const layerWidth = 64;
+      const layerHeight = 64;
+      const border = 0;
+      const format = gl.RGBA;
+      const type = gl.UNSIGNED_BYTE;
+      const data = null;
+      gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, layerWidth, layerHeight, border, format, type, data);
+     
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      // attach the texture as the first color attachment
+      const attachmentPoint = gl.COLOR_ATTACHMENT0;
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, paintGPUResources.blendCompositeTexture, level);
+    }
+
+    //set up the depth texture for it
+    {
+      paintGPUResources.blendCompositeDepthTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.blendCompositeDepthTexture );
+      // define size and format of level 0
+      const level = 0;
+      const internalFormat = gl.DEPTH_COMPONENT24;
+      const border = 0;
+      const format = gl.DEPTH_COMPONENT;
+      const type = gl.UNSIGNED_INT;
+      const data = null;
+      gl.texImage2D(gl.TEXTURE_2D, level, internalFormat,
+                    64, 64, border,
+                    format, type, data);
+
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      //attach to framebuffer
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, paintGPUResources.blendCompositeDepthTexture, level);
+    }
 
 }
-function beginPaintGPU() {
+function beginPaintGPU( layer ) {
   //set up GL textures and zero our distances traveled
   //set up the framebuffer/renderbuffer's size to match our destination canvas
 
   //if we're painting, blending, or erasing;
   //  always copy our source to our preview (and hide our source in loop draw)
 
-  const layer = selectedLayer;
+  //const layer = selectedLayer;
 
   gl.bindVertexArray(paintGPUResources.vao);
 
-  //configure our destination
+  if( uiSettings.activeTool === "mask" ) {
+    if( layer.maskInitialized === false ) {
+      //initialize the selected layer's mask if necessary
+      if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount < 1 ) {
+        //if we're starting painting with a positive stroke, clear the mask
+        initializeLayerMask( layer, "transparent" );
+      }
+      if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 1 ) {
+        //if we're starting with erase, solidify the mask
+        initializeLayerMask( layer, "opaque" );
+      }
+    }
+  }
+  //
   const { w, h } = layer;
 
-  gl.bindTexture(gl.TEXTURE_2D, paintGPUResources.renderTexture);
-   
+  //copy our paint layer to the blend source texture
   {
+
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.blendSourceTexture );
+    const level = 0;
+    const internalFormat = gl.RGBA;
+    //const border = 0;
+    const format = gl.RGBA;
+    const type = gl.UNSIGNED_BYTE;
+    //const data = null;
+    let blendImageSource; //blend beneath the mask is fine
+    if( uiSettings.activeTool === "paint" ) blendImageSource = layer.canvas;
+    if( uiSettings.activeTool === "mask" ) blendImageSource = layer.maskCanvas;
+
+    //gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, w, h, border, format, type, data);
+    gl.texImage2D( gl.TEXTURE_2D, level, internalFormat, format, type, blendImageSource );
+   
+    //no mipmaps (for now? could actually use for blur later probably)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+
+  //copy our paint layer's dimensions blank to the blend composite texture
+  {
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.blendCompositeTexture );
     const level = 0;
     const internalFormat = gl.RGBA;
     const border = 0;
     const format = gl.RGBA;
     const type = gl.UNSIGNED_BYTE;
     const data = null;
+    //const image = layer.canvas; //blend beneath the mask is fine
+
     gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, w, h, border, format, type, data);
+    //gl.texImage2D( gl.TEXTURE_2D, level, internalFormat, format, type, image );
    
+    //no mipmaps (for now? could actually use for blur later probably)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
-  //copy our source texture to our paint texture
-  {
-    console.error( "TODO: BeginPaint Copy source layer texture to paint texture, maybe with draw op, maybe with blit")
-  }
-
-  //bind our framebuffer, and reattach the changed texture (no idea if this is necessary on texture reconfig)
+  //set the dimensions of our depthtexture to match the layer
   {
     gl.bindFramebuffer(gl.FRAMEBUFFER, paintGPUResources.framebuffer);
-     
-    // attach the texture as the first color attachment
-    const attachmentPoint = gl.COLOR_ATTACHMENT0;
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.depthTexture );
+    // define size and format of level 0
     const level = 0;
-    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, paintGPUResources.renderTexture, level);
+    const internalFormat = gl.DEPTH_COMPONENT24;
+    const border = 0;
+    const format = gl.DEPTH_COMPONENT;
+    const type = gl.UNSIGNED_INT;
+    const data = null;
+    gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, w, h, border, format, type, data );
+
+    //set filtering
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    //attach to framebuffer
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, paintGPUResources.depthTexture, level);
+    //gl.clearDepth( 0.0 );
+    //gl.clear( gl.DEPTH_BUFFER_BIT );
+    paintGPUResources.starting = true;
   }
 
+  //set the dimensions of our blendcomposite depthtexture to match the layer
+  {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, paintGPUResources.blendCompositeFramebuffer);
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.blendCompositeDepthTexture );
+    // define size and format of level 0
+    const level = 0;
+    const internalFormat = gl.DEPTH_COMPONENT24;
+    const border = 0;
+    const format = gl.DEPTH_COMPONENT;
+    const type = gl.UNSIGNED_INT;
+    const data = null;
+    gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, w, h, border, format, type, data );
+
+    //set filtering
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    //attach to framebuffer
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, paintGPUResources.blendCompositeDepthTexture, level);
+    //gl.clearDepth( 0.0 );
+    //gl.clear( gl.DEPTH_BUFFER_BIT );
+    paintGPUResources.starting = true;
+  }
+
+
   //upload our brush tip texture
+  //TODO: Switch this to a soft-drawn canvas
   const brushTipImage = uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages[ 0 ];
+  const brushTipCanvas = paintGPUResources.brushTipCanvas;
+  {
+    const { brushBlur, brushSize } = uiSettings.toolsSettings.paint.modeSettings.all;
+    const blur = brushBlur * brushSize;
+    let w = brushTipCanvas.width = brushSize + 2 * blur;
+    let h = brushTipCanvas.height = brushSize * brushTipImage.height / brushTipImage.width + 2 * blur;
+    const btx = brushTipCanvas.getContext( "2d" );
+    btx.save();
+    btx.clearRect( 0, 0, w, h );
+    btx.filter = "blur(" + blur + "px)";
+    btx.drawImage( brushTipImage, blur, blur, brushSize, brushSize * brushTipImage.height / brushTipImage.width );
+    btx.restore();
+  }
   gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.brushTipTexture );
   {
     const mipLevel = 0,
     internalFormat = gl.RGBA,
     srcFormat = gl.RGBA,
     srcType = gl.UNSIGNED_BYTE;
-    gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, brushTipImage );
+    gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, brushTipCanvas );
+
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
   //reset our modrect
@@ -5950,88 +6436,556 @@ function beginPaintGPU() {
   modRect.w = 0;
   modRect.h = 0;
 
+  //reset and activate the painter
+  painter.queue.length = 0;
+  painter.active = true;
+
+  //reset our distance traveled
+  paintGPUResources.brushDistanceTraveled = 0;
+
+  //reset our point history
+  paintGPUResources.pointHistory.length = 0;
+
 }
-function paintGPU( points ) {
-  //compute the vertices of our paint rects, tracking them in modrect
-  //gl draw them to the framebuffer/renderbuffer
-  //the shader matters
+function paintGPU( points, layer ) {
 
-  const layer = selectedLayer;
+  if( points.length < 3 ) return; //spline interpolating, minimum 3
 
-  //vertex array buffer (I'm still very unclear on what this does. What general info does it bind, exactly?)
-  gl.bindVertexArray(paintGPUResources.vao);
+  //const layer = selectedLayer;
 
-  //bind the paint framebuffer
-  gl.bindFramebuffer(gl.FRAMEBUFFER, paintGPUResources.framebuffer);
+  const settings = uiSettings.toolsSettings.paint.modeSettings;
+  const { brushTipsImages, brushAspectRatio, brushTiltScale, brushTiltMinAngle, brushSize, brushOpacity, brushBlur, brushSpacing } = settings.all;
+  const colorRGB = settings.brush.colorModes[ settings.brush.colorMode ].getRGBFloat();
+  const { blendBlur, reblendSpacing, reblendAlpha } = settings.blend;
+  const { blendPull, blendAlpha } = settings.blend;
+  const { eraseAmount } = settings.erase;
+  const { modRect } = paintGPUResources;
+
+  const scaledBrushSize = brushSize * 1;
+
+  //const reblendLength = reblendSpacing * scaledBrushSize;
+
+  let [refX,refY,ref_,refPressure,refAltitudeAngle,refAzimuthAngle] = points[ points.length-3 ],
+    [bx,by,b_,bPressure,bAltitudeAngle,bAzimuthAngle] = points[ points.length-1 ],
+    [ax,ay,a_,aPressure,aAltitudeAngle,aAzimuthAngle] = points[ points.length-2 ];
+
+  if( refPressure === bPressure && bPressure === aPressure && aPressure === 0.5 ) {
+    //iffy pressure not supported signature (hopefully this doesn't bug anything out...)
+    aAltitudeAngle = bAltitudeAngle = refAltitudeAngle = aAzimuthAngle = bAzimuthAngle = refAzimuthAngle = 0;
+    aPressure = bPressure = refPressure = 1;
+  }
+  
+  if( bPressure === 0 ) return; //A stroke can't end on a zero-alpha. It'll clip the paint beneath.
+
+  //transform our basis points  
+  getTransform();
+
+  let [canvasOriginX,canvasOriginY] = layer.topLeft,
+    [xLegX,xLegY] = layer.topRight,
+    [yLegX,yLegY] = layer.bottomLeft;
+  xLegX -= canvasOriginX; xLegY -= canvasOriginY;
+  yLegX -= canvasOriginX; yLegY -= canvasOriginY;
+  const lengthXLeg = Math.sqrt( xLegX*xLegX + xLegY*xLegY ),
+    lengthYLeg = Math.sqrt( yLegX*yLegX + yLegY*yLegY );
+  xLegX /= lengthXLeg; xLegY /= lengthXLeg;
+  yLegX /= lengthYLeg; yLegY /= lengthYLeg;
+
+  let [globalTransformAx,globalTransformAy] = [ax,ay],
+    [globalTransformBx,globalTransformBy] = [bx,by],
+    [globalTransformRefx,globalTransformRefy] = [refX,refY];
+  //we have points in the same global coordinate system as our canvas.
+
+  //transform from canvas origin
+  globalTransformAx -= canvasOriginX;
+  globalTransformAy -= canvasOriginY;
+  globalTransformBx -= canvasOriginX;
+  globalTransformBy -= canvasOriginY;
+  globalTransformRefx -= canvasOriginX;
+  globalTransformRefy -= canvasOriginY;
+
+  //cast to canvas space by projecting on legs
+  let canvasTransformAx = globalTransformAx*xLegX + globalTransformAy*xLegY,
+    canvasTransformAy = globalTransformAx*yLegX + globalTransformAy*yLegY;
+  canvasTransformAx *= layer.w / lengthXLeg;
+  canvasTransformAy *= layer.h / lengthYLeg;
+  let canvasTransformBx = globalTransformBx*xLegX + globalTransformBy*xLegY,
+    canvasTransformBy = globalTransformBx*yLegX + globalTransformBy*yLegY;
+  canvasTransformBx *= layer.w / lengthXLeg;
+  canvasTransformBy *= layer.h / lengthYLeg;
+  let canvasTransformRefx = globalTransformRefx*xLegX + globalTransformRefy*xLegY,
+    canvasTransformRefy = globalTransformRefx*yLegX + globalTransformRefy*yLegY;
+  canvasTransformRefx *= layer.w / lengthXLeg;
+  canvasTransformRefy *= layer.h / lengthYLeg;
+
+  const pixelSpacing = Math.max( 1, brushSpacing * scaledBrushSize );
+  //this lineLength is no longer accurate because of our spline interpolation tho...
+  const lineLength = Math.max( 1, parseInt( Math.sqrt( (canvasTransformAx-canvasTransformBx)**2 + (canvasTransformAy-canvasTransformBy)**2 ) / pixelSpacing ) );
+
+  //Here, we would reblend in the CPU format, but that's a separate draw call on the same set of verts, so it moves down the line
+
+  paintGPUResources.brushDistanceTraveled += lineLength;
+  
+  if( paintGPUResources.brushDistanceTraveled < pixelSpacing ) {
+    //No paint yet. This is important; we're still wrestling with alpha-accumulation even on the GPU.
+    //(And we should be. That's what physical media does. IP's no-fog painting is unnatural. Hmm... But is unnatural better???)
+    return;
+  }
+
+  //get our brush color
+  let currentRGBFloat = [0,0,0];
+  if( uiSettings.activeTool === "mask" ) {
+    //currentColorStyle = uiSettings.toolsSettings.mask.maskColor;
+    currentRGBFloat = [ ...uiSettings.toolsSettings.mask.maskRGBFloat ];
+  }
+  if( uiSettings.activeTool === "paint" ) {
+    //currentColorFloat = [ ...colorRGB, 1.0 ];
+    currentRGBFloat = [ ...colorRGB ]; //multiply brushOpacity by relevant opacity curves later
+  }
+
 
   //compute our points
-  const vertices = paintGPUResources.vertices;
-  vertices.length = ( points.length * 4 ) * 3 * 2; //xyuv[4] * 3 points per triangle * 2 triangles
+  const vertices = paintGPUResources.vertices; //this is just a JS array
+  vertices.length = 0;
+  const rgbas = paintGPUResources.rgbas;
+  rgbas.length = 0;
 
-  /* vector math */
+  const blendSourceXYAs = [],
+    blendDestXYUVs = [];
+
+  //vector math and draw calls
   {
-    console.error( "PaintGPU: Needs to do point vector math." );
+    //console.error( "PaintGPU: Needs to do point vector math." );
+    //compute our initial vector
+    //Vector spline interpolation temporarily on hold. D-: Have to figure this out though or no smooth paint.
+    //const referenceXYVector = [ canvasTransformAx - canvasTransformRefx, canvasTransformAy - canvasTransformRefy ],
+      //xyVector = [ canvasTransformBx - canvasTransformAx, canvasTransformBy - canvasTransformAy ];
+    //for( let i = 0; i<lineLength; i+=pixelSpacing ) {
+    for( let i = 0; i<lineLength; i++ ) {
+      //get our interpolation, linear for now to see how it looks
+      let fr = i / lineLength,
+        f = 1 - fr;
+
+      //This isn't right. Our last point will be in place, yes; but there'll be gaps because our spacing is wrong.
+      //interpolate our vectors
+      //const vector = [ referenceXYVector[0]*f + xyVector[0]*fr, referenceXYVector[1]*f + xyVector[1]*fr,];
+      //get our current point
+      //let paintX = canvasTransformAx + vector[0], paintY = canvasTransformAy + vector[1];
+
+      //temporarily switch back to linear interpolation... This works perfectly. Hmm. It's definitely my vector math that's off.
+      let paintX = canvasTransformBx*f + canvasTransformAx*fr,
+        paintY = canvasTransformBy*f + canvasTransformAy*fr;
+
+      //linearly interpolate our pressure and angles
+      let paintPressure = bPressure*fr + aPressure*f,
+        altitudeAngle = bAltitudeAngle*fr + aAltitudeAngle*f, //against screen z-axis
+        azimuthAngle = bAzimuthAngle*fr + aAzimuthAngle*f, //around screen, direction pointing
+        normalizedAltitudeAngle = 1 - ( altitudeAngle / 1.5707963267948966 ); //0 === perpendicular, 1 === parallel
+
+      //we're either adding or subtracting our current view angle
+      //get the current view angle
+      azimuthAngle += Math.atan2( viewMatrices.current[ 1 ], viewMatrices.current[ 0 ] );
+      //azimuthAngle -= Math.atan2( viewMatrices.current[ 1 ], viewMatrices.current[ 0 ] );
+      //azimuthAngle += Math.atan2( viewMatrices.current[ 3 ], viewMatrices.current[ 0 ] );
+      //azimuthAngle -= Math.atan2( viewMatrices.current[ 3 ], viewMatrices.current[ 0 ] );
+    
+      //Is this wrong?
+      let unTiltClippedAltitudeAngle = Math.min( brushTiltMinAngle, normalizedAltitudeAngle ),
+        normalizedUnTiltClippedAltitudeAngle = unTiltClippedAltitudeAngle / brushTiltMinAngle,
+        tiltClippedAltitudeAngle = Math.max( 0, normalizedAltitudeAngle - brushTiltMinAngle ),
+        normalizedClippedAltitudeAngle = tiltClippedAltitudeAngle / ( 1 - brushTiltMinAngle ),
+        tiltScale = 1 + normalizedClippedAltitudeAngle * brushTiltScale;
+
+      let scaledBrushSize = brushSize * uiSettings.toolsSettings.paint.modeSettings.all.pressureScaleCurve( paintPressure );
+      let scaledOpacity = brushOpacity * uiSettings.toolsSettings.paint.modeSettings.all.pressureOpacityCurve( paintPressure );
+      tempOpacity = scaledOpacity;
+  
+      //our brush size in canvas pixels (this should probably be global pixels: scale again by layer canvas's scale)
+      const tipImageWidth = paintGPUResources.brushTipCanvas.width,
+      tipImageHeight = paintGPUResources.brushTipCanvas.height;
+      const scaledTipImageWidth = scaledBrushSize * tiltScale,
+        scaledTipImageHeight = scaledBrushSize * tipImageHeight / tipImageWidth;
+
+      //if the pen is very vertical, we want to center the brush
+      //TEMPORARY: ignoring
+      const xOffset = scaledTipImageWidth/2 * ( normalizedUnTiltClippedAltitudeAngle );
+
+      //compute our verts
+      {
+        //rotate by azimuthAngle  
+        //get our unit transform legs
+        const hLegU = [ Math.cos( azimuthAngle ), Math.sin( azimuthAngle ) ],
+          vLegU = [ hLegU[1], -hLegU[0] ];
+        //scale our transform legs up to canvas pixel dimensions
+        const hLeg = [ hLegU[ 0 ] * scaledTipImageWidth, hLegU[ 1 ] * scaledTipImageWidth ];
+        const vLeg = [ vLegU[ 0 ] * scaledTipImageHeight, vLegU[ 1 ] * scaledTipImageHeight ];
+        //origin is paintX, paintY
+        //transform our origin along the hLeg by the offset (in pixels)
+        paintX += hLegU[ 0 ] * xOffset;
+        paintY += hLegU[ 1 ] * xOffset;
+        
+        //now we can compute each vertex by translating from our origin along each leg half its distance
+        //first, scale our legs down
+        hLeg[0] /= 2; hLeg[1] /= 2;
+        vLeg[0] /= 2; vLeg[1] /= 2;
+        //topLeft is minus hLeg, minus vLeg... and we might have to flip all our y coordinates??? Hmm.
+        const topLeft = [ paintX - hLeg[ 0 ] - vLeg[ 0 ], paintY - hLeg[ 1 ] - vLeg[ 1 ] ],
+          topRight = [ paintX + hLeg[ 0 ] - vLeg[ 0 ], paintY + hLeg[ 1 ] - vLeg[ 1 ] ],
+          bottomRight = [ paintX + hLeg[ 0 ] + vLeg[ 0 ], paintY + hLeg[ 1 ] + vLeg[ 1 ] ],
+          bottomLeft = [ paintX - hLeg[ 0 ] + vLeg[ 0 ], paintY - hLeg[ 1 ] + vLeg[ 1 ] ];
+          
+        //update our mod rect
+        modRect.x = Math.min( modRect.x, topLeft[0], topRight[0], bottomRight[0], bottomLeft[0] );
+        modRect.y = Math.min( modRect.y, topLeft[1], topRight[1], bottomRight[1], bottomLeft[1] );
+        modRect.x2 = Math.max( modRect.x2, topLeft[0], topRight[0], bottomRight[0], bottomLeft[0] );
+        modRect.y2 = Math.max( modRect.y2, topLeft[1], topRight[1], bottomRight[1], bottomLeft[1] );
+
+        const xyuvs = [
+          //top-left triangle
+          ...topLeft, 0,0,
+          ...topRight, 1,0,
+          ...bottomLeft, 0,1,
+          //bottom-right triangle
+          ...topRight, 1,0,
+          ...bottomRight, 1,1,
+          ...bottomLeft, 0,1,
+        ];
+
+        //transform our canvas points to GL points
+        let iw = 2 / layer.w,
+          ih = 2 / layer.h;
+        for( let j=0; j<xyuvs.length; j+=4 ) {
+          //scale to range 0:2
+          xyuvs[ j+0 ] *= iw;
+          xyuvs[ j+1 ] *= ih;
+          //translate to range -1:1
+          xyuvs[ j+0 ] -= 1;
+          xyuvs[ j+1 ] -= 1;
+        }
+
+        vertices.push( ...xyuvs );
+
+        //push our color data
+        const colors = [
+          //top-left triangle
+          ...currentRGBFloat, scaledOpacity,
+          ...currentRGBFloat, scaledOpacity,
+          ...currentRGBFloat, scaledOpacity,
+          //bottom-right triangle
+          ...currentRGBFloat, scaledOpacity,
+          ...currentRGBFloat, scaledOpacity,
+          ...currentRGBFloat, scaledOpacity,
+        ];
+
+        rgbas.push( ...colors );
+
+        //save our history
+        paintGPUResources.pointHistory.push( [ xyuvs, rgbas ] );
+
+        if( blendPull > 0 ) {
+          //the higher blend pull, the longer we trail
+          //that means our trail decays by 1-blendPull
+          let blendTrailAlpha = 1,
+            k = paintGPUResources.pointHistory.length - 1;
+          while( blendTrailAlpha > 0 && k >= 0 ) {
+            const historyPoint = paintGPUResources.pointHistory[ k ];
+            //these vert data are where we're reading from while blending at this point on the trail
+            const blendSourceXYA = [
+              //top left triangle
+              historyPoint[0][0], historyPoint[0][1], blendTrailAlpha,
+              historyPoint[0][4], historyPoint[0][5], blendTrailAlpha,
+              historyPoint[0][8], historyPoint[0][9], blendTrailAlpha,
+              //bottom right triangle
+              historyPoint[0][12], historyPoint[0][13], blendTrailAlpha,
+              historyPoint[0][16], historyPoint[0][17], blendTrailAlpha,
+              historyPoint[0][20], historyPoint[0][21], blendTrailAlpha,
+            ];
+            //the vert data we're writing to is just the current location of this paint-point
+            const blendDestXYUV = xyuvs;
+            
+            //push the verts to our streaming queue
+            blendSourceXYAs.push( ...blendSourceXYA );
+            blendDestXYUVs.push( ...blendDestXYUV );
+
+            blendTrailAlpha -= ( 1 - blendPull );
+            --k;
+          }
+        }
+
+      }
+
+    }
   }
 
+  //execute the blend pass render
+  {
+    gl.useProgram( paintGPUResources.blendProgram );
+    gl.bindVertexArray(paintGPUResources.blendVao);
+  
+    //bind the paint framebuffer  
+    //bind our blend compositor texture as the color attachment for the framebuffer
+    gl.bindFramebuffer(gl.FRAMEBUFFER, paintGPUResources.blendCompositeFramebuffer );
+    {
+      const level = 0;
+      // attach the texture as the first color attachment
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.blendCompositeTexture );
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, paintGPUResources.blendCompositeTexture, level);
+  
+      //rebind the depth attachment while we're at it I guess
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.blendCompositeDepthTexture );
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, paintGPUResources.blendCompositeDepthTexture, level);
+    }
+  
+    //set the viewport
+    gl.viewport( 0, 0, layer.w, layer.h );
+
+    //TODO: Is there a right way to enable depth testing? Hmm.
+    gl.disable(gl.DEPTH_TEST);
+
+    //Let lower alpha be clipped by higher alpha paint.
+    //gl.enable( gl.DEPTH_TEST );
+    //gl.depthFunc( gl.GREATER );
+
+    if( paintGPUResources.starting === true ) {
+      //paintGPUResources.starting = false; //we'll clear in the paint section
+      gl.clearDepth( 0.0 );
+      gl.clear( gl.DEPTH_BUFFER_BIT );
+    }
+    
+    //using alpha blending
+    gl.enable( gl.BLEND );
+    gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+  
+    //gl.disable( gl.BLEND );
+  
+    //upload our vec3 points for XYA; this is where we're reading the source from
+    {
+      gl.bindBuffer(gl.ARRAY_BUFFER,paintGPUResources.blendSourceXYABuffer );
+      gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( blendSourceXYAs ), gl.STREAM_DRAW );
+      //Do we need to reupload this description of our vertex data's structure? Did VAO keep it? Or did we lose it on rebuffering?
+      gl.enableVertexAttribArray( paintGPUResources.blendSourceXYAIndex );
+      const size = 3, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( paintGPUResources.blendSourceXYAIndex, size, dType, normalize, stride, offset );
+    }
+
+    //upload our vec4 points for XYUV; this is where we're writing to in the compositor + where we're reading the brush tip from
+    {
+      gl.bindBuffer(gl.ARRAY_BUFFER,paintGPUResources.blendDestXYUVBuffer );
+      gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( blendDestXYUVs ), gl.STREAM_DRAW );
+      //Do we need to reupload this description of our vertex data's structure? Did VAO keep it? Or did we lose it on rebuffering?
+      gl.enableVertexAttribArray( paintGPUResources.blendDestXYUVIndex );
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( paintGPUResources.blendDestXYUVIndex, size, dType, normalize, stride, offset );
+    }
+  
+    //set our tip as the tip texture (index 0)
+    gl.activeTexture( gl.TEXTURE0 + 0 );
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.brushTipTexture );
+    gl.uniform1i( paintGPUResources.blendBrushTipIndex, 0 );
+  
+    //set our blend source as the blend source texture (index 1)
+    gl.activeTexture( gl.TEXTURE0 + 1 );
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.blendSourceTexture );
+    gl.uniform1i( paintGPUResources.blendBlendSourceIndex, 1 );
+  
+    //draw the triangles
+    {
+      const primitiveType = gl.TRIANGLES,
+        structStartOffset = 0,
+        structCount = blendDestXYUVs.length / 4;
+      gl.drawArrays( primitiveType, structStartOffset, structCount );
+    }
+  
+  }
+
+  //execute the paint pass render
+  {
+    gl.useProgram( paintGPUResources.program );
+  
+    //vertex array buffer (I'm still very unclear on what this does. What general info does it bind, exactly?)
+    //probably just the vertexAttribArray definitions.
+    gl.bindVertexArray(paintGPUResources.vao);
+  
+    //bind our layer as the color attachment for the framebuffer
+    {
+      let sourceTexture;
+      if( uiSettings.activeTool === "paint" ) sourceTexture = layer.glTexture;
+      if( uiSettings.activeTool === "mask" ) sourceTexture = layer.glMask;
+      gl.bindTexture( gl.TEXTURE_2D, sourceTexture );
+      gl.bindFramebuffer(gl.FRAMEBUFFER, paintGPUResources.framebuffer);
+      
+      // attach the texture as the first color attachment
+      const attachmentPoint = gl.COLOR_ATTACHMENT0;
+      const level = 0;
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, sourceTexture, level);
+  
+      //rebind the depth attachment while we're at it I guess
+      //attach to framebuffer
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.depthTexture );
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, paintGPUResources.depthTexture, level);
+  
+    }
+  
+    //bind the paint framebuffer
+    gl.bindFramebuffer(gl.FRAMEBUFFER, paintGPUResources.framebuffer);
+    //set the viewport
+    gl.viewport( 0, 0, layer.w, layer.h );
+    //gl.disable(gl.DEPTH_TEST);
+    //Let lower alpha be clipped by higher alpha paint.
+    gl.enable( gl.DEPTH_TEST );
+    gl.depthFunc( gl.GREATER );
+    if( paintGPUResources.starting === true ) {
+      paintGPUResources.starting = false;
+      gl.clearDepth( 0.0 );
+      gl.clear( gl.DEPTH_BUFFER_BIT );
+    }
+    
+    //gl.enable( gl.BLEND );
+    //gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+  
+    //disable blend, will blend inside shader
+    gl.disable( gl.BLEND );
+  
+    //upload our points
+    {
+      gl.bindBuffer(gl.ARRAY_BUFFER,paintGPUResources.vertexBuffer);
+      gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( vertices ), gl.STREAM_DRAW );
+      //Do we need to reupload this description of our vertex data's structure? Did VAO keep it? Or did we lose it on rebuffering?
+      gl.enableVertexAttribArray( paintGPUResources.xyuvInputIndex );
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( paintGPUResources.xyuvInputIndex, size, dType, normalize, stride, offset );
+    }
+  
+    //upload our colors
+    {
+      gl.bindBuffer(gl.ARRAY_BUFFER,paintGPUResources.rgbaBuffer);
+      gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( rgbas ), gl.STREAM_DRAW );
+      //Do we need to reupload this description of our vertex data's structure? Did VAO keep it? Or did we lose it on rebuffering?
+      gl.enableVertexAttribArray( paintGPUResources.rgbaInputIndex );
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( paintGPUResources.rgbaInputIndex, size, dType, normalize, stride, offset );
+    }
+  
+    //set our tip as the tip texture (index 0)
+    gl.activeTexture( gl.TEXTURE0 + 0 );
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.brushTipTexture );
+    gl.uniform1i( paintGPUResources.brushTipIndex, 0 );
+  
+    //set our blend source as the blend source texture (index 1)
+    gl.activeTexture( gl.TEXTURE0 + 1 );
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.blendSourceTexture );
+    gl.uniform1i( paintGPUResources.blendSourceIndex, 1 );
+  
+    //set our blend composite as the blend composite texture (index 2)
+    gl.activeTexture( gl.TEXTURE0 + 2 );
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.blendCompositeTexture );
+    gl.uniform1i( paintGPUResources.blendCompositeIndex, 2 );
+  
+    //set our blend alpha
+    gl.uniform1f( paintGPUResources.blendAlphaIndex, blendAlpha );
+    //set our erase amount
+    gl.uniform1f( paintGPUResources.eraseAmountIndex, eraseAmount );
+
+    //draw the triangles
+    {
+      const primitiveType = gl.TRIANGLES,
+        structStartOffset = 0,
+        structCount = vertices.length / 4;
+      gl.drawArrays( primitiveType, structStartOffset, structCount );
+    }
+  
+  }
   /* Update our mod rect from the point limits */
   {
-    console.error( "PaintGPU: Needs to update mod rect from point limits" );
+    //console.error( "PaintGPU: Needs to update mod rect from point limits" );
   }
 
-  //upload our points
-  gl.bindBuffer(gl.ARRAY_BUFFER,paintGPUResources.vertexBuffer);
-  gl.bufferData( gl.ARRAY_BUFFER, new Float32Array(paintGPUResources.vertices), gl.STREAM_DRAW );
-
-  //Do we need to reupload this description of our vertex data's structure? Did VAO keep it? Or did we lose it on rebuffering?
-  gl.enableVertexAttribArray( paintGPUResources.xyuvInputIndex );
-  {
-    const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
-    gl.vertexAttribPointer( paintGPUResources.xyuvInputIndex, size, dType, normalize, stride, offset );
-  }
-
-  //set our tip as the tip texture (index 0)
-  gl.activeTexture( gl.TEXTURE0 + 0 );
-  gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.brushTipTexture );
-  gl.uniform1i( paintGPUResources.brushTipIndex, 0 );
-
-  //set our layer as the blend source (index 1)
-  gl.activeTexture( gl.TEXTURE0 + 1 );
-  gl.bindTexture( gl.TEXTURE_2D, layer.glTexture );
-  gl.uniform1i( paintGPUResources.blendSourceIndex, 1 );
-  
-  //set the paint color
-  {
-    const brush = uiSettings.toolsSettings.paint.modeSettings.brush;
-    const [r,g,b] = brush.colorModes[brush.colorMode].getRGBFloat();
-    gl.uniform3f( paintGPUResources.paintColorIndex, r, g, b );
-  }
-
-  //set the alpha
-  {
-    const brush = uiSettings.toolsSettings.paint.modeSettings.all;
-    const alpha = brush.brushOpacity;
-    gl.uniform3f( paintGPUResources.alphaIndex, alpha );
-  }
-
-  //draw the triangles
-  {
-    const primitiveType = gl.TRIANGLES,
-      structStartOffset = 0,
-      structCount = vertices.length / 4;
-    gl.drawArrays( primitiveType, structStartOffset, structCount );
-  }
+  //For non-blending paint, we can stream all the faces to the GPU at once.
+  //For blending, we will need a separate draw call for every face in our interpolated, spaced line. :-|
+  //Unless... Hmm. Well, it seems 100% necessary at the moment.
 
 }
-function finalizePaintGPU() {
+function finalizePaintGPU( layer ) {
+  
   //readpixels for our modrect from the old gltexture and this new one,
   //store those pixels in the undo buffer
   //put those pixels in a dataimage and blit onto the layer's preview canvas
 
-  {
+  let affectedTexture, affectedContext;
+  if( uiSettings.activeTool === "paint" ) {
+    affectedTexture = layer.glTexture;
+    affectedContext = layer.context;
+  }
+  if( uiSettings.activeTool === "mask" ) {
+    affectedTexture = layer.glMask;
+    affectedContext = layer.maskContext;
+  }
+
+  //bind our framebuffer
+  gl.bindFramebuffer( gl.FRAMEBUFFER, paintGPUResources.framebuffer );
+  //set the viewport
+  gl.viewport( 0, 0, layer.w, layer.h );
+  gl.bindTexture( gl.TEXTURE_2D, affectedTexture );
+  gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, affectedTexture, 0 );
+
+
+  const { modRect } = paintGPUResources;
+  //discretize our modrect
+  modRect.x = Math.max( 0, parseInt( modRect.x ) );
+  modRect.y = Math.max( 0, parseInt( modRect.y ) );
+  modRect.x2 = Math.min( layer.w, parseInt( modRect.x2 ) + 1 );
+  modRect.y2 = Math.min( layer.h, parseInt( modRect.y2 ) + 1 );
+  //get our modrect width and height
+  modRect.w = Math.max( 0, Math.min( layer.w, modRect.x2 - modRect.x ) );
+  modRect.h = Math.max( 0, Math.min( layer.h, modRect.y2 - modRect.y ) );
+
+  if( isNaN( modRect.x ) || isNaN( modRect.y ) || isNaN( modRect.x2 ) || isNaN( modRect.y2 ) || isNaN( modRect.w ) || isNaN( modRect.h ) || modRect.w === 0 || modRect.h === 0 ) {
+    //nothing to update
+    return;
+  }
+
+  //get our old data
+  const oldData = affectedContext.getImageData( modRect.x, modRect.y, modRect.w, modRect.h );
+
+  //make our readbuffer... I wonder if I could read straight to a dataimage. Hmm.
+  const readBuffer = new Uint8Array( modRect.w * modRect.h * 4 );
+  //why isn't this y-reversed??? The main canvas framebuffer is reversed when I sample for the color picker... :-/
+  //gl.readPixels( modRect.x, layer.h - modRect.y, modRect.w, modRect.h, gl.RGBA, gl.UNSIGNED_BYTE, readBuffer );
+  gl.readPixels( modRect.x, modRect.y, modRect.w, modRect.h, gl.RGBA, gl.UNSIGNED_BYTE, readBuffer );
+
+  //transfer to an imagedata
+  const newData = affectedContext.createImageData( modRect.w, modRect.h );
+  newData.data.set( readBuffer );
+
+  //put the new imagedata onto the texture (since it's still just on the GPU)
+  affectedContext.putImageData( newData, modRect.x, modRect.y );
+
+  const historyEntry = {
+    targetLayer: layer,
+    affectedContext,
+    isMask: uiSettings.activeTool === "mask",
+    oldData,
+    newData,
+    at: { x:modRect.x, y:modRect.y },
+    undo: () => {
+      historyEntry.affectedContext.putImageData( historyEntry.oldData, historyEntry.at.x, historyEntry.at.y );
+      if( historyEntry.isMask === true ) flagLayerMaskChanged( historyEntry.targetLayer );
+      if( historyEntry.isMask === false ) flagLayerTextureChanged( historyEntry.targetLayer );
+    },
+    redo: () => {
+      historyEntry.affectedContext.putImageData( historyEntry.newData, historyEntry.at.x, historyEntry.at.y );
+      if( historyEntry.isMask === true ) flagLayerMaskChanged( historyEntry.targetLayer );
+      if( historyEntry.isMask === false ) flagLayerTextureChanged( historyEntry.targetLayer );
+    },
+  }
+
+  recordHistoryEntry( historyEntry );
+
+
+  if( false ) {
     console.error( "PaintGPU Finalize: Download modrect pixels from layertexture to CPU (olddata)" );
     console.error( "PaintGPU Finalize: Download modrect pixels from rendertexture to CPU (newdata)" );
     console.error( "PaintGPU Finalize: Make imagedata and put modrect pixels on layer canvas");
-    console.error( "PaintGPU Finalize: flag layer canvas for reupload to GPU");
+    //console.error( "PaintGPU Finalize: flag layer canvas for reupload to GPU");
     console.error( "PaintGPU Finalize: record undo history");
   }
 
@@ -7289,7 +8243,7 @@ Map
 */
 
 
-async function getImageA1111( {api="txt2img", prompt, seed=-1, sampler="DPM++ SDE", steps=4, cfg=1, width=1024, height=1024, CADS=false, img2img=null, denoise=0.8, inpaint=false, inpaintZoomed=false, inpaintZoomedPadding=32, inpaintFill="original" } ) {
+/* async function getImageA1111( {api="txt2img", prompt, seed=-1, sampler="DPM++ SDE", steps=4, cfg=1, width=1024, height=1024, CADS=false, img2img=null, denoise=0.8, inpaint=false, inpaintZoomed=false, inpaintZoomedPadding=32, inpaintFill="original" } ) {
   //apisSettings.a1111.setPrompt(prompt + " <lora:lcm-lora-sdxl:1>");
   //apisSettings.a1111.setPrompt(prompt + " <lora:sdxl_lightning_4step_lora:1>");
   let apiTag = "/sdapi/v1/txt2img";
@@ -7352,8 +8306,8 @@ async function getImageComfy( prompt ) {
   const promptId = rsp.prompt_id;
   const history = await process( null, "history/" + promptId, 8188 );
   console.log( history ); //returned empty, should have returned filename :-(
-}
-
+} */
+/* 
 const apisSettings = {
   a1111: {
       setAPI: apiKey => apisSettings.a1111.apiKey = "a1111" + apiKey,
@@ -7407,8 +8361,8 @@ const apisSettings = {
       setPrompt: t => apis.comfyLCM["62"]["inputs"].text = t,
   }
 }
-
-const apis = {
+ */
+/* const apis = {
   a1111controlnet: {
     "controlnet_module": "none",
     "controlnet_input_images": [],
@@ -8312,7 +9266,7 @@ async function demoApiCall() {
     }
   );
   console.log( result );
-}
+} */
 
 const wait = delay => new Promise( land => setTimeout( land, delay ) );
 
@@ -8393,7 +9347,7 @@ async function executeAPICall( name, controlValues ) {
               complete( false );
           }
           if( jsonResponse ) {
-            console.log( "Got API JSON response: ", jsonResponse );
+            //console.log( "Got API JSON response: ", jsonResponse );
 
             for( const resultScheme of apiCall.results ) {
               //console.log( "Starting with result ", resultScheme );
@@ -8604,7 +9558,7 @@ async function executeAPICall( name, controlValues ) {
       outputs[ outputScheme.outputName ] = mappedAssets;
     }
   }
-  console.log( "Finished apiFlow with outputs: ", outputs );
+  //console.log( "Finished apiFlow with outputs: ", outputs );
 
   apiExecutionQueue.splice( apiExecutionQueue.indexOf( selfQueue ), 1 );
 

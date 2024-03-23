@@ -96,8 +96,8 @@ Coming very soon! Windows binary and Android APK will be available.
     - ❌ Custom brushes asset browser
     - ✅ Erase
     - ✅ Blend (on solid layers)
-    - ❌ Blend (on transparent layers)
-    - ❌ GPU Paint
+    - ✅ Blend (on transparent layers)
+    - ✅ GPU Paint
 - ✅ AI Generation
     - ✅ Image inputs UI
     - ❌ Generation history
