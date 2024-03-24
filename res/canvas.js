@@ -27,9 +27,11 @@
 const VERSION = 3;
 
 const main = document.createElement( "div" ),
+  underlayContainer = document.createElement( "div" ),
   uiContainer = document.createElement( "div" ),
   overlayContainer = document.createElement( "div" );
 main.id = "main";
+underlayContainer.id = "underlay";
 uiContainer.id = "ui";
 overlayContainer.id = "overlay";
 
@@ -175,6 +177,8 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     nodeUplinks: new Set(),
     generativeControls: {},
 
+    rig: null,
+
     //we can use transform + l/w to rectify our points and avoid drift accumulation
     transform: {
       scale: 1,
@@ -287,6 +291,20 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         srcType = gl.UNSIGNED_BYTE;
       gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, newLayer.maskCanvas );
     }
+  }
+
+  //render the pose layer
+  if( newLayer.layerType === "pose" ) {
+    newLayer.rig = JSON.parse( JSON.stringify( uiSettings.defaultPoseRig ) );
+    //scale the rig to this layer
+    let centerX = layerWidth/2, centerY = layerHeight/2,
+      scale = Math.min( layerWidth, layerHeight );
+    for( const node of Object.values( newLayer.rig ) ) {
+      node.x = ( ( node.x - 0.5 ) * scale ) + centerX;
+      node.y = ( ( node.y - 0.5 ) * scale ) + centerY;
+    }
+    //render our first pass
+    renderLayerPose( newLayer );
   }
 
   let layerButton;
@@ -1196,6 +1214,10 @@ function reorganizeLayerButtons() {
       layer.layerButton.classList.add( "layer-in-group", "layer-group-depth-" + layerGroupDepth );
     }
     else layer.layerButton.classList.remove( "layer-in-group" );
+
+    if( layer === selectedLayer ) layer.layerButton.classList.add( "active", "no-hover" );
+    else layer.layerButton.classList.remove( "active", "no-hover" );
+
   }
 
 }
@@ -1396,7 +1418,7 @@ function floodFillLayer( layer, layerX, layerY ) {
     island[ i / 4 ] = 255;
   }
 
-  let { tolerance, floodTarget } = uiSettings.toolsSettings[ "flood-fill" ];
+  let { tolerance, floodTarget, padding, erase } = uiSettings.toolsSettings[ "flood-fill" ];
   tolerance *= Math.sqrt( 255**2 * 4 );
   const [ r,g,b ] = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes[uiSettings.toolsSettings.paint.modeSettings.brush.colorMode ].getRGB();
   //const a = uiSettings.toolsSettings.paint.modeSettings.all.brushOpacity;
@@ -1428,7 +1450,8 @@ function floodFillLayer( layer, layerX, layerY ) {
           dr = d[ i ] - lr; dg = d[ i+1 ] - lg; db = d[ i+2 ] - lb; da = d[ i+3 ] - la;
           dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
           if( dist < tolerance ) {
-            d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255;
+            if( erase ) d[ i+3 ] = 0;
+            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
             crawledPixels.push( [x-1,y] );
             island[ i/4 ] = 255;
             minX = Math.min( minX, x-1 );
@@ -1444,7 +1467,8 @@ function floodFillLayer( layer, layerX, layerY ) {
           dr = d[ i ] - lr; dg = d[ i+1 ] - lg; db = d[ i+2 ] - lb; da = d[ i+3 ] - la;
           dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
           if( dist < tolerance ) {
-            d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255;
+            if( erase ) d[ i+3 ] = 0;
+            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
             crawledPixels.push( [x+1,y] );
             island[ i/4 ] = 255;
             minX = Math.min( minX, x+1 );
@@ -1460,7 +1484,8 @@ function floodFillLayer( layer, layerX, layerY ) {
           dr = d[ i ] - lr; dg = d[ i+1 ] - lg; db = d[ i+2 ] - lb; da = d[ i+3 ] - la;
           dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
           if( dist < tolerance ) {
-            d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255;
+            if( erase ) d[ i+3 ] = 0;
+            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
             crawledPixels.push( [x,y-1] );
             island[ i/4 ] = 255;
             minX = Math.min( minX, x );
@@ -1476,7 +1501,8 @@ function floodFillLayer( layer, layerX, layerY ) {
           dr = d[ i ] - lr; dg = d[ i+1 ] - lg; db = d[ i+2 ] - lb; da = d[ i+3 ] - la;
           dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
           if( dist < tolerance ) {
-            d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255;
+            if( erase ) d[ i+3 ] = 0;
+            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
             crawledPixels.push( [x,y+1] );
             island[ i/4 ] = 255;
             minX = Math.min( minX, x );
@@ -1489,12 +1515,61 @@ function floodFillLayer( layer, layerX, layerY ) {
       }
 
   }
+  if( floodTarget === "color" ) {
+    //for each pixel, get distance from lrlglbla
+    //if( dist < tolerance ): replace pixel w/ erase, update min*
+    for( let i=0; i<d.length; i+=4 ) {
+      const dr = d[ i ] - lr, dg = d[ i+1 ] - lg, db = d[ i+2 ] - lb, da = d[ i+3 ] - la;
+      const dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
+      if( dist < tolerance ) {
+        if( erase ) d[ i+3 ] = 0;
+        else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
+        const x = ( i/4 ) % w,
+          y = ( i/4 - x ) / w; //this is untested for float errors vs. parseInt, but for min* it should work
+        island[ i/4 ] = 255;
+        minX = Math.min( minX, x );
+        maxX = Math.max( maxX, x );
+        minY = Math.min( minY, y );
+        maxY = Math.max( maxY, y );
+      }
+    }
+  }
+
+  if( padding > 0 ) {
+    //for every pixel, if it's not an island pixel, scan within padding radius for an island pixel
+    //if found, break and treat the pixel
+    const maxPad = ( parseInt( padding ) + 1 ),
+      minPad = - maxPad;
+
+    padPixelSearch:
+    for( let i=0,j=0; i<d.length; i+=4, j++ ) {
+      if( island[ j ] === 255 ) continue;
+
+      for( let px=minPad; px<=maxPad; px++ ) {
+        for( let py=minPad; py<=maxPad; py++ ) {
+          let pj = ( j + px ) + ( py * w );
+          if( pj < 0 || pj >= island.length ) continue;
+          if( island[ pj ] === 0 ) continue;
+          if( Math.sqrt( px**2 + py**2 ) > padding ) continue;
+          if( erase ) d[ i+3 ] = 0;
+          else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
+          const x = j % w,
+            y = ( j - x ) / w;
+          minX = Math.min( minX, x );
+          maxX = Math.max( maxX, x );
+          minY = Math.min( minY, y );
+          maxY = Math.max( maxY, y );
+          continue padPixelSearch;
+        }
+      }
+    }
+  }
 
   const changedRect = {
-    x: minX,
-    y: minY,
-    w: maxX - minX,
-    h: maxY - minY
+    x: minX - 1,
+    y: minY - 1,
+    w: maxX - minX + 2,
+    h: maxY - minY + 2
   }
 
   //get the old data
@@ -1527,11 +1602,56 @@ function floodFillLayer( layer, layerX, layerY ) {
 
 }
 
+function renderLayerPose( layer ) {
+  const rig = layer.rig;
+  const ctx = layer.context,
+    { w,h } = layer;
+  ctx.fillStyle = "rgb(0,0,0)";
+  ctx.fillRect( 0,0,w,h );
+  //draw the node links
+  const nodes = Object.values( rig );
+  for( const node of nodes ) {
+    if( ! node.parentLink ) continue;
+    const [r,g,b] = node.parentLink.color;
+    const parent = nodes.find( n => n.name === node.parentLink.parentName );
+    const x = ( node.x + parent.x ) / 2, y = ( node.y + parent.y ) / 2;
+    const vectorX = parent.x - node.x, vectorY = parent.y - node.y;
+    const rotation = Math.atan2( vectorY, vectorX );
+    const length = Math.sqrt( vectorX**2 + vectorY**2 );
+    ctx.save();
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.translate( x,y );
+    ctx.rotate( rotation );
+    ctx.scale( length/18, 1 );
+    ctx.beginPath();
+    ctx.arc( 0,0,9,0,6.284,false );
+    ctx.fill();
+    ctx.restore();
+  }
+  for( const node of nodes ) {
+    const { x,y, color } = node;
+    const [r,g,b] = color;
+    ctx.save();
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.translate( x,y );
+    ctx.beginPath();
+    ctx.arc( 0,0,9,0,6.284,false );
+    ctx.fill();
+    ctx.restore();
+  }
+  flagLayerTextureChanged( layer );
+}
+
 function composeLayers( destinationLayer, layers, pixelScale=1 ) {
+
+  const visibleLayers = [];
+  for( const layer of layers )
+    if( getLayerVisibility( layer ) === true )
+      visibleLayers.push( layer );
 
   let minX = Infinity, minY = Infinity,
     maxX = -Infinity, maxY = -Infinity;
-  for( const layer of layers ) {
+  for( const layer of visibleLayers ) {
     for( const p of ["topLeft","topRight","bottomLeft","bottomRight"] ) {
       minX = Math.min(minX,layer[p][0]);
       minY = Math.min(minY,layer[p][1]);
@@ -1558,7 +1678,7 @@ function composeLayers( destinationLayer, layers, pixelScale=1 ) {
   //translate so our minXY is at 0
   ctx.translate( -minX, -minY );
   //draw our layers
-  for( const layer of layers ) {
+  for( const layer of visibleLayers ) {
       const [x,y] = layer.topLeft,
         [x2,y2] = layer.topRight;
       const dx = x2-x, dy=y2-y;
@@ -1867,17 +1987,18 @@ function selectLayer( layer ) {
     selectedLayer.layerButton.querySelector( ".layer-name" ).classList.add( "no-hover" );
   }
   selectedLayer = layer;
-  if( layer.layerType === "group" ) {
-    updateLayerGroupCoordinates( layer );
+  if( layer ) {
+    if( layer.layerType === "group" ) {
+      updateLayerGroupCoordinates( layer );
+    }
+    for( const l of document.querySelectorAll( "#layers-column > .layer-button" ) ) {
+      l.classList.remove( "active", "no-hover", "hovering" );
+    }
+    layer.layerButton.classList.add( "active", "no-hover" );
+    layer.layerButton.classList.remove( "hovering" );
+    layer.layerButton.querySelector( ".layer-name" ).uiActive = true;
+    layer.layerButton.querySelector( ".layer-name" ).classList.remove( "no-hover" );  
   }
-  for( const l of document.querySelectorAll( "#layers-column > .layer-button" ) ) {
-    l.classList.remove( "active", "no-hover", "hovering" );
-  }
-  layer.layerButton.classList.add( "active", "no-hover" );
-  layer.layerButton.classList.remove( "hovering" );
-  layer.layerButton.querySelector( ".layer-name" ).uiActive = true;
-  layer.layerButton.querySelector( ".layer-name" ).classList.remove( "no-hover" );
-
   UI.updateContext();
 }
 
@@ -2014,7 +2135,7 @@ Info: ${info}`;
           layer.transform.transformingPoints.bottomRight = [...xy4];
         }
 
-        //get the layers physical size on-display
+        //get the layer's physical size on-display
         let layerSizePixels;
         {
           const dx = xy2[0] - xy[0], dy = xy2[1] - xy[1];
@@ -2124,6 +2245,7 @@ function setup() {
     document.body.appendChild( main );
     //main.appendChild( cnv );
     main.appendChild( gnv );
+    uiContainer.appendChild( underlayContainer );
     main.appendChild( uiContainer );
     main.appendChild( overlayContainer );
 
@@ -2400,12 +2522,14 @@ let uiSettings = {
 
   clickTimeMS: 350,
 
+  nodeSnappingDistance: Math.min( innerWidth, innerHeight ) * 0.04, //~50px on a 1080p screen
+
   setActiveTool: tool => {
     uiSettings.activeTool = tool;
     UI.updateContext();
   },
 
-  activeTool: null, //null | generate | paint | mask | transform | flood-fill | text-tool
+  activeTool: null, //null | generate | paint | mask | transform | flood-fill | text-tool | pose
   toolsSettings: {
     "generate": {},
     "paint": {
@@ -2416,7 +2540,21 @@ let uiSettings = {
       mode: "brush", //brush | erase | blend
       modeSettings: {
         "all": {
-          brushTips: ["res/img/brushes/tip-pencil01.png"],
+          brushTips: ["res/img/brushes/tip-round01.png"],
+          brushTipsImages: [],
+          brushTiltScale: 0,
+          brushTiltMinAngle: 0.25, //~23 degrees
+          brushSize: 3.7,
+          minBrushSize: 2,
+          maxBrushSize: 14,
+          brushOpacity: 1,
+          brushBlur: 0,
+          minBrushBlur: 0,
+          maxBrushBlur: 1,
+          brushSpacing: 0.1,
+          pressureOpacityCurve: pressure => 1,
+          pressureScaleCurve: pressure => Math.max( 0.33, pressure ),
+          /* brushTips: ["res/img/brushes/tip-pencil01.png"],
           brushTipsImages: [],
           brushTiltScale: 4,
           brushTiltMinAngle: 0.25, //~23 degrees
@@ -2429,7 +2567,7 @@ let uiSettings = {
           maxBrushBlur: 0.25,
           brushSpacing: 0.1,
           pressureOpacityCurve: pressure => pressure,
-          pressureScaleCurve: pressure => 1,
+          pressureScaleCurve: pressure => 1, */
         },
         "brush": {
           colorMode: "hsl",
@@ -2475,28 +2613,279 @@ let uiSettings = {
       transformingLayers: [],
     },
     "flood-fill": {
+      opacity: 1, //unimplemented
       tolerance: 0.1,
+      padding: 0,
+      erase: false, //false | true
       floodTarget: "area", //"area" | "color"
+    },
+    "pose": {
+      moveChildren: true,
     }
   },
 
-  /* paint: { r:200,g:220,b:240 },
-  get paintColor(){
-    const {r,g,b} = uiSettings.paint;
-    return `rgb(${r},${g},${b})`;
-  },
-  mask: false,
-  brush: "paint",
-  pressureEnabled: true,
-  //brushEngine: "pencil",
-  brushEngine: "blend",
-  brushTiltScaleAdd: 20.0,
-  brushSize: 14,
-  brushOpacity: 1,
-  brushBlur: 0,
-  brushProfile: p => uiSettings.brushSize, */
-
-  nodeSnappingDistance: Math.min( innerWidth, innerHeight ) * 0.04, //~50px on a 1080p screen
+  defaultPoseRig: {
+    "head": {
+      "name": "head",
+      "color": [255,0,0],
+      "x": 0.521484375,
+      "y": 0.146484375,
+      "childLink": {
+        "linkName": "head-to-crown-left",
+        "childName": "crown-left",
+        "color": [51,0,153]
+      },
+      "parentLink": {
+        "linkName": "spine-to-head",
+        "parentName": "spine",
+        "color": [0,0,153]
+      }
+    },
+    "spine": {
+      "name": "spine",
+      "color": [255,85,0],
+      "x": 0.517578125,
+      "y": 0.2578125,
+      "childLink": {
+        "linkName": "spine-to-shoulder-left",
+        "childName": "shoulder-left",
+        "color": [153,0,0]
+      },
+      "parentLink": null
+    },
+    "shoulder-left": {
+      "name": "shoulder-left",
+      "color": [255,170,0],
+      "x": 0.447265625,
+      "y": 0.259765625,
+      "childLink": {
+        "linkName": "shoulder-left-to-elbow-left",
+        "childName": "elbow-left",
+        "color": [153,102,0]
+      },
+      "parentLink": {
+        "linkName": "spine-to-shoulder-left",
+        "parentName": "spine",
+        "color": [153,0,0]
+      }
+    },
+    "elbow-left": {
+      "name": "elbow-left",
+      "color": [255,255,0],
+      "x": 0.31640625,
+      "y": 0.3203125,
+      "childLink": {
+        "linkName": "elbow-left-to-wrist-left",
+        "childName": "wrist-left",
+        "color": [153,153,0]
+      },
+      "parentLink": {
+        "linkName": "shoulder-left-to-elbow-left",
+        "parentName": "shoulder-left",
+        "color": [153,102,0]
+      }
+    },
+    "wrist-left": {
+      "name": "wrist-left",
+      "color": [170,255,0],
+      "x": 0.19140625,
+      "y": 0.333984375,
+      "childLink": null,
+      "parentLink": {
+        "linkName": "elbow-left-to-wrist-left",
+        "parentName": "elbow-left",
+        "color": [153,153,0]
+      }
+    },
+    "shoulder-right": {
+      "name": "shoulder-right",
+      "color": [85,255,0],
+      "x": 0.58984375,
+      "y": 0.259765625,
+      "childLink": {
+        "linkName": "shoulder-right-to-elbow-right",
+        "childName": "elbow-right",
+        "color": [102,153,0]
+      },
+      "parentLink": {
+        "linkName": "spine-to-shoulder-right",
+        "parentName": "spine",
+        "color": [153,51,0]
+      }
+    },
+    "elbow-right": {
+      "name": "elbow-right",
+      "color": [0,255,0],
+      "x": 0.703125,
+      "y": 0.322265625,
+      "childLink": {
+        "linkName": "elbow-right-to-wrist-right",
+        "childName": "wrist-right",
+        "color": [51,153,0]
+      },
+      "parentLink": {
+        "linkName": "shoulder-right-to-elbow-right",
+        "parentName": "shoulder-right",
+        "color": [102,153,0]
+      }
+    },
+    "wrist-right": {
+      "name": "wrist-right",
+      "color": [0,255,85],
+      "x": 0.814453125,
+      "y": 0.3359375,
+      "childLink": null,
+      "parentLink": {
+        "linkName": "elbow-right-to-wrist-right",
+        "parentName": "elbow-right",
+        "color": [51,153,0]
+      }
+    },
+    "hip-left": {
+      "name": "hip-left",
+      "color": [0,255,170],
+      "x": 0.48046875,
+      "y": 0.48828125,
+      "childLink": {
+        "linkName": "hip-left-to-knee-left",
+        "childName": "knee-left",
+        "color": [0,153,51]
+      },
+      "parentLink": {
+        "linkName": "spine-to-hip-left",
+        "parentName": "spine",
+        "color": [0,153,0]
+      }
+    },
+    "knee-left": {
+      "name": "knee-left",
+      "color": [0,255,255],
+      "x": 0.47265625,
+      "y": 0.69140625,
+      "childLink": {
+        "linkName": "knee-left-to-ankle-left",
+        "childName": "ankle-left",
+        "color": [0,153,102]
+      },
+      "parentLink": {
+        "linkName": "hip-left-to-knee-left",
+        "parentName": "hip-left",
+        "color": [0,153,51]
+      }
+    },
+    "ankle-left": {
+      "name": "ankle-left",
+      "color": [0,170,255],
+      "x": 0.451171875,
+      "y": 0.89453125,
+      "childLink": null,
+      "parentLink": {
+        "linkName": "knee-left-to-ankle-left",
+        "parentName": "knee-left",
+        "color": [0,153,102]
+      }
+    },
+    "hip-right": {
+      "name": "hip-right",
+      "color": [0,85,255],
+      "x": 0.57421875,
+      "y": 0.484375,
+      "childLink": {
+        "linkName": "hip-right-to-knee-right",
+        "childName": "knee-right",
+        "color": [0,102,153]
+      },
+      "parentLink": {
+        "linkName": "spine-to-hip-right",
+        "parentName": "spine",
+        "color": [0,153,153]
+      }
+    },
+    "knee-right": {
+      "name": "knee-right",
+      "color": [0,0,255],
+      "x": 0.5703125,
+      "y": 0.693359375,
+      "childLink": {
+        "linkName": "knee-right-to-ankle-right",
+        "childName": "ankle-right",
+        "color": [0,1,153]
+      },
+      "parentLink": {
+        "linkName": "hip-right-to-knee-right",
+        "parentName": "hip-right",
+        "color": [0,102,153]
+      }
+    },
+    "ankle-right": {
+      "name": "ankle-right",
+      "color": [85,0,255],
+      "x": 0.576171875,
+      "y": 0.896484375,
+      "childLink": null,
+      "parentLink": {
+        "linkName": "knee-right-to-ankle-right",
+        "parentName": "knee-right",
+        "color": [0,1,153]
+      }
+    },
+    "crown-left": {
+      "name": "crown-left",
+      "color": [170,0,255],
+      "x": 0.498046875,
+      "y": 0.123046875,
+      "childLink": {
+        "linkName": "crown-left-to-ear-left",
+        "childName": "ear-left",
+        "color": [102,0,153]
+      },
+      "parentLink": {
+        "linkName": "head-to-crown-left",
+        "parentName": "head",
+        "color": [51,0,153]
+      }
+    },
+    "crown-right": {
+      "name": "crown-right",
+      "color": [255,0,255],
+      "x": 0.546875,
+      "y": 0.125,
+      "childLink": {
+        "linkName": "crown-right-to-ear-right",
+        "childName": "ear-right",
+        "color": [153,0,102]
+      },
+      "parentLink": {
+        "linkName": "head-to-crown-right",
+        "parentName": "head",
+        "color": [153,0,153]
+      }
+    },
+    "ear-left": {
+      "name": "ear-left",
+      "color": [255,0,170],
+      "x": 0.46484375,
+      "y": 0.142578125,
+      "childLink": null,
+      "parentLink": {
+        "linkName": "crown-left-to-ear-left",
+        "parentName": "crown-left",
+        "color": [102,0,153]
+      }
+    },
+    "ear-right": {
+      "name": "ear-right",
+      "color": [255,0,85],
+      "x": 0.578125,
+      "y": 0.142578125,
+      "childLink": null,
+      "parentLink": {
+        "linkName": "crown-right-to-ear-right",
+        "parentName": "crown-right",
+        "color": [153,0,102]
+      }
+    }
+  }
 
 }
 
@@ -2641,6 +3030,9 @@ function setupUI() {
             }
           },
           updateContext: () => {
+            if( uiSettings.activeTool === "generate" ) { generateButton.classList.add( "on" ); }
+            else { generateButton.classList.remove( "on" ); }
+
             //if not generative layer selected, unavailable
             if( selectedLayer?.layerType !== "generative" ) {
               generateButton.classList.add( "unavailable" );
@@ -2649,31 +3041,12 @@ function setupUI() {
               if( uiSettings.activeTool === "generate" )
                 uiSettings.setActiveTool( null );
             }
-
-            //if just switched to generative layer, and paint tool is still active, make this the active
-            if( false && selectedLayer?.layerType === "generative" && ( generateButton.classList.contains( "unavailable" ) || uiSettings.activeTool === "paint" ) ) {
-              //just switched to gen layer, should display gen controls right away, no?
-              //absolutely have to stop displaying paint tool, if that's what we're on
-              generateButton.classList.remove( "unavailable" );
-              generateButton.classList.add( "on" );
-              setupUIGenerativeControls( selectedLayer.generativeSettings.apiFlowName );
-              uiSettings.setActiveTool( "generate" );
-            }
-
-            //if / ifnot the active tool, on/noton
-            if( uiSettings.activeTool === "generate" ) {
-              generateButton.classList.add( "on" );
-            } else {
-              generateButton.classList.remove( "on" );
-            }
-
             //mark if available
             if( selectedLayer?.layerType === "generative" ) {
               generateButton.classList.remove( "unavailable" );
               generateButton.querySelector(".tooltip" ).textContent = "AI Generation Tool";
             }
-
-            },
+          },
         },
         { tooltip: [ "AI Generation Tool", "to-right", "vertical-center" ] }
       )
@@ -2688,11 +3061,16 @@ function setupUI() {
         paintButton,
         {
           onclick: () => {
-            if( ! paintButton.classList.contains( "unavailable" ) ) {
+            if( ! paintButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
               uiSettings.setActiveTool( "paint" )
+            } else {
+              paintButton.classList.add( "unavailable" );
             }
           },
           updateContext: () => {
+            if( uiSettings.activeTool === "paint" ) { paintButton.classList.add( "on" ); }
+            else { paintButton.classList.remove( "on" ); }
+
             //if not paint layer selected, unavailable
             if( selectedLayer?.layerType !== "paint" ) {
               paintButton.classList.add( "unavailable" );
@@ -2705,12 +3083,6 @@ function setupUI() {
               paintButton.querySelector(".tooltip" ).textContent = "Paint Tool";
             }
 
-            
-            if( uiSettings.activeTool === "paint" ) {
-              paintButton.classList.add( "on" );
-            } else {
-              paintButton.classList.remove( "on" );
-            }
           },
         },
         { tooltip: [ "Paint Tool", "to-right", "vertical-center" ] }
@@ -2726,13 +3098,18 @@ function setupUI() {
         maskButton,
         {
           onclick: () => {
-            if( ! maskButton.classList.contains( "unavailable" ) ) {
+            if( ! maskButton.classList.contains( "unavailable" ) && [ "paint","generative","text" ].includes( selectedLayer?.layerType ) ) {
               uiSettings.setActiveTool( "mask" )
+            } else {
+              maskButton.classList.add( "unavailable" );
             }
           },
           updateContext: () => {
             //if no layer selected, unavailable
-            if( ! selectedLayer || [ "group","pose" ].includes( selectedLayer.layerType ) ) {
+            if( uiSettings.activeTool === "mask" ) maskButton.classList.add( "on" );
+            if( uiSettings.activeTool !== "mask" ) maskButton.classList.remove( "on" );
+            
+            if( ! selectedLayer || ! [ "paint", "generative", "text" ].includes( selectedLayer?.layerType ) ) {
               maskButton.classList.add( "unavailable" );
               maskButton.querySelector(".tooltip" ).textContent = "Mask Tool [Select paint, text, or generative layer to enable]";
               maskButton.classList.remove( "on" );
@@ -2757,19 +3134,17 @@ function setupUI() {
         transformButton,
         {
           onclick: () => {
-            if( ! transformButton.classList.contains( "unavailable" ) ) {
-              uiSettings.setActiveTool( "transform" )
+            if( ! transformButton.classList.contains( "unavailable" ) && selectedLayer ) {
+              uiSettings.setActiveTool( "transform" );
+            } else {
+              transformButton.classList.add( "unavailable" );
             }
           },
           updateContext: () => {
-
-            if( transformButton.classList.contains( "unimplemented" ) ) {
-              transformButton.classList.add( "unavailable" );
-              transformButton.classList.remove( "on" );
-              transformButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Transform Tool" + (selectedLayer ? "" : " [Select layer to enable]");
-              return;
-            }
             //if no layer selected, unavailable
+            //This tool AFAIK can be used on every layer type.
+            if( uiSettings.activeTool === "transform" ) transformButton.classList.add( "on" );
+            else transformButton.classList.remove( "on" );
             if( ! selectedLayer ) {
               transformButton.classList.add( "unavailable" );
               transformButton.querySelector(".tooltip" ).textContent = "Transform Tool [Select layer to enable]";
@@ -2790,31 +3165,26 @@ function setupUI() {
     {
       const floodFillButton = document.createElement( "div" );
       floodFillButton.classList.add( "tools-column-flood-fill-button", "round-toggle", "animated", "unavailable" );
-      //floodFillButton.classList.add( "tools-column-flood-fill-button", "round-toggle", "animated", "unimplemented", "unavailable" );
       toolsColumn.appendChild( floodFillButton );
       UI.registerElement(
         floodFillButton,
         {
           onclick: () => {
-            if( ! floodFillButton.classList.contains( "unavailable" ) && ! floodFillButton.classList.contains( "unimplemented" ) ) {
-              console.log( "Setting active tool to floodfill." );
+            if( ! floodFillButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
               uiSettings.setActiveTool( "flood-fill" );
+            } else {
+              floodFillButton.classList.add( "unavailable" );
             }
           },
           updateContext: () => {
 
-            if( floodFillButton.classList.contains( "unimplemented" ) ) {
-              floodFillButton.classList.add( "unavailable" );
-              floodFillButton.classList.remove( "on" );
-              floodFillButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Flood Fill Tool" + (selectedLayer ? "" : " [Select paint layer to enable]");
-              return;
-            }
             //if no layer selected, unavailable
             if( selectedLayer?.layerType !== "paint" ) {
               floodFillButton.classList.add( "unavailable" );
               floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool [Select paint layer to enable]";
               floodFillButton.classList.remove( "on" );
-            } else {
+            }
+            if( selectedLayer?.layerType === "paint" ) {
               floodFillButton.classList.remove( "unavailable" );
               floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool";
               if( uiSettings.activeTool === "flood-fill" ) {
@@ -2850,11 +3220,12 @@ function setupUI() {
               return;
             }
             //if no layer selected, unavailable
-            if( ! selectedLayer?.layerType === "text" ) {
+            if( selectedLayer?.layerType !== "text" ) {
               textToolButton.classList.add( "unavailable" );
               textToolButton.querySelector(".tooltip" ).textContent = "Text Tool [Select text layer to enable]";
               textToolButton.classList.remove( "on" );
-            } else {
+            } 
+            if( selectedLayer?.layerType === "text" ) {
               textToolButton.classList.remove( "unavailable" );
               textToolButton.querySelector(".tooltip" ).textContent = "Text Tool";
               if( uiSettings.activeTool === "text-tool" ) textToolButton.classList.add( "on" );
@@ -2869,30 +3240,27 @@ function setupUI() {
     //the pose tool button
     {
       const poseButton = document.createElement( "div" );
-      poseButton.classList.add( "tools-column-pose-button", "round-toggle", "animated", "unimplemented", "unavailable" );
+      poseButton.classList.add( "tools-column-pose-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( poseButton );
       UI.registerElement(
         poseButton,
         {
           onclick: () => {
-            if( ! poseButton.classList.contains( "unavailable" ) && ! poseButton.classList.contains( "unimplemented" ) ) {
-              uiSettings.setActiveTool( "pose" )
+            if( ! poseButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "pose" ) {
+              uiSettings.setActiveTool( "pose" );
+              document.querySelector( "#pose-rig-container" ).loadLayer( selectedLayer );
+            } else {
+              poseButton.classList.add( "unavailable" );
             }
           },
           updateContext: () => {
-
-            if( poseButton.classList.contains( "unimplemented" ) ) {
-              poseButton.classList.add( "unavailable" );
-              poseButton.classList.remove( "on" );
-              poseButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Pose Tool" + (selectedLayer ? "" : " [Select pose layer to enable]");
-              return;
-            }
             //if no layer selected, unavailable
-            if( ! selectedLayer?.layerType === "pose" ) {
+            if( selectedLayer?.layerType !== "pose" ) {
               poseButton.classList.add( "unavailable" );
               poseButton.querySelector(".tooltip" ).textContent = "Pose Tool [Select pose layer to enable]";
               poseButton.classList.remove( "on" );
-            } else {
+            }
+            if( selectedLayer?.layerType === "pose" ) {
               poseButton.classList.remove( "unavailable" );
               poseButton.querySelector(".tooltip" ).textContent = "Pose Tool";
               if( uiSettings.activeTool === "pose" ) poseButton.classList.add( "on" );
@@ -2900,7 +3268,7 @@ function setupUI() {
             }
           },
         },
-        { tooltip: [ "Flood Fill Tool", "to-right", "vertical-center" ] }
+        { tooltip: [ "Pose Tool", "to-right", "vertical-center" ] }
       )
     }
 
@@ -2918,16 +3286,26 @@ function setupUI() {
       {
         updateContext: () => {
           if( uiSettings.activeTool === "paint" ) {
-            paintToolsOptionsRow.classList.remove( "hidden" );
-            const colorWell = document.querySelector( ".paint-tools-options-color-well" );
-            colorWell.classList.remove( "hidden" );
-            paintToolsOptionsRow.appendChild( colorWell );
+            if( selectedLayer?.layerType === "paint" ) {
+              paintToolsOptionsRow.classList.remove( "hidden" );
+              const colorWell = document.querySelector( ".paint-tools-options-color-well" );
+              colorWell.classList.remove( "hidden" );
+              paintToolsOptionsRow.appendChild( colorWell );
+            } else {
+              paintToolsOptionsRow.classList.add( "hidden" );
+              uiSettings.setActiveTool( null );
+            }
           }
           else if( uiSettings.activeTool === "mask" ) {
-            paintToolsOptionsRow.classList.remove( "hidden" );
-            const colorWell = document.querySelector( ".paint-tools-options-color-well" );
-            colorWell.classList.add( "hidden" );
-            paintToolsOptionsRow.appendChild( colorWell );
+            if( [ "paint", "generative", "text" ].contains( selectedLayer?.layerType ) ) {
+              paintToolsOptionsRow.classList.remove( "hidden" );
+              const colorWell = document.querySelector( ".paint-tools-options-color-well" );
+              colorWell.classList.add( "hidden" );
+              paintToolsOptionsRow.appendChild( colorWell );
+            } else {
+              paintToolsOptionsRow.classList.add( "hidden" );
+              uiSettings.setActiveTool( null );
+            }
           }
           else {
             paintToolsOptionsRow.classList.add( "hidden" );
@@ -3266,25 +3644,33 @@ function setupUI() {
     transformToolOptionsRow.classList.add( "flex-row", "hidden", "animated" );
     transformToolOptionsRow.id = "transform-tools-options-row";
     uiContainer.appendChild( transformToolOptionsRow );
+    let currentLayer = null;
     UI.registerElement(
       transformToolOptionsRow,
       {
         updateContext: () => {
           if( uiSettings.activeTool === "transform" && selectedLayer ) {
             if( selectedLayer.layerType === "generative" ) {
-              clearDataCache( selectedLayer );
+              if( currentLayer !== selectedLayer ) {
+                clearDataCache( selectedLayer );
+                currentLayer = selectedLayer;
+              }
               //update the tools
               transformToolOptionsRow.querySelector( ".width-slider" ).loadLayer( selectedLayer );
               transformToolOptionsRow.querySelector( ".width-slider" ).classList.remove( "hidden" );
               transformToolOptionsRow.querySelector( ".height-slider" ).loadLayer( selectedLayer );
               transformToolOptionsRow.querySelector( ".height-slider" ).classList.remove( "hidden" );
-            } else {
+            }
+            if( selectedLayer.layerType !== "generative" ) {
               transformToolOptionsRow.querySelector( ".width-slider" ).classList.add( "hidden" );
               transformToolOptionsRow.querySelector( ".height-slider" ).classList.add( "hidden" );
             }
             transformToolOptionsRow.classList.remove( "hidden" );
           }
           else {
+            if( uiSettings.activeTool === "transform" ) {
+              uiSettings.setActiveTool( null );
+            }
             transformToolOptionsRow.classList.add( "hidden" );
           }
         }
@@ -3298,7 +3684,7 @@ function setupUI() {
     //the width slider
     {
       const widthSlider = UI.make.numberSlider({
-        label: "width", slideMode: "contain-step",
+        label: "Width", slideMode: "contain-step",
         value: 512, min: 0, max: 4096, step: 1
       });
       widthSlider.classList.add( "width-slider" );
@@ -3311,7 +3697,7 @@ function setupUI() {
     //the height slider
     {
       const heightSlider = UI.make.numberSlider({
-        label: "height", slideMode: "contain-step",
+        label: "Height", slideMode: "contain-step",
         value: 512, min: 0, max: 4096, step: 1
       });
       heightSlider.classList.add( "height-slider" );
@@ -3328,17 +3714,22 @@ function setupUI() {
   {
     const floodFillOptionsRow = document.createElement( "div" );
     floodFillOptionsRow.classList.add( "flex-row", "hidden", "animated" );
-    floodFillOptionsRow.id = "paint-tools-options-row";
+    floodFillOptionsRow.id = "flood-fill-tools-options-row";
     uiContainer.appendChild( floodFillOptionsRow );
     UI.registerElement(
       floodFillOptionsRow,
       {
         updateContext: () => {
           if( uiSettings.activeTool === "flood-fill" ) {
-            floodFillOptionsRow.classList.remove( "hidden" );
-            const colorWell = document.querySelector( ".paint-tools-options-color-well" );
-            colorWell.classList.remove( "hidden" );
-            floodFillOptionsRow.appendChild( colorWell );
+            if( selectedLayer?.layerType === "paint" ) {
+              floodFillOptionsRow.classList.remove( "hidden" );
+              const colorWell = document.querySelector( ".paint-tools-options-color-well" );
+              colorWell.classList.remove( "hidden" );
+              floodFillOptionsRow.appendChild( colorWell );
+            } else {
+              uiSettings.setActiveTool( null );
+              floodFillOptionsRow.classList.add( "hidden" );
+            }
           }
           else {
             floodFillOptionsRow.classList.add( "hidden" );
@@ -3350,11 +3741,464 @@ function setupUI() {
       }
     );
 
-    //the colorwell is here, but it's swiped from the paint tools
-    //need a toggle for fill vs. erase
+    //uiSettings.toolsSettings["flood-fill"].erase = true | false
+    //the erase toggle
+    {
+      const eraseToggle = document.createElement( "div" );
+      //brushSelectBrowseButton.classList.add( "asset-browser-button" );
+      eraseToggle.classList.add( "flood-fill-options-erase-toggle", "round-toggle", "on" );
+      UI.registerElement(
+        eraseToggle,
+        {
+          onclick: () => {
+            let erasing = uiSettings.toolsSettings["flood-fill"].erase;
+            erasing = ! erasing;
+            uiSettings.toolsSettings["flood-fill"].erase = erasing;
+            if( erasing === true ) eraseToggle.classList.add( "on" );
+            if( erasing === false ) eraseToggle.classList.remove( "on" );
+          },
+          updateContext: () => {
+            if( uiSettings.toolsSettings["flood-fill"].erase === true ) eraseToggle.classList.add( "on" );
+            else eraseToggle.classList.remove( "on" );
+          }
+        },
+        { tooltip: [ "Flood Erase Mode", "below", "to-right-of-center" ], zIndex:10000, }
+      );
+      floodFillOptionsRow.appendChild( eraseToggle );
+    }
+    //vertical-spacer
     //need a toggle for area vs. color
-    //need a slider for tolerance
-    //need a slider for padding
+    //uiSettings.toolsSettings["flood-fill"].floodTarget = "area" | "color"
+    {
+      const colorToggle = document.createElement( "div" );
+      //brushSelectBrowseButton.classList.add( "asset-browser-button" );
+      colorToggle.classList.add( "flood-fill-options-color-toggle", "round-toggle", "on" );
+      UI.registerElement(
+        colorToggle,
+        {
+          onclick: () => {
+            let current = uiSettings.toolsSettings["flood-fill"].floodTarget;
+
+            if( current === "area" ) current = "color";
+            else current = "area";
+
+            uiSettings.toolsSettings["flood-fill"].floodTarget = current;
+
+            if( current === "area" ) colorToggle.classList.remove( "on" );
+            if( current === "color" ) colorToggle.classList.add( "on" );
+          },
+          updateContext: () => {
+            let current = uiSettings.toolsSettings["flood-fill"].floodTarget;
+            if( current === "area" ) colorToggle.classList.remove( "on" );
+            if( current === "color" ) colorToggle.classList.add( "on" );
+          }
+        },
+        { tooltip: [ "Flood Color Instead of Area", "below", "to-right-of-center" ], zIndex:10000, }
+      );
+      floodFillOptionsRow.appendChild( colorToggle );
+    }
+    //vertical-spacer
+    //slider for tolerance
+    {
+      const toleranceSlider = UI.make.numberSlider({
+        label: "Tolerance", slideMode: "contain-step",
+        value: uiSettings.toolsSettings["flood-fill"].tolerance, min: 0, max: 1, step: 0.01
+      });
+      toleranceSlider.classList.add( "flood-fill-options-tolerance-slider" );
+      toleranceSlider.onend = tolerance => uiSettings.toolsSettings["flood-fill"].tolerance = tolerance;
+      floodFillOptionsRow.appendChild( toleranceSlider ); 
+    }
+    //slider for padding
+    {
+      const paddingSlider = UI.make.numberSlider({
+        label: "Padding", slideMode: "contain-step",
+        value: uiSettings.toolsSettings["flood-fill"].padding, min: 0, max: 10, step: 0.1
+      });
+      paddingSlider.classList.add( "flood-fill-options-padding-slider" );
+      paddingSlider.onend = padding => uiSettings.toolsSettings["flood-fill"].padding = padding;
+      floodFillOptionsRow.appendChild( paddingSlider ); 
+    }
+
+    //the colorwell is here, but it's swiped from the paint tools
+
+  }
+
+  //the pose rig tool options
+  {
+    
+    const poseToolsOptionsRow = document.createElement( "div" );
+    poseToolsOptionsRow.classList.add( "flex-row", "hidden", "animated" );
+    poseToolsOptionsRow.id = "pose-tools-options-row";
+    uiContainer.appendChild( poseToolsOptionsRow );
+
+    UI.registerElement(
+      poseToolsOptionsRow,
+      {
+        updateContext: () => {
+          if( uiSettings.activeTool === "pose" ) {
+            if( selectedLayer?.layerType !== "pose" ) {
+              //uiSettings.setActiveTool( null ); //setting from rig container's updateContext; don't double-trigger
+              poseToolsOptionsRow.classList.add( "hidden" );
+            }
+            if( selectedLayer.layerType === "pose" ) {
+              poseToolsOptionsRow.classList.remove( "hidden" );
+            }
+          }
+          else poseToolsOptionsRow.classList.add( "hidden" );
+        }
+      },
+      {
+        zIndex: 1000,
+      }
+    );
+
+    
+    //the move-children toggle
+    {
+      const moveChildrenToggle = document.createElement( "div" );
+      //brushSelectBrowseButton.classList.add( "asset-browser-button" );
+      moveChildrenToggle.classList.add( "pose-tools-options-move-children-toggle", "round-toggle", "on" );
+      UI.registerElement(
+        moveChildrenToggle,
+        {
+          onclick: () => {
+            let moving = uiSettings.toolsSettings.pose.moveChildren;
+            moving = ! moving;
+            uiSettings.toolsSettings.pose.moveChildren = moving;
+            if( moving === true ) moveChildrenToggle.classList.add( "on" );
+            if( moving === false ) moveChildrenToggle.classList.remove( "on" );
+          },
+          updateContext: () => {
+            if( uiSettings.toolsSettings.pose.moveChildren === true ) moveChildrenToggle.classList.add( "on" );
+            else moveChildrenToggle.classList.remove( "on" );
+          }
+        },
+        { tooltip: [ "Move Linked Nodes", "below", "to-right-of-center" ], zIndex:10000, }
+      );
+      poseToolsOptionsRow.appendChild( moveChildrenToggle );
+    }
+
+  }
+
+  //the pose rig control handles
+  {
+
+    const poseRigContainer = document.createElement( "div" );
+    //poseRigContainer.classList.add( "hidden" );
+    poseRigContainer.id = "pose-rig-container";
+
+    const updateView = () => {
+
+      if( poseRigContainer.classList.contains( "hidden" ) )
+        return;
+
+      console.log( "Updating view on rig." );
+      //update all the node positions
+      //origin and legs already loaded
+      const rig = currentLayer.rig;
+      getTransform();
+      //Why is this translated along the yLeg by half its length???
+      //This is the ONLY place I call updateNodePosition.
+      //Regardless of view, the on-screen-points are always exactly translated along the layer's y-leg by 50%
+      let offset;
+      for( const node of poseRigHandles ) {
+        if( ! offset ) {
+          const r = node.getClientRects()[ 0 ];
+          offset = r.width * devicePixelRatio / 2;
+        }
+        const name = node.rigNodeName;
+        let canvasX = rig[ name ].x, canvasY = rig[ name ].y;
+        updateNodePosition( node, canvasX, canvasY, offset );
+      }
+
+    };
+
+    UI.registerElement(
+      poseRigContainer,
+      {
+        updateContext: () => {
+          if( uiSettings.activeTool === "pose" ) {
+            if( selectedLayer?.layerType !== "pose" ) {
+              uiSettings.setActiveTool( null );
+              poseRigContainer.classList.add( "hidden" );
+            }
+            if( selectedLayer.layerType === "pose" ) {
+              poseRigContainer.classList.remove( "hidden" );
+              if( selectedLayer !== currentLayer )
+                poseRigContainer.loadLayer( selectedLayer );
+            }
+          }
+          else poseRigContainer.classList.add( "hidden" );
+        },
+        updateView,
+      }
+    );
+    underlayContainer.appendChild( poseRigContainer );
+
+    let currentLayer,
+      origin,
+      xLeg, xLegLength, normalizedXLeg,
+      yLeg, yLegLength, normalizedYLeg;
+
+    poseRigContainer.loadLayer = layer => {
+
+      //load our layer's coordinate space
+      origin = { x:layer.topLeft[0], y:layer.topLeft[1] };
+      xLeg = { x:layer.topRight[0] - origin.x, y: layer.topRight[1] - origin.y };
+      xLegLength = Math.sqrt( xLeg.x**2 + xLeg.y**2 );
+      normalizedXLeg = { x:xLeg.x/xLegLength, y:xLeg.y/xLegLength };
+      yLeg = { x:layer.bottomLeft[0] - origin.x, y: layer.bottomLeft[1] - origin.y };
+      yLegLength = Math.sqrt( yLeg.x**2 + yLeg.y**2 );
+      normalizedYLeg = { x:yLeg.x/yLegLength, y:yLeg.y/yLegLength };
+
+      currentLayer = layer;
+      //do an initial update of all our node positions
+      updateView();
+
+    }
+
+    const updateNodePosition = ( node, canvasX, canvasY, offset ) => {
+      //cast our canvas points to global space
+      const xLegScale = canvasX / currentLayer.w,
+        yLegScale = canvasY / currentLayer.h;
+      const globalPointX = origin.x + xLegScale * xLeg.x + yLegScale * yLeg.x,
+        globalPointY = origin.y + xLegScale * xLeg.y + yLegScale * yLeg.y;
+
+      //cast our global points to the screen's pixel space
+      let [ screenX,screenY ] = transformPoint( [ globalPointX, globalPointY, 1 ] );
+      screenX -= offset;
+      screenY -= offset;
+
+      //update our node's position
+      node.x = screenX;
+      node.y = screenY;
+      node.style.left = screenX / devicePixelRatio + "px";
+      node.style.top = screenY / devicePixelRatio + "px";
+    }
+
+    const updateRigData = ( node, _inverter, offset ) => {
+      //cast our node point to global space
+      const nodePoint = [ node.x + offset, node.y + offset, 1 ];
+
+      mul3x1( _inverter, nodePoint, nodePoint );
+
+      //cast global space to the layer's canvas space
+      let x = nodePoint[ 0 ] - origin.x;
+      let y = nodePoint[ 1 ] - origin.y;
+
+      //project on normals
+      let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
+      let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
+
+      //scale inside canvas
+      let canvasX = xProjection * selectedLayer.w / xLegLength;
+      let canvasY = yProjection * selectedLayer.h / yLegLength;
+
+      //update the rig data
+      const rigNode = currentLayer.rig[ node.rigNodeName ];
+      rigNode.x = canvasX;
+      rigNode.y = canvasY;
+
+    }
+
+
+    let showingHandles = true;
+    const poseRigHandles = [];
+
+    const addPoseRigHandle = ( screenX, screenY, colorStyle, name, parentName ) => {
+      const poseRigHandle = document.createElement( "div" );
+      poseRigHandle.classList.add( "pose-rig-handle", "pose-rig-name-"+name, "pose-rig-parent-name-" + parentName );
+      poseRigHandle.style.left = screenX/devicePixelRatio + "px";
+      poseRigHandle.style.top = screenY/devicePixelRatio + "px";
+      poseRigHandle.style.backgroundColor = colorStyle;
+      poseRigHandle.rigNodeName = name;
+      poseRigHandle.rigNodeParentName = parentName;
+      poseRigHandle.x = screenX;
+      poseRigHandle.y = screenY;
+      let formalName = name.split( "-" );
+      formalName[0] = formalName[0].split();
+      formalName[0][0] = formalName[0][0].toUpperCase();
+      if( formalName[1] ) {
+        formalName[1] = formalName[1].split();
+        formalName[1][0] = formalName[1][0].toUpperCase();
+      }
+      formalName = formalName[0].join("") + ( formalName[1] ? ( " " + formalName[1].join("") ) : "" );
+
+      let draggingNodes = [];
+      UI.registerElement(
+        poseRigHandle,
+        {
+          ondrag: ({ rect, start, current, ending, starting, element }) => {
+            
+            const currentX = current.x * devicePixelRatio,
+              currentY = current.y * devicePixelRatio,
+              startX = start.x * devicePixelRatio,
+              startY = start.y * devicePixelRatio;
+
+            if( starting ) {
+              poseRigHandle.classList.remove( "hovering" );
+              draggingNodes.length = 0;
+              draggingNodes.push( poseRigHandle );
+              if( uiSettings.toolsSettings.pose.moveChildren === true )
+                draggingNodes.push( ...getChildHandles( name ) );
+              for( const node of draggingNodes ) {
+                node.startX = node.x;
+                node.startY = node.y;
+              }
+            }
+            if( ! starting ) {
+              //get the screen->global space inversion
+              _originMatrix[ 2 ] = -view.origin.x;
+              _originMatrix[ 5 ] = -view.origin.y;
+              _positionMatrix[ 2 ] = view.origin.x;
+              _positionMatrix[ 5 ] = view.origin.y;
+
+              mul3x3( viewMatrices.current , _originMatrix , _inverter );
+              mul3x3( _inverter , viewMatrices.moving , _inverter );
+              mul3x3( _inverter , _positionMatrix , _inverter );
+              inv( _inverter , _inverter );
+
+              for( const node of draggingNodes ) {
+                node.x = node.startX + ( (currentX - startX)  ),
+                node.y = node.startY + ( (currentY - startY)  );
+                node.style.left = node.x/devicePixelRatio + "px";
+                node.style.top = node.y/devicePixelRatio + "px";
+
+                const offset = rect.width*devicePixelRatio/2;
+
+                //update the rig data
+                updateRigData( node, _inverter, offset );
+              }
+
+              //update the render
+              renderLayerPose( currentLayer );
+            }
+          },
+        },
+        {
+          tooltip: [ formalName, "below", "to-right-of-center" ]
+        }
+      )
+
+      poseRigHandles.push( poseRigHandle );
+      poseRigContainer.appendChild( poseRigHandle );
+    }
+
+    const getChildHandles = name => {
+      const childHandles = [];
+      for( const childHandle of poseRigHandles ) {
+        if( childHandle.rigNodeParentName === name ) {
+          childHandles.push( childHandle );
+          childHandles.push( ...getChildHandles( childHandle.rigNodeName ) );
+        }
+      }
+      return childHandles;
+    }
+
+    //add the nodes
+    for( const node of Object.values( uiSettings.defaultPoseRig ) ) {
+      const { name, color, x, y, parentLink } = node;
+      const parentName = parentLink?.parentName || null;
+      const [r,g,b] = color;
+      addPoseRigHandle( x*window.innerWidth, y*window.innerHeight, `rgb(${r},${g},${b})`, name, parentName );
+    }
+
+    /*
+    {
+      const poseRigPointsArray = [0.521484375, 0.146484375, 1.0, 0.517578125, 0.2578125, 1.0, 0.447265625, 0.259765625, 1.0, 0.31640625, 0.3203125, 1.0, 0.19140625, 0.333984375, 1.0, 0.58984375, 0.259765625, 1.0, 0.703125, 0.322265625, 1.0, 0.814453125, 0.3359375, 1.0, 0.48046875, 0.48828125, 1.0, 0.47265625, 0.69140625, 1.0, 0.451171875, 0.89453125, 1.0, 0.57421875, 0.484375, 1.0, 0.5703125, 0.693359375, 1.0, 0.576171875, 0.896484375, 1.0, 0.498046875, 0.123046875, 1.0, 0.546875, 0.125, 1.0, 0.46484375, 0.142578125, 1.0, 0.578125, 0.142578125, 1.0];
+      const poseRigPoints = [];
+      const pointInfo = {
+        0: [ "head", 255,0,0 ],
+        "head-to-crown-left": [ 51,0,153 ],
+        14: [ "crown-left", 170,0,255 ],
+        "crown-left-to-ear-left": [ 102,0,153 ],
+        16: [ "ear-left", 255,0,170 ],
+        "head-to-crown-right": [ 153,0,153 ],
+        15: [ "crown-right", 255,0,255 ],
+        "crown-right-to-ear-right": [ 153,0,102 ],
+        17: [ "ear-right", 255, 0, 85 ],
+        "spine-to-head": [ 0,0,153 ],
+  
+        1: [ "spine", 255,85,0 ],
+  
+        "spine-to-shoulder-left": [ 153,0,0 ],
+        2: [ "shoulder-left", 255,170,0 ],
+        "shoulder-left-to-elbow-left": [ 153,102,0 ],
+        3: [ "elbow-left", 255,255,0 ],
+        "elbow-left-to-wrist-left": [ 153,153,0 ],
+        4: [ "wrist-left", 170,255,0 ],
+  
+        "spine-to-shoulder-right": [ 153,51,0 ],
+        5: [ "shoulder-right", 85,255,0 ],
+        "shoulder-right-to-elbow-right": [ 102,153,0 ],
+        6: [ "elbow-right", 0,255,0 ],
+        "elbow-right-to-wrist-right": [ 51,153,0 ],
+        7: [ "wrist-right", 0,255,85 ],
+  
+        "spine-to-hip-left": [ 0, 153, 0 ],
+        8: [ "hip-left", 0,255,170 ],
+        "hip-left-to-knee-left": [ 0,153,51 ],
+        9: [ "knee-left", 0,255,255 ],
+        "knee-left-to-ankle-left": [ 0,153,102 ],
+        10: [ "ankle-left", 0,170,255 ],
+  
+        "spine-to-hip-right": [ 0,153,153 ],
+        11: [ "hip-right", 0,85,255 ],
+        "hip-right-to-knee-right": [ 0,102,153 ],
+        12: [ "knee-right", 0,0,255 ],
+        "knee-right-to-ankle-right": [ 0,1,153 ],
+        13: [ "ankle-right", 85,0,255 ],
+  
+      }
+      for( let i=0; i<poseRigPointsArray.length; i+=3 ) {
+        poseRigPoints.push( { x:poseRigPointsArray[i+0], y:poseRigPointsArray[i+1], id: i/3 } );
+      }
+      for( const {x,y,id} of poseRigPoints ) {
+        addPoseRigHandle( x*window.innerWidth, y*window.innerHeight, id );
+      }
+  
+      //build the object
+      let rigObject = {};
+      for( let i=0; i<poseRigPointsArray.length; i+=3 ) {
+        const x = poseRigPointsArray[ i + 0 ],
+          y = poseRigPointsArray[ i + 1 ],
+          id = i / 3;
+        const [ name, r,g,b ] = pointInfo[ id ];
+        let childLink = null;
+        const linkToChildKey = Object.keys( pointInfo ).find( k => k.indexOf( name ) === 0 );
+        if( linkToChildKey ) {
+          const childName = linkToChildKey.replace( name + "-to-", "" );
+          childLink = {
+            linkName: linkToChildKey,
+            childName,
+            color: pointInfo[ linkToChildKey ]
+          };
+        }
+        let parentLink = null;
+        const linkFromParentKey = Object.keys( pointInfo ).find( k => k.indexOf( name ) > 0 );
+        if( linkFromParentKey ) {
+          const parentName = linkFromParentKey.replace( "-to-" + name, "" );
+          parentLink = {
+            linkName: linkFromParentKey,
+            parentName,
+            color: pointInfo[ linkFromParentKey ]
+          }
+        }
+        rigObject[ name ] = {
+          name, color: [ r,g,b ], x, y,
+          childLink,
+          parentLink
+        }
+      }
+  
+      console.log( JSON.stringify( rigObject ) );
+  
+    }
+    */
+
+    const handleUpdateLoop = t => {
+      if( showingHandles === true ) requestAnimationFrame( handleUpdateLoop );
+    }
 
   }
 
@@ -3595,6 +4439,10 @@ function setupUI() {
       numberInput.max = 1;
       numberInput.step = 0.01;
       numberInput.value = 0.5;
+      numberInput.onkeydown = e => {
+        if( e.code === "Escape" ) closeButton.onclick();
+        if( e.code === "Enter" ) applyButton.onclick();
+      }
       numberInput.classList.add( "overlay-number-input", "overlay-element", "animated" );
       numberInputOverlay.appendChild( numberInput );
       //the apply/save button
@@ -4100,16 +4948,15 @@ function setupUI() {
       {
         //add add pose layer button
         const addPoseLayerButton = addLayersPanel.appendChild( document.createElement( "div" ) );
-        addPoseLayerButton.classList.add( "rounded-line-button", "animated", "unimplemented" );
+        addPoseLayerButton.classList.add( "rounded-line-button", "animated" );
         addPoseLayerButton.appendChild( new Image() ).src = "icon/rig.png";
         addPoseLayerButton.appendChild( document.createElement("span") ).textContent = "Add Pose Layer";
         UI.registerElement( addPoseLayerButton, {
           onclick: () => {
             addPoseLayerButton.classList.add( "pushed" );
             setTimeout( () => addPoseLayerButton.classList.remove( "pushed" ), UI.animationMS );
-            //addCanvasLayer( "pose" );
+            addCanvasLayer( "pose" );
             UI.deleteContext( "add-layers-panel-visible" );
-            console.error( "Pose layer unimplemented." );
           },
           updateContext: context => {
             if( context.has( "add-layers-panel-visible" ) ) addPoseLayerButton.uiActive = true;
@@ -4769,7 +5616,12 @@ function setupUIGenerativeControls( apiFlowName ) {
 
 }
 
-const keys = {}
+const keys = {};
+const keyBindings = {
+  "ctrl+z": { state: false, action: () => undo() },
+  "ctrl+shift+z": { state: false, action: () => redo() },
+  "ctrl+y": { state: false, action: () => redo() },
+};
 function enableKeyTrapping() {
   window.addEventListener( "keydown" , keyDownHandler );
   window.addEventListener( "keyup" , keyUpHandler );
@@ -4790,7 +5642,20 @@ function keyHandler( e , state ) {
 
     //update these key controls: arrow keys translate. 4&6 rotate fore and back. 8&2 zoom in and out
 
-    if( e.key === "ArrowRight" && selectedLayer ) {
+    let keyCombination = [];
+    if( e.code.indexOf( "Key" ) === 0 ) {
+      if( e.ctrlKey ) keyCombination.push( "ctrl" );
+      if( e.shiftKey ) keyCombination.push( "shift" );
+      keyCombination.push( e.key.toLowerCase() );
+      
+      const keyBinding = keyBindings[ keyCombination.join( "+" ) ];
+      if( keyBinding && keyBinding.state !== state ) {
+        keyBinding.state = state;
+        if( state === false ) keyBinding.action();
+      }
+    }
+
+    /* if( e.key === "ArrowRight" && selectedLayer ) {
       //let's move the layer right a bit
       for( const point of [ selectedLayer.bottomLeft, selectedLayer.bottomRight, selectedLayer.topLeft, selectedLayer.topRight ] ) {
         point[0] += 10;
@@ -4866,7 +5731,7 @@ function keyHandler( e , state ) {
         point[0] = origin[0] + newX;
         point[1] = origin[1] + newY;
       }
-    }
+    } */
 
     //console.log( ":" + e.key + ":" );
     //console.log( `Set ${e.code} to ${state}` );
@@ -4966,6 +5831,8 @@ function cloneObjectForJSON( sourceObject, cloneTarget, ignorePath, path=[] ) {
     const valueType = typeof sourceObject[ key ];
     if( [ "string", "number", "boolean" ].includes( valueType ) )
       cloneTarget[ key ] = sourceObject[ key ];
+    else if( sourceObject[ key ] === null )
+      cloneTarget[ key ] = null;
     else if( Array.isArray( sourceObject[ key ] ) ) {
       cloneTarget[ key ] ||= new Array( sourceObject[ key ].length );
       cloneObjectForJSON( sourceObject[ key ], cloneTarget[ key ], ignorePath, path.concat( key ) );
@@ -5003,6 +5870,8 @@ function saveJSON() {
       nodeUplinks,
       generativeControls,
 
+      rig,
+
       w, h,
       topLeft, topRight, bottomLeft, bottomRight,
       /* textureChanged, textureChangedRect,
@@ -5020,6 +5889,8 @@ function saveJSON() {
 
       visible,
       opacity,
+
+      rig,
 
       generativeSettings,
       nodeUplinks: [ ...nodeUplinks ],
@@ -5111,7 +5982,6 @@ function loadJSON() {
         for( const layer of layersSave ) {
           let newLayer = await addCanvasLayer( layer.layerType, layer.w, layer.h, lastLayer );
           lastLayer = newLayer;
-          console.log( "Got new layer: ", newLayer );
           const img = new Image();
           img.onload = () => {
             newLayer.context.drawImage( img, 0, 0 );
@@ -5142,6 +6012,8 @@ function loadJSON() {
             generativeSettings,
             nodeUplinks,
             generativeControls,
+
+            rig,
             
             w, h,
             topLeft, topRight, bottomLeft, bottomRight,
@@ -5162,6 +6034,8 @@ function loadJSON() {
           newLayer.nodeUplinks = new Set( nodeUplinks );
           newLayer.generativeControls = generativeControls;
 
+          newLayer.rig = rig;
+
           newLayer.w = w;
           newLayer.h = h;
           newLayer.topLeft = topLeft;
@@ -5179,6 +6053,8 @@ function loadJSON() {
           const { h,s,l } = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl;
           document.querySelector( ".paint-tools-options-color-well" ).style.backgroundColor = `hsl( ${h}turn ${s*100}% ${l*100}% )`;
         }
+
+        selectLayer( null );
 
         //clear undo again so we can't one-by-one remove our loaded layers
         clearUndoHistory();
@@ -5468,6 +6344,12 @@ const UI = {
   updateContext: () => {
     for( const [,events] of UI.elements ) {
       events.updateContext?.( UI.context );
+    }
+  },
+
+  updateView: () => {
+    for( const [,events] of UI.elements ) {
+      events.updateView?.();
     }
   },
 
@@ -6176,6 +7058,7 @@ function updateCycle( t ) {
         view.pan.x = cursor.current.x - cursor.origin.x;
         view.pan.y = cursor.current.y - cursor.origin.y;
         mat( 1 , 0 , view.pan.x , view.pan.y , viewMatrices.moving );
+        UI.updateView();
       }
   
       if( cursor.mode === "zoom" ) {
@@ -6188,6 +7071,7 @@ function updateCycle( t ) {
         const d = Math.sqrt( dx**2 + dy**2 );
         view.zoom = d / cursor.zoomLength;
         mat( view.zoom , 0 , 0 , 0 , viewMatrices.moving );
+        UI.updateView();
       }
   
       if( cursor.mode === "rotate" ) {
@@ -6200,6 +7084,7 @@ function updateCycle( t ) {
   
         view.angle = -Math.atan2( dx , dy );
         mat( 1 , view.angle , 0 , 0 , viewMatrices.moving );
+        UI.updateView();
       }
     }
   }
@@ -6243,6 +7128,7 @@ function updateCycle( t ) {
       view.pan.x = cx - pincher.origin.center.x;
       view.pan.y = cy - pincher.origin.center.y;
       mat( view.zoom , view.angle , view.pan.x , view.pan.y , viewMatrices.moving );
+      UI.updateView();
     }
   }
 }
@@ -6885,6 +7771,7 @@ function beginPaintGPU( layer ) {
     srcType = gl.UNSIGNED_BYTE;
     gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, brushTipCanvas );
 
+    //gl.generateMipmap( paintGPUResources.brushTipTexture );
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -6913,7 +7800,7 @@ function beginPaintGPU( layer ) {
 }
 function paintGPU( points, layer ) {
 
-  if( points.length < 3 ) return; //spline interpolating, minimum 3
+  if( points.length < 4 ) return; //spline interpolating, minimum 3
 
   //const layer = selectedLayer;
 
@@ -6929,17 +7816,18 @@ function paintGPU( points, layer ) {
 
   //const reblendLength = reblendSpacing * scaledBrushSize;
 
-  let [refX,refY,ref_,refPressure,refAltitudeAngle,refAzimuthAngle] = points[ points.length-3 ],
-    [bx,by,b_,bPressure,bAltitudeAngle,bAzimuthAngle] = points[ points.length-1 ],
-    [ax,ay,a_,aPressure,aAltitudeAngle,aAzimuthAngle] = points[ points.length-2 ];
+  let [refX,refY,ref_,refPressure,refAltitudeAngle,refAzimuthAngle] = points[ points.length-4 ],
+    [ax,ay,a_,aPressure,aAltitudeAngle,aAzimuthAngle] = points[ points.length-3 ],
+    [bx,by,b_,bPressure,bAltitudeAngle,bAzimuthAngle] = points[ points.length-2 ],
+    [toX,toY,to_,toPressure,toAltitudeAngle,toAzimuthAngle] = points[ points.length-1 ];
 
-  if( refPressure === bPressure && bPressure === aPressure && aPressure === 0.5 ) {
+  if( toPressure === refPressure && refPressure === bPressure && bPressure === aPressure && aPressure === 0.5 ) {
     //iffy pressure not supported signature (hopefully this doesn't bug anything out...)
     aAltitudeAngle = bAltitudeAngle = refAltitudeAngle = aAzimuthAngle = bAzimuthAngle = refAzimuthAngle = 0;
     aPressure = bPressure = refPressure = 1;
   }
   
-  if( bPressure === 0 ) return; //A stroke can't end on a zero-alpha. It'll clip the paint beneath.
+  if( bPressure === 0 || toPressure === 0 ) return; //A stroke can't end on a zero-alpha. It'll clip the paint beneath. (I think I fixed this w/ zbuffer though.)
 
   //transform our basis points  
   getTransform();
@@ -6956,18 +7844,25 @@ function paintGPU( points, layer ) {
 
   let [globalTransformAx,globalTransformAy] = [ax,ay],
     [globalTransformBx,globalTransformBy] = [bx,by],
-    [globalTransformRefx,globalTransformRefy] = [refX,refY];
+    [globalTransformRefx,globalTransformRefy] = [refX,refY],
+    [globalTransformTox,globalTransformToy] = [toX,toY];
   //we have points in the same global coordinate system as our canvas.
 
   //transform from canvas origin
+  globalTransformRefx -= canvasOriginX;
+  globalTransformRefy -= canvasOriginY;
   globalTransformAx -= canvasOriginX;
   globalTransformAy -= canvasOriginY;
   globalTransformBx -= canvasOriginX;
   globalTransformBy -= canvasOriginY;
-  globalTransformRefx -= canvasOriginX;
-  globalTransformRefy -= canvasOriginY;
+  globalTransformTox -= canvasOriginX;
+  globalTransformToy -= canvasOriginY;
 
   //cast to canvas space by projecting on legs
+  let canvasTransformRefx = globalTransformRefx*xLegX + globalTransformRefy*xLegY,
+    canvasTransformRefy = globalTransformRefx*yLegX + globalTransformRefy*yLegY;
+  canvasTransformRefx *= layer.w / lengthXLeg;
+  canvasTransformRefy *= layer.h / lengthYLeg;
   let canvasTransformAx = globalTransformAx*xLegX + globalTransformAy*xLegY,
     canvasTransformAy = globalTransformAx*yLegX + globalTransformAy*yLegY;
   canvasTransformAx *= layer.w / lengthXLeg;
@@ -6976,14 +7871,30 @@ function paintGPU( points, layer ) {
     canvasTransformBy = globalTransformBx*yLegX + globalTransformBy*yLegY;
   canvasTransformBx *= layer.w / lengthXLeg;
   canvasTransformBy *= layer.h / lengthYLeg;
-  let canvasTransformRefx = globalTransformRefx*xLegX + globalTransformRefy*xLegY,
-    canvasTransformRefy = globalTransformRefx*yLegX + globalTransformRefy*yLegY;
-  canvasTransformRefx *= layer.w / lengthXLeg;
-  canvasTransformRefy *= layer.h / lengthYLeg;
+  let canvasTransformTox = globalTransformTox*xLegX + globalTransformToy*xLegY,
+    canvasTransformToy = globalTransformTox*yLegX + globalTransformToy*yLegY;
+  canvasTransformTox *= layer.w / lengthXLeg;
+  canvasTransformToy *= layer.h / lengthYLeg;
 
   const pixelSpacing = Math.max( 1, brushSpacing * scaledBrushSize );
   //this lineLength is no longer accurate because of our spline interpolation tho...
   const lineLength = Math.max( 1, parseInt( Math.sqrt( (canvasTransformAx-canvasTransformBx)**2 + (canvasTransformAy-canvasTransformBy)**2 ) / pixelSpacing ) );
+
+  const tangentLength = lineLength * 0.33;
+
+  let
+    ref2b = [ (  canvasTransformBx - canvasTransformRefx ), ( canvasTransformBy - canvasTransformRefy ) ],
+    //ref2b = [ (  canvasTransformAx - canvasTransformRefx ), ( canvasTransformAy - canvasTransformRefy ) ],
+    ref2bLength = Math.sqrt( ref2b[0]**2 + ref2b[1]**2 ),
+    to2a = [ ( canvasTransformAx - canvasTransformTox ), ( canvasTransformAy - canvasTransformToy ) ],
+    //to2a = [ ( canvasTransformBx - canvasTransformTox ), ( canvasTransformBy - canvasTransformToy ) ],
+    to2aLength = Math.sqrt( to2a[0]**2 + to2a[1]**2 ),
+    aUnitTangent = [ ref2b[0] / ref2bLength, ref2b[1] / ref2bLength ], //a's tangent pointing forward
+    bUnitTangent = [ to2a[0] / to2aLength, to2a[1] / to2aLength ]; //b's tangent pointing backward
+
+  const cp1x = canvasTransformAx + aUnitTangent[0] * tangentLength, cp1y = canvasTransformAy + aUnitTangent[1] * tangentLength,
+    cp2x = canvasTransformBx + bUnitTangent[0] * tangentLength, cp2y = canvasTransformBy + bUnitTangent[1] * tangentLength;
+
 
   //Here, we would reblend in the CPU format, but that's a separate draw call on the same set of verts, so it moves down the line
 
@@ -7021,23 +7932,27 @@ function paintGPU( points, layer ) {
     //console.error( "PaintGPU: Needs to do point vector math." );
     //compute our initial vector
     //Vector spline interpolation temporarily on hold. D-: Have to figure this out though or no smooth paint.
-    //const referenceXYVector = [ canvasTransformAx - canvasTransformRefx, canvasTransformAy - canvasTransformRefy ],
-      //xyVector = [ canvasTransformBx - canvasTransformAx, canvasTransformBy - canvasTransformAy ];
-    //for( let i = 0; i<lineLength; i+=pixelSpacing ) {
-    for( let i = 0; i<lineLength; i++ ) {
+    for( let i = 0; i<lineLength; i+=pixelSpacing ) {
+    //for( let i = 0; i<lineLength; i++ ) {
       //get our interpolation, linear for now to see how it looks
       let fr = i / lineLength,
         f = 1 - fr;
+
+      //interpolate from a to b through our 2 control points
+      //x: A.x*(fi**3) + 3*cp1.x*(fi**2)*(f) + 3*cp2.x*(fi)*(f**2) + B.x*(f**3),
+      //y: A.y*(fi**3) + 3*cp1.y*(fi**2)*(f) + 3*cp2.y*(fi)*(f**2) + B.y*(f**3),
+      let paintX = canvasTransformAx*(f**3) + 3*cp1x*(f**2)*(fr) + 3*cp2x*(f)*(fr**2) + canvasTransformBx*(fr**3),
+        paintY = canvasTransformAy*(f**3) + 3*cp1y*(f**2)*(fr) + 3*cp2y*(f)*(fr**2) + canvasTransformBy*(fr**3);
 
       //This isn't right. Our last point will be in place, yes; but there'll be gaps because our spacing is wrong.
       //interpolate our vectors
       //const vector = [ referenceXYVector[0]*f + xyVector[0]*fr, referenceXYVector[1]*f + xyVector[1]*fr,];
       //get our current point
-      //let paintX = canvasTransformAx + vector[0], paintY = canvasTransformAy + vector[1];
+      //let paintX = canvasTransformAx + vector[0]*fr, paintY = canvasTransformAy + vector[1]*fr;
+      //let paintX = canvasTransformAx + xyVector[0]*fr, paintY = canvasTransformAy + xyVector[1]*fr;
 
       //temporarily switch back to linear interpolation... This works perfectly. Hmm. It's definitely my vector math that's off.
-      let paintX = canvasTransformBx*f + canvasTransformAx*fr,
-        paintY = canvasTransformBy*f + canvasTransformAy*fr;
+      //let paintX = canvasTransformBx*fr + canvasTransformAx*f, paintY = canvasTransformBy*fr + canvasTransformAy*f;
 
       //linearly interpolate our pressure and angles
       let paintPressure = bPressure*fr + aPressure*f,

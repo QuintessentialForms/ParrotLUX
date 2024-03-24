@@ -115,6 +115,12 @@ const server = http.createServer(
                 response.write( paperFile );
                 response.end();
             }
+            if( url.indexOf( '/res/img/brushes/tip-round01.png' ) === 0 ) {
+                response.writeHead( 200 , { 'Content-Type': 'image/png' } );
+                const paperFile = await fs.readFile( 'res/img/brushes/tip-round01.png' );
+                response.write( paperFile );
+                response.end();
+            }
 
             if( url === '/favicon.ico' ) {
                 response.writeHead( 404 , { 'Content-Type': 'text/plain' } );

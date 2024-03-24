@@ -130,18 +130,31 @@ Coming very soon! Windows binary and Android APK will be available.
     - ❌ Crop / Uncrop
     - ❌ Snap
     - ❌ Arrange / Distribute
-- ❌ Paint Mirror Symmetry
+- ❌ Paint Helper Tools
+    - Symmetry
+    - Line
+    - Arc
+    - Circle
+    - Polygons
 - ❌ Filters
     - ❌ Basic (Hue,Saturation,Luminance,Contrast...)
     - ❌ Channels
 - ❌ Text
     - ❌ Text layer
     - ❌ Import fonts in asset browser
+- ✅ Pose Rig
+    - ✅ Pose Layer
+    - ❌ Import image as pose
+    - ❌ Layer to pose? Generative to pose?
+    - ❌ Poses asset browser
 - ✅ Flood Fill
-    - ❌ Erase
-    - ❌ Tolerance
+    - ✅ Erase
+    - ✅ Tolerance
+    - ✅ Padding
+    - ❌ Opacity
+    - ❌ Antialiasing
+    - ❌ GPU Padding Optimization
 - ❌ Clone / Heal Tool
-- ❌ Geometry Lines & Shapes
 - ❌ One-click Install
     - ❌ Downloadable APK
     - ❌ Compiled Windows Binaries

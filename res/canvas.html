@@ -19,7 +19,7 @@ body {
     user-select: none;
     --animation-speed: 0.2s; /* also set in JS, as UI.animationMS */
 }
-#main, #cnv, #ui, #node-drag-overlay, #gnv {
+#main, #cnv, #ui, #node-drag-overlay, #gnv, #underlay {
     position: absolute;
     left:0; top:0; right:0; bottom:0;
     width:100vw; height:100vh;
@@ -27,6 +27,10 @@ body {
 }
 #gnv {
     pointer-events: all;
+}
+
+#underlay > .hidden {
+    opacity: 0;
 }
 
 #overlay {
@@ -783,6 +787,65 @@ body {
     opacity: 0;
 }
 
+#pose-rig-container {
+    position: absolute;
+    left: 0; top:0;
+    width: 100vw;
+    height: 100vh;
+}
+#pose-rig-container > .pose-rig-handle {
+    position: absolute;
+    width: 1rem; height: 1rem;
+    border-radius: 0.5rem;
+    border:1px solid white;
+    box-shadow: 0 0 1rem 1px black;
+    box-sizing: border-box;
+
+    /* Properties set from JS */
+    left: 0; top:0;
+    background-color: red;
+}
+
+#flood-fill-tools-options-row.hidden {
+    opacity: 0;
+    transform: scale(0.9,0.9);
+}
+#flood-fill-tools-options-row > div {
+    position: relative;
+    z-index: 6000;
+}
+#flood-fill-tools-options-row {
+    position:absolute;
+    left: 12.9rem;
+    width:calc( 100vw - 19.5rem );
+    height:3.5rem;
+    justify-content: center;
+    align-items: center;
+    gap:0.5rem;
+    z-index: 5000;
+}
+.flood-fill-options-erase-toggle { background-image: url('icon/eraser.png'); }
+.flood-fill-options-color-toggle { background-image: url('icon/three-circles.png'); }
+
+#pose-tools-options-row.hidden {
+    opacity: 0;
+    transform: scale(0.9,0.9);
+}
+#pose-tools-options-row > div {
+    position: relative;
+    z-index: 6000;
+}
+#pose-tools-options-row {
+    position:absolute;
+    left: 12.9rem;
+    width:calc( 100vw - 19.5rem );
+    height:3.5rem;
+    justify-content: center;
+    align-items: center;
+    gap:0.5rem;
+    z-index: 5000;
+}
+.pose-tools-options-move-children-toggle { background-image: url('icon/move.png'); }
 
 #paint-tools-options-row.hidden {
     opacity: 0;
