@@ -4026,6 +4026,10 @@ function setupUI() {
 
     }
 
+    const captureRigData = () => {
+      return JSON.parse( JSON.stringify( currentLayer.rig ) );
+    }
+
 
     let showingHandles = true;
     const poseRigHandles = [];
@@ -4049,7 +4053,8 @@ function setupUI() {
       }
       formalName = formalName[0].join("") + ( formalName[1] ? ( " " + formalName[1].join("") ) : "" );
 
-      let draggingNodes = [];
+      let draggingNodes = [],
+        startingRigData = null;
       UI.registerElement(
         poseRigHandle,
         {
@@ -4061,6 +4066,7 @@ function setupUI() {
               startY = start.y * devicePixelRatio;
 
             if( starting ) {
+              startingRigData = captureRigData();
               poseRigHandle.classList.remove( "hovering" );
               draggingNodes.length = 0;
               draggingNodes.push( poseRigHandle );
@@ -4097,6 +4103,28 @@ function setupUI() {
 
               //update the render
               renderLayerPose( currentLayer );
+            }
+            if( ending ) {
+              const oldData = startingRigData;
+              const newData = captureRigData();
+              const historyEntry = {
+                targetLayer: currentLayer,
+                oldData,
+                newData,
+                undo: () => {
+                  historyEntry.targetLayer.rig = oldData;
+                  renderLayerPose( historyEntry.targetLayer );
+                  if( uiSettings.activeTool === "pose" && selectedLayer === historyEntry.targetLayer )
+                    document.querySelector( "#pose-rig-container" ).loadLayer( selectedLayer );
+                },
+                redo: () => {
+                  historyEntry.targetLayer.rig = newData;
+                  renderLayerPose( historyEntry.targetLayer );
+                  if( uiSettings.activeTool === "pose" && selectedLayer === historyEntry.targetLayer )
+                    document.querySelector( "#pose-rig-container" ).loadLayer( selectedLayer );
+                }
+              }
+              recordHistoryEntry( historyEntry );
             }
           },
         },
