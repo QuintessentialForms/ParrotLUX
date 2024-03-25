@@ -1,0 +1,57 @@
+{
+  "apiFlowName": "A1111 ControlNet models Asset Loader",
+  "assetLibraries": [
+    "A1111 ControlNet Models"
+  ],
+  "apiFlowType": "asset",
+  "outputs": [
+    {
+      "outputName": "a1111-controlnet-models-list",
+      "outputLibraryName": "A1111 ControlNet Models",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": []
+        },
+        {
+          "key": "name",
+          "path": []
+        }
+      ],
+      "outputResultPath": [
+        "get-controlnet-models-array",
+        "controlnet-models-array"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "apiPort",
+      "controlType": "apiPort",
+      "controlValue": 7860,
+      "controlPath": [
+        "get-controlnet-models-array",
+        "port"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "get-controlnet-models-array",
+      "results": [
+        {
+          "resultName": "controlnet-models-array",
+          "resultType": "array-string",
+          "resultPath": [ "model_list" ]
+        }
+      ],
+      "host": "device",
+      "port": 7860,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/controlnet/model_list"
+    }
+  ]
+}

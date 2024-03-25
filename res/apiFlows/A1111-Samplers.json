@@ -1,0 +1,57 @@
+{
+  "apiFlowName": "A1111 Samplers Asset Loader",
+  "assetLibraries": [
+    "A1111 Samplers"
+  ],
+  "apiFlowType": "asset",
+  "outputs": [
+    {
+      "outputName": "a1111-samplers-list",
+      "outputLibraryName": "A1111 Samplers",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": [ "name" ]
+        },
+        {
+          "key": "name",
+          "path": [ "name" ]
+        }
+      ],
+      "outputResultPath": [
+        "get-samplers-array",
+        "samplers-array"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "apiPort",
+      "controlType": "apiPort",
+      "controlValue": 7860,
+      "controlPath": [
+        "get-samplers-array",
+        "port"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "get-samplers-array",
+      "results": [
+        {
+          "resultName": "samplers-array",
+          "resultType": "array-object",
+          "resultPath": []
+        }
+      ],
+      "host": "device",
+      "port": 7860,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/sdapi/v1/samplers"
+    }
+  ]
+}

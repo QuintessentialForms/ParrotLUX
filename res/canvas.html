@@ -550,6 +550,19 @@ body {
 .round-toggle.unavailable { opacity: 0.25; }
 .round-toggle.unavailable.hovering { border:1px solid transparent; }
 
+
+#filters-controls-row.hidden {
+    opacity: 0;
+    transform: scale(0.9,0.9);
+}
+#filters-controls-row {
+    top:0.5rem;
+    position:absolute;
+    left: 12.9rem;
+    width:calc( 100vw - 19.5rem );
+    z-index: 7000;
+}
+
 #generative-controls-row.hidden {
     opacity: 0;
     transform: scale(0.9,0.9);
@@ -665,6 +678,9 @@ body {
     padding:0; margin:0;;
     /* font-family: Georgia, 'Times New Roman', Times, serif; */
 }
+#generative-controls-panel div.hidden {
+    display: none;
+}
 #generative-controls-panel .text-input-control-text {
     width:100%;
     height:2.5rem;
@@ -674,9 +690,11 @@ body {
     text-overflow: ellipsis;
     line-height: 2.5rem;
 }
-#generative-controls-panel .control-element-label {
+.control-element-label {
     position: absolute;
     left:-0.33rem; top:-0.33rem;
+    max-width: 100%;
+    color:var(--white);
     background-color: var(--dark);
     box-shadow:
         0 0 0.5rem 0 var(--dark),
@@ -684,16 +702,17 @@ body {
         0 0 0.125rem 0 var(--dark)
         ;
     height:1rem;
+    line-height: 1rem;
     padding: 0 0.5rem;
     box-sizing: border-box;
     font-size: 0.67rem;
-    line-height: 0;
-    color:var(--white);
     border-radius: 0.5rem;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
+    white-space: nowrap;
+    text-wrap: nowrap;
+    word-wrap: nowrap;
+    text-overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
 }
 #generative-controls-panel .text-input-control {
     position: relative;
@@ -1108,6 +1127,15 @@ body {
     color: var(--white);
     flex-basis: 15%;
     z-index: 8000;
+}
+.round-toggle .control-element-label {
+    color:var(--dark);
+    background-color: var(--high-mid);
+    box-shadow:
+        0 0 0.5rem 0 var(--white),
+        0 0 0.25rem 0 var(--white),
+        0 0 0.125rem 0 var(--white)
+        ;
 }
 .round-toggle {
     position: relative;
@@ -1531,16 +1559,17 @@ body {
         0 0 0.125rem 0 var(--dark)
         ;
     height:1rem;
+    line-height: 1rem;
+    max-width: 100%;
+    overflow: hidden;
     padding: 0 0.5rem;
     box-sizing: border-box;
     font-size: 0.67rem;
-    line-height: 0;
+    white-space: nowrap;
     color:var(--white);
     border-radius: 0.5rem;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
+    text-overflow: ellipsis;
+    text-align: left;
 }
 
 #undo-redo-row {

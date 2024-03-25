@@ -1,0 +1,210 @@
+{
+  "apiFlowName": "A1111 ControlNet Preprocessor",
+  "apiFlowType": "generative",
+  "outputs": [
+    {
+      "outputName": "generated-image",
+      "outputType": "image",
+      "outputResultPath": [
+        "cn",
+        "generated-image"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "Preprocessor Module",
+      "controlType": "asset",
+      "assetName": "A1111 ControlNet Preprocessors",
+      "controlValue": "none",
+      "controlPath": [
+        "cn",
+        "api",
+        "controlnet_module"
+      ]
+    },
+    {
+      "controlName": "resolution",
+      "controlLabel": "Resolution",
+      "controlType": "number",
+      "visible": false,
+      "assetBasis": [
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "First Slider", "name" ],
+          "exists": "visible"
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "First Slider", "min" ],
+          "controlPath": [ "min" ]
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "First Slider", "max" ],
+          "controlPath": [ "max" ]
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "First Slider", "step" ],
+          "controlPath": [ "step" ],
+          "default": 1
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "First Slider", "value" ],
+          "controlPath": [ "controlValue" ]
+        }
+      ],
+      "min": 64,
+      "max": 2048,
+      "step": 1,
+      "controlValue": 512,
+      "controlPath": [
+        "cn",
+        "api",
+        "controlnet_processor_res"
+      ]
+    },
+    {
+      "controlName": "threshold a",
+      "controlLabel": "threshold a",
+      "controlType": "number",
+      "visible": false,
+      "assetBasis": [
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Second Slider", "name" ],
+          "exists": "visible"
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Second Slider", "name" ],
+          "controlPath": [ "controlLabel" ]
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Second Slider", "min" ],
+          "controlPath": [ "min" ]
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Second Slider", "max" ],
+          "controlPath": [ "max" ]
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Second Slider", "step" ],
+          "controlPath": [ "step" ],
+          "default": 1
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Second Slider", "value" ],
+          "controlPath": [ "controlValue" ]
+        }
+      ],
+      "min": 1,
+      "max": 2048,
+      "step": 1,
+      "controlValue": 64,
+      "controlPath": [
+        "cn",
+        "api",
+        "controlnet_threshold_a"
+      ]
+    },
+    {
+      "controlName": "threshold b",
+      "controlLabel": "threshold b",
+      "controlType": "number",
+      "visible": false,
+      "assetBasis": [
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Third Slider", "name" ],
+          "exists": "visible"
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Third Slider", "name" ],
+          "controlPath": [ "controlLabel" ]
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Third Slider", "min" ],
+          "controlPath": [ "min" ]
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Third Slider", "max" ],
+          "controlPath": [ "max" ]
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Third Slider", "step" ],
+          "controlPath": [ "step" ],
+          "default": 1
+        },
+        {
+          "controlName": "Preprocessor Module",
+          "propertyPath": [ "Third Slider", "value" ],
+          "controlPath": [ "controlValue" ]
+        }
+      ],
+      "min": 1,
+      "max": 255,
+      "step": 1,
+      "controlValue": 64,
+      "controlPath": [
+        "cn",
+        "api",
+        "controlnet_threshold_b"
+      ]
+    },
+    {
+      "controlName": "controlnet",
+      "controlHint": "CN",
+      "controlType": "image",
+      "controlValue": "",
+      "controlLayer": null,
+      "controlPath": [
+        "cn",
+        "api",
+        "controlnet_input_images",
+        0
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "cn",
+      "results": [
+        {
+          "resultName": "generated-image",
+          "resultType": "base64-image",
+          "resultPath": [
+            "images",
+            0
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 7860,
+      "apiPath": "/controlnet/detect",
+      "method": "POST",
+      "dataFormat": "JSON",
+      "convertDataImages": false,
+      "api": {
+        "controlnet_module": "none",
+        "controlnet_input_images": [
+          ""
+        ],
+        "controlnet_processor_res": 512,
+        "controlnet_threshold_a": 64,
+        "controlnet_threshold_b": 64,
+        "low_vram": false
+      }
+    }
+  ]
+}

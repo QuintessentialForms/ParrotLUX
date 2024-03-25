@@ -1,0 +1,72 @@
+{
+  "apiFlowName": "A1111 ControlNet Preprocessors Asset Loader",
+  "assetLibraries": [
+    "A1111 ControlNet Preprocessors"
+  ],
+  "apiFlowType": "asset",
+  "outputs": [
+    {
+      "outputName": "a1111-controlnet-preprocessors-list",
+      "outputLibraryName": "A1111 ControlNet Preprocessors",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": [ 0 ]
+        },
+        {
+          "key": "name",
+          "path": [ 0 ]
+        },
+        {
+          "key": "First Slider",
+          "optional": true,
+          "path": [ 1, "sliders", 0 ]
+        },
+        {
+          "key": "Second Slider",
+          "optional": true,
+          "path": [ 1, "sliders", 1 ]
+        },
+        {
+          "key": "Third Slider",
+          "optional": true,
+          "path": [ 1, "sliders", 2 ]
+        }
+      ],
+      "outputResultPath": [
+        "get-controlnet-preprocessors-array",
+        "controlnet-preprocessors-array"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "apiPort",
+      "controlType": "apiPort",
+      "controlValue": 7860,
+      "controlPath": [
+        "get-controlnet-preprocessors-array",
+        "port"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "get-controlnet-preprocessors-array",
+      "results": [
+        {
+          "resultName": "controlnet-preprocessors-array",
+          "resultType": "dictionary-object-list",
+          "resultPath": [ "module_detail" ]
+        }
+      ],
+      "host": "device",
+      "port": 7860,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/controlnet/module_list"
+    }
+  ]
+}

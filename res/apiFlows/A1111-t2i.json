@@ -1,0 +1,198 @@
+{
+  "apiFlowName": "A1111 txt2img",
+  "apiFlowType": "generative",
+  "outputs": [
+    {
+      "outputName": "generated-image",
+      "outputType": "image",
+      "outputResultPath": [
+        "t2i",
+        "generated-image"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "prompt",
+      "controlType": "text",
+      "controlValue": "desktop cat",
+      "controlPath": [
+        "t2i",
+        "api",
+        "prompt"
+      ]
+    },
+    {
+      "controlName": "negative-prompt",
+      "controlType": "text",
+      "controlValue": "",
+      "controlPath": [
+        "i2i",
+        "api",
+        "negative_prompt"
+      ]
+    },
+    {
+      "controlName": "apiPath",
+      "controlType": "static",
+      "controlValue": "/sdapi/v1/txt2img",
+      "controlPath": [
+        "t2i",
+        "apiPath"
+      ]
+    },
+    {
+      "controlName": "seed",
+      "controlType": "randomInt",
+      "min": 0,
+      "max": 999999999,
+      "step": 1,
+      "controlPath": [
+        "t2i",
+        "api",
+        "seed"
+      ]
+    },
+    {
+      "controlName": "sampler",
+      "controlType": "static",
+      "controlValue": "DPM++ SDE",
+      "controlPath": [
+        "t2i",
+        "api",
+        "sampler_name"
+      ]
+    },
+    {
+      "controlName": "steps",
+      "controlType": "number",
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "controlValue": 4,
+      "controlPath": [
+        "t2i",
+        "api",
+        "steps"
+      ]
+    },
+    {
+      "controlName": "cfg",
+      "controlType": "number",
+      "controlValue": 1.5,
+      "min": 1,
+      "max": 20,
+      "step": 0.5,
+      "controlPath": [
+        "t2i",
+        "api",
+        "cfg_scale"
+      ]
+    },
+    {
+      "controlName": "width",
+      "controlType": "layer-input",
+      "layerPath": [
+        "w"
+      ],
+      "controlValue": 1024,
+      "controlPath": [
+        "t2i",
+        "api",
+        "width"
+      ]
+    },
+    {
+      "controlName": "height",
+      "controlType": "layer-input",
+      "layerPath": [
+        "h"
+      ],
+      "controlValue": 1024,
+      "controlPath": [
+        "t2i",
+        "api",
+        "height"
+      ]
+    },
+    {
+      "controlName": "Model",
+      "controlType": "asset",
+      "assetName": "A1111 Models",
+      "controlValue": "--no model--",
+      "controlPath": [
+        "set-model",
+        "api",
+        "sd_model_checkpoint"
+      ]
+    },
+    {
+      "controlName": "Sampler",
+      "controlType": "asset",
+      "assetName": "A1111 Samplers",
+      "controlValue": "DPM++ 3M SDE Exponential",
+      "controlPath": [
+        "t2i",
+        "api",
+        "sampler_name"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "set-model",
+      "results": [],
+      "host": "device",
+      "port": 7860,
+      "apiPath": "/sdapi/v1/options",
+      "method": "POST",
+      "dataFormat": "JSON",
+      "convertDataImages": false,
+      "api": {
+        "sd_model_checkpoint": ""
+      }
+    },
+    {
+      "apiCallName": "t2i",
+      "results": [
+        {
+          "resultName": "generated-image",
+          "resultType": "base64-image",
+          "resultPath": [
+            "images",
+            0
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 7860,
+      "apiPath": "/sdapi/v1/txt2img",
+      "method": "POST",
+      "dataFormat": "JSON",
+      "convertDataImages": false,
+      "api": {
+        "batch_size": 1,
+        "cfg_scale": 7,
+        "disable_extra_networks": false,
+        "do_not_save_grid": false,
+        "do_not_save_samples": false,
+        "enable_hr": false,
+        "height": 1024,
+        "negative_prompt": "",
+        "prompt": "desktop cat",
+        "restore_faces": false,
+        "s_churn": 0,
+        "s_min_uncond": 0,
+        "s_noise": 1,
+        "s_tmax": null,
+        "s_tmin": 0,
+        "sampler_name": "DPM++ 3M SDE Exponential",
+        "script_name": null,
+        "seed": 3718586839,
+        "steps": 50,
+        "tiling": false,
+        "width": 1024
+      }
+    }
+  ]
+}

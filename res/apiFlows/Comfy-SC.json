@@ -1,0 +1,568 @@
+{
+  "apiFlowName": "Comfy StableCascade txt2img",
+  "apiFlowType": "generative",
+  "outputs": [
+    {
+      "outputName": "generated-image",
+      "outputType": "image",
+      "outputResultPath": [
+        "view",
+        "generated-image"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "Prompt",
+      "controlType": "text",
+      "controlValue": "desktop cat",
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "6",
+        "inputs",
+        "text"
+      ]
+    },
+    {
+      "controlName": "Negative Prompt",
+      "controlType": "text",
+      "controlValue": "",
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "7",
+        "inputs",
+        "text"
+      ]
+    },
+    {
+      "controlName": "C Steps",
+      "controlType": "number",
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "controlValue": 4,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "3",
+        "inputs",
+        "steps"
+      ]
+    },
+    {
+      "controlName": "C CFG",
+      "controlType": "number",
+      "min": 1,
+      "max": 50,
+      "step": 0.25,
+      "controlValue": 1.5,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "3",
+        "inputs",
+        "cfg"
+      ]
+    },
+    {
+      "controlName": "B Steps",
+      "controlType": "number",
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "controlValue": 2,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "33",
+        "inputs",
+        "steps"
+      ]
+    },
+    {
+      "controlName": "C Model",
+      "controlType": "asset",
+      "assetName": "Comfy UNETs",
+      "controlValue": "cascade_stage_c_bf16.safetensors",
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "30",
+        "inputs",
+        "unet_name"
+      ]
+    },
+    {
+      "controlName": "B Model",
+      "controlType": "asset",
+      "assetName": "Comfy UNETs",
+      "controlValue": "cascade_stage_b_lite_bf16.safetensors",
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "32",
+        "inputs",
+        "unet_name"
+      ]
+    },
+    {
+      "controlName": "VAE",
+      "controlType": "asset",
+      "assetName": "Comfy VAEs",
+      "controlValue": "cascade_stage_a.safetensors",
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "29",
+        "inputs",
+        "vae_name"
+      ]
+    },
+    {
+      "controlName": "seed",
+      "controlType": "randomInt",
+      "min": 0,
+      "max": 999999999,
+      "step": 1,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "3",
+        "inputs",
+        "seed"
+      ]
+    },
+    {
+      "controlName": "width",
+      "controlType": "layer-input",
+      "layerPath": [
+        "w"
+      ],
+      "controlValue": 1024,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "34",
+        "inputs",
+        "width"
+      ]
+    },
+    {
+      "controlName": "height",
+      "controlType": "layer-input",
+      "layerPath": [
+        "h"
+      ],
+      "controlValue": 1024,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "34",
+        "inputs",
+        "height"
+      ]
+    },
+    {
+      "controlName": "UID",
+      "controlType": "api-result",
+      "resultPath": [
+        "sc-prompt",
+        "prompt_id"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite"
+    },
+    {
+      "controlName": "history-path",
+      "controlType": "string-compose",
+      "composePaths": [
+        "/history/",
+        [
+          "UID",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "get-filename",
+        "apiPath"
+      ]
+    },
+    {
+      "controlName": "result-history-filename",
+      "controlType": "string-compose",
+      "composePaths": [
+        "",
+        [
+          "UID",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "get-filename",
+        "results",
+        0,
+        "resultPath",
+        0
+      ]
+    },
+    {
+      "controlName": "result-history-subfolder",
+      "controlType": "string-compose",
+      "composePaths": [
+        "",
+        [
+          "UID",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "get-filename",
+        "results",
+        1,
+        "resultPath",
+        0
+      ]
+    },
+    {
+      "controlName": "filename",
+      "controlType": "api-result",
+      "resultPath": [
+        "get-filename",
+        "image-filename"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite with filename"
+    },
+    {
+      "controlName": "filefolder",
+      "controlType": "api-result",
+      "resultPath": [
+        "get-filename",
+        "image-subfolder"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite with filefolder"
+    },
+    {
+      "controlName": "view-filename",
+      "controlType": "string-compose",
+      "composePaths": [
+        "/view?filename=",
+        [
+          "filename",
+          "controlValue"
+        ],
+        "&subfolder=",
+        [
+          "filefolder",
+          "controlValue"
+        ],
+        "&type=output&rand=0.0923485734985"
+      ],
+      "controlPath": [
+        "view",
+        "apiPath"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "sc-prompt",
+      "results": [
+        {
+          "resultName": "prompt_id",
+          "resultType": "string",
+          "resultPath": [
+            "prompt_id"
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "apiPath": "/prompt",
+      "method": "POST",
+      "dataFormat": "JSON",
+      "convertDataImages": false,
+      "api": {
+        "prompt": {
+          "3": {
+            "inputs": {
+              "seed": 750887496150267,
+              "steps": 4,
+              "cfg": 1.5,
+              "sampler_name": "ddpm",
+              "scheduler": "simple",
+              "denoise": 1,
+              "model": [
+                "59",
+                0
+              ],
+              "positive": [
+                "6",
+                0
+              ],
+              "negative": [
+                "7",
+                0
+              ],
+              "latent_image": [
+                "34",
+                0
+              ]
+            },
+            "class_type": "KSampler",
+            "_meta": {
+              "title": "KSampler"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "desktop cat",
+              "clip": [
+                "37",
+                0
+              ]
+            },
+            "class_type": "CLIPTextEncode",
+            "_meta": {
+              "title": "CLIP Text Encode (Prompt)"
+            }
+          },
+          "7": {
+            "inputs": {
+              "text": "",
+              "clip": [
+                "37",
+                0
+              ]
+            },
+            "class_type": "CLIPTextEncode",
+            "_meta": {
+              "title": "CLIP Text Encode (Prompt)"
+            }
+          },
+          "8": {
+            "inputs": {
+              "samples": [
+                "33",
+                0
+              ],
+              "vae": [
+                "29",
+                0
+              ]
+            },
+            "class_type": "VAEDecode",
+            "_meta": {
+              "title": "VAE Decode"
+            }
+          },
+          "9": {
+            "inputs": {
+              "filename_prefix": "wuer/ComfyUI",
+              "images": [
+                "8",
+                0
+              ]
+            },
+            "class_type": "SaveImage",
+            "_meta": {
+              "title": "Save Image"
+            }
+          },
+          "29": {
+            "inputs": {
+              "vae_name": "cascade_stage_a.safetensors"
+            },
+            "class_type": "VAELoader",
+            "_meta": {
+              "title": "Load VAE"
+            }
+          },
+          "30": {
+            "inputs": {
+              "unet_name": "cascade_stage_c_bf16.safetensors"
+            },
+            "class_type": "UNETLoader",
+            "_meta": {
+              "title": "UNETLoader"
+            }
+          },
+          "32": {
+            "inputs": {
+              "unet_name": "cascade_stage_b_lite_bf16.safetensors"
+            },
+            "class_type": "UNETLoader",
+            "_meta": {
+              "title": "UNETLoader"
+            }
+          },
+          "33": {
+            "inputs": {
+              "seed": 750887496150267,
+              "steps": 2,
+              "cfg": 1,
+              "sampler_name": "ddpm",
+              "scheduler": "simple",
+              "denoise": 1,
+              "model": [
+                "32",
+                0
+              ],
+              "positive": [
+                "36",
+                0
+              ],
+              "negative": [
+                "40",
+                0
+              ],
+              "latent_image": [
+                "34",
+                1
+              ]
+            },
+            "class_type": "KSampler",
+            "_meta": {
+              "title": "KSampler"
+            }
+          },
+          "34": {
+            "inputs": {
+              "width": 1024,
+              "height": 1024,
+              "compression": 42,
+              "batch_size": 1
+            },
+            "class_type": "StableCascade_EmptyLatentImage",
+            "_meta": {
+              "title": "StableCascade_EmptyLatentImage"
+            }
+          },
+          "36": {
+            "inputs": {
+              "conditioning": [
+                "40",
+                0
+              ],
+              "stage_c": [
+                "3",
+                0
+              ]
+            },
+            "class_type": "StableCascade_StageB_Conditioning",
+            "_meta": {
+              "title": "StableCascade_StageB_Conditioning"
+            }
+          },
+          "37": {
+            "inputs": {
+              "clip_name": "cascade_clip.safetensors",
+              "type": "stable_cascade"
+            },
+            "class_type": "CLIPLoader",
+            "_meta": {
+              "title": "Load CLIP"
+            }
+          },
+          "40": {
+            "inputs": {
+              "conditioning": [
+                "6",
+                0
+              ]
+            },
+            "class_type": "ConditioningZeroOut",
+            "_meta": {
+              "title": "ConditioningZeroOut"
+            }
+          },
+          "59": {
+            "inputs": {
+              "shift": 2,
+              "model": [
+                "30",
+                0
+              ]
+            },
+            "class_type": "ModelSamplingStableCascade",
+            "_meta": {
+              "title": "ModelSamplingStableCascade"
+            }
+          }
+        }
+      }
+    },
+    {
+      "retryOnEmpty": true,
+      "apiCallName": "get-filename",
+      "results": [
+        {
+          "resultName": "image-filename",
+          "resultType": "string",
+          "resultPath": [
+            "{UID for filename}",
+            "outputs",
+            9,
+            "images",
+            0,
+            "filename"
+          ]
+        },
+        {
+          "resultName": "image-subfolder",
+          "resultType": "string",
+          "resultPath": [
+            "{UID for subfolder}",
+            "outputs",
+            9,
+            "images",
+            0,
+            "subfolder"
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/history/{UID}"
+    },
+    {
+      "apiCallName": "view",
+      "results": [
+        {
+          "resultName": "generated-image",
+          "resultType": "file-image",
+          "resultPath": "file"
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/view?filename={FILENAME}"
+    }
+  ]
+}

@@ -84,6 +84,21 @@ const server = http.createServer(
                     response.end( 'Icon name not recognized.' );
                 }
             }
+            if( url.indexOf( '/apiFlows/' ) === 0 ) {
+                const apiFlowName = url.substring( "/apiFlows/".length, url.length - ".json".length );
+                let okay = (/[\w-]+/gmi).test( apiFlowName ),
+                    ref = "res/apiFlows/" + apiFlowName + ".json";
+                if( okay ) { okay = fss.existsSync( ref ); }
+                if( okay ) {
+                    const apiFlowJSONFile = await fs.readFile( ref );
+                    response.writeHead( 200 , { 'Content-Type': 'text/json' } );
+                    response.write( apiFlowJSONFile );
+                    response.end();
+                } else {
+                    response.writeHead( 404 , { 'Content-Type': 'text/plain' } );
+                    response.end( 'APIFlow filename not recognized.' );
+                }
+            }
 
             if( url.indexOf( '/paper.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );

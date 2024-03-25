@@ -1,0 +1,57 @@
+{
+  "apiFlowName": "A1111 VAEs Asset Loader",
+  "assetLibraries": [
+    "A1111 VAEs"
+  ],
+  "apiFlowType": "asset",
+  "outputs": [
+    {
+      "outputName": "a1111-vaes-list",
+      "outputLibraryName": "A1111 VAEs",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": [ "name" ]
+        },
+        {
+          "key": "name",
+          "path": [ "name" ]
+        }
+      ],
+      "outputResultPath": [
+        "get-vaes-array",
+        "vaes-array"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "apiPort",
+      "controlType": "apiPort",
+      "controlValue": 7860,
+      "controlPath": [
+        "get-vaes-array",
+        "port"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "get-vaes-array",
+      "results": [
+        {
+          "resultName": "vaes-array",
+          "resultType": "array-object",
+          "resultPath": []
+        }
+      ],
+      "host": "device",
+      "port": 7860,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/sdapi/v1/sd-vae"
+    }
+  ]
+}

@@ -108,7 +108,7 @@ function redo() {
 let layersAddedCount = -2;
 async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibling=null, doNotUpdate=false ) {
   
-  //layerType === "paint" | "paint-preview" | "generative" | "group" | "text" | "pose" | "model" | ...
+  //layerType === "paint" | "paint-preview" | "generative" | "group" | "text" | "pose" | "filter" | "model" | ...
 
   let layerCenterX = W/2,
     layerCenterY = H/2;
@@ -156,6 +156,16 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
   }
   if( apiFlowName === null ) apiFlowName = uiSettings.defaultAPIFlowName;
 
+  let filterName = null;
+  for( let i = layersStack.layers.length-1; i >= 0; i-- ) {
+    const stackLayer = layersStack.layers[ i ];
+    if( stackLayer.layerType !== "filter" )
+      continue;
+    filterName = stackLayer.filtersSettings.filterName;
+    break;
+  }
+  if( filterName === null ) filterName = uiSettings.defaultFilterName;
+
   //create the back-end layer info
 
   const newLayer = {
@@ -172,10 +182,14 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     opacity:1.0,
     setOpacity: null,
 
-    //changes IFF you change it
     generativeSettings: { apiFlowName },
-    nodeUplinks: new Set(),
     generativeControls: {},
+    filtersSettings: { filterName },
+    filterControls: {},
+
+
+    
+    nodeUplinks: new Set(),
 
     rig: null,
 
@@ -1041,10 +1055,11 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
               
               //check if we dropped in a control
               //are the generative controls visible?
-              const apiFlowName = selectedLayer.generativeSettings.apiFlowName;
               const controlsRow = document.querySelector( "#generative-controls-row" ),
-                controlsPanel = document.querySelector( "#generative-controls-panel" );
-              if( ! controlsRow.classList.contains( "hidden" ) ) {
+                filtersRow = document.querySelector( "#filters-controls-row" ),
+                controlsPanel = document.querySelector( "#generative-controls-panel" ),
+                filtersPanel = document.querySelector( "#filters-controls-panel" );
+              if( ! controlsRow.classList.contains( "hidden" ) || ! filtersRow.classList.contains( "hidden" ) ) {
                 //get all image input controls
                 const controlElements = document.querySelectorAll( ".image-input-control" );
                 for( const controlElement of controlElements ) {
@@ -1055,7 +1070,11 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                     //if this control element already had an existing uplink layer, erase the link
                     if( controlElement.uplinkLayer ) {
                       for( const uplink of controlElement.uplinkLayer.nodeUplinks ) {
-                        if( uplink.layerId === selectedLayer.layerId && uplink.apiFlowName === apiFlowName && uplink.controlName === controlElement.controlName ) {
+                        if(
+                          uplink.layerId === selectedLayer.layerId &&
+                          ( uplink.apiFlowName === selectedLayer.generativeSettings.apiFlowName || uplink.filterName === selectedLayer.filterSettings.filterName ) &&
+                          uplink.controlName === controlElement.controlName
+                        ) {
                           controlElement.uplinkLayer.nodeUplinks.delete( uplink );
                           break;
                         }
@@ -1063,11 +1082,15 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                       controlElement.uplinkLayer = null;
                     }
 
+                    
+
                     //dropped into new uplink destination, record
                     newLayer.nodeUplinks.add( {
                       //layer: selectedLayer,
                       layerId: selectedLayer.layerId,
-                      apiFlowName: controlsPanel.apiFlowName,
+                      isFilterInput: !!controlElement.isFilterInput,
+                      apiFlowName: (!!controlElement.isFilterInput) ? "" : controlsPanel.apiFlowName,
+                      filterName: filtersPanel.filterName,
                       controlName: controlElement.controlName,
                       width: linkRect.left - ( ( controlRect.left + controlRect.right ) / 2 )
                       //element: controlElement
@@ -2241,7 +2264,6 @@ Info: ${info}`;
 
 function setup() {
 
-
     document.body.appendChild( main );
     //main.appendChild( cnv );
     main.appendChild( gnv );
@@ -2517,8 +2539,11 @@ let uiSettings = {
   defaultLayerHeight: 1024,
 
   //defaultAPIFlowName: "A1111 Lightning Demo txt2img Mini",
-  defaultAPIFlowName: "Comfy SD1.5/SDXL txt2img",
+  //defaultAPIFlowName: "A1111 txt2img",
+  defaultAPIFlowName: null,
+  defaultFilterName: "basic",
   retryAPIDelay: 2000,
+  backendPort: 7860,
 
   clickTimeMS: 350,
 
@@ -4286,6 +4311,12 @@ function setupUI() {
 
             //get controlvalues
             let apiFlowName = setupUIGenerativeControls.currentApiFlowName;
+
+            if( apiFlowName === null ) {
+              UI.showOverlay.error( "Please select an API." );
+              return;
+            }
+
             const apiFlow = apiFlows.find( flow => flow.apiFlowName === apiFlowName );
             const controlValues = {};
             for( const control of apiFlow.controls ) {
@@ -4429,7 +4460,6 @@ function setupUI() {
       closeButton.role = "button"; closeButton.tabIndex = "0";
       closeButton.onkeydown = e => {
         if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick();
-        if( e.code === "Enter" && e.ctrlKey === true ) applyButton.onclick();
       }
       numberInputOverlay.appendChild( closeButton );
       //text input
@@ -4441,7 +4471,7 @@ function setupUI() {
       numberInput.value = 0.5;
       numberInput.onkeydown = e => {
         if( e.code === "Escape" ) closeButton.onclick();
-        if( e.code === "Enter" ) applyButton.onclick();
+        if( e.code === "Enter" || e.code === "NumpadEnter" ) applyButton.onclick();
       }
       numberInput.classList.add( "overlay-number-input", "overlay-element", "animated" );
       numberInputOverlay.appendChild( numberInput );
@@ -4674,6 +4704,36 @@ function setupUI() {
 
   }
 
+  //the filter controls
+  {
+    
+    //the filters controls row
+    const filtersControlsRow = document.createElement( "div" );
+    filtersControlsRow.classList.add( "hidden", "animated" );
+    filtersControlsRow.id = "filters-controls-row";
+    UI.registerElement(
+      filtersControlsRow,
+      {
+        updateContext: () => {
+          if( uiSettings.activeTool === "generate" ) filtersControlsRow.classList.remove( "hidden" );
+          else filtersControlsRow.classList.add( "hidden" );
+        }
+      },
+      {
+        zIndex: 1000,
+      }
+    );
+    uiContainer.appendChild( filtersControlsRow );
+
+    //the controls (excluding img-drops) (setupUIFiltersControls modifies this)
+    {
+      const controlsPanel = document.createElement( "div" );
+      controlsPanel.classList.add( "flex-row" );
+      controlsPanel.id = "filters-controls-panel";
+      filtersControlsRow.appendChild( controlsPanel );
+    }
+
+  }
 
   //the home row buttons
   {
@@ -5387,6 +5447,10 @@ function openAssetBrowser( assets, callback ) {
 
 }
 
+function setupUIFiltersControls( filterName ) {
+
+}
+
 function setupUIGenerativeControls( apiFlowName ) {
 
   if( ! setupUIGenerativeControls.init ) {
@@ -5396,45 +5460,54 @@ function setupUIGenerativeControls( apiFlowName ) {
     setupUIGenerativeControls.init = true;
   }
 
-  selectedLayer.generativeControls[ apiFlowName ] ||= {};
-
-  setupUIGenerativeControls.currentApiFlowName = apiFlowName;
-
+  //cleanup
   for( const oldControl of setupUIGenerativeControls.registeredControls ) {
     UI.unregisterElement( oldControl );
   }
   setupUIGenerativeControls.registeredControls.length = 0;
-
-
   const controlsPanel = document.querySelector( "#generative-controls-panel" );
   controlsPanel.innerHTML = "";
-  controlsPanel.apiFlowName = apiFlowName;
   const imageInputsPanel = document.querySelector( "#generative-controls-images-inputs-panel");
   imageInputsPanel.innerHTML = "";
+
+  if( apiFlowName === null ) {
+    setupUIGenerativeControls.currentApiFlowName = null;
+    controlsPanel.apiFlowName = null;
+    return; //nothing to do here
+  }
+
+  //assign name everywhere
+  selectedLayer.generativeControls[ apiFlowName ] ||= {};
+  setupUIGenerativeControls.currentApiFlowName = apiFlowName;
+  controlsPanel.apiFlowName = apiFlowName;
 
   let numberOfImageInputs = 0;
 
   const apiFlow = apiFlows.find( flow => flow.apiFlowName === apiFlowName );
-  for( const control of apiFlow.controls ) {
+  for( const controlScheme of apiFlow.controls ) {
 
     //load control from layer if any
-    control.controlValue = selectedLayer.generativeControls[ apiFlowName ]?.[ control.controlName ] || control.controlValue;
+    controlScheme.controlValue = selectedLayer.generativeControls[ apiFlowName ]?.[ controlScheme.controlName ] || controlScheme.controlValue;
 
     //store control value in selected layer
-    selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
+    selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
 
     //make the element from the type
-    if( control.controlType === "asset" ) {
+    if( controlScheme.controlType === "asset" ) {
       const assetSelectorButton = document.createElement( "div" );
       assetSelectorButton.classList.add( "asset-button-text", "round-toggle", "long", "on" );
+      const controlElementLabel = document.createElement( "div" );
+      controlElementLabel.classList.add( "control-element-label" );
+      controlElementLabel.textContent = controlScheme.controlLabel || controlScheme.controlName;
+      assetSelectorButton.appendChild( controlElementLabel );
       const buttonText = document.createElement( "div" );
       buttonText.classList.add( "button-text" );
-      buttonText.textContent = "↓ " + control.controlValue;
+      buttonText.textContent = "↓ " + controlScheme.controlValue;
       assetSelectorButton.appendChild( buttonText );
       //check if we have this asset library
-      if( ! assetsLibrary.hasOwnProperty( control.assetName ) ) {
+      if( ! assetsLibrary.hasOwnProperty( controlScheme.assetName ) ) {
         //download the asset if we can
-        const assetAPI = apiFlows.find( a => ( (!a.isDemo) && a.apiFlowType === "asset" && a.assetLibraries.includes( control.assetName )) );
+        const assetAPI = apiFlows.find( a => ( (!a.isDemo) && a.apiFlowType === "asset" && a.assetLibraries.includes( controlScheme.assetName )) );
         if( assetAPI ) {
           if( apiExecutionQueue.find( q => q[ 0 ] === assetAPI.apiFlowName ) ) {
             //already scheduled, hopefully will resolve before this button is clicked
@@ -5449,29 +5522,90 @@ function setupUIGenerativeControls( apiFlowName ) {
           onclick: () => {
             const callback = asset => {
               buttonText.textContent = "↓ " + asset.name;
-              control.controlValue = asset.name;
-              selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
+              controlScheme.controlValue = asset.name;
+              selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
+              const assetBasisControls = apiFlow.controls.filter( c => !!c.assetBasis );
+              if( assetBasisControls.length ) console.log( "Using this asset: ", asset );
+              for( const basedControl of assetBasisControls ) {
+                console.log( "Updating basedControl ", basedControl );
+                for( const basis of basedControl.assetBasis ) {
+                  if( basis.controlName === controlScheme.controlName ) {
+                    console.log( "Found relevant basis: ", basis );
+                    let property = asset;
+                    for( let i=0; i<basis.propertyPath.length; i++ )
+                      property = property?.[ basis.propertyPath[ i  ] ];
+
+                    console.log( "For path ", basis.propertyPath.join(","), " got property ", property );
+
+                    if( basis[ "exists" ] === "visible" ) {
+                      const controlElements = [ ...document.querySelectorAll( ".control-element" ) ];
+                      const controlElement = controlElements.find( ce => ce.controlName === basedControl.controlName );
+                      if( controlElement ) {
+                        if( property === undefined ) {
+                          controlElement.classList.add( "hidden" );
+                          basedControl.visible = false;
+                        }
+                        else {
+                          controlElement.classList.remove( "hidden" );
+                          basedControl.visible = true;
+                        }
+                      }
+                    }
+
+                    if( property === undefined && basis.hasOwnProperty( "default" ) )
+                      property = basis.default;
+
+                    if( basis.hasOwnProperty( "controlPath" ) && property !== undefined ) {
+                      let target = basedControl;
+                      for( let i=0; i<basis.controlPath.length-1; i++ )
+                        target = target[ basis.controlPath[ i ] ];
+                      if( basis.controlPath.at(-1) === "controlLabel" ) {
+                        console.log( "Updating label." );
+                        const labels = [ ...document.querySelectorAll( ".control-element-label, .image-control-element-label" ) ];
+                        console.log( "Checking labels: ", labels );
+                        const label = labels.find( l => l.parentElement.controlName === basedControl.controlName );
+                        console.log( "Found label to update: ", label, " have property: ", property );
+                        if( label?.classList.contains( "control-element-label" ) )
+                          label.textContent = property;
+                        if( label?.classList.contains( "image-control-element-label" ) )
+                          label.textContent = property.substring( 0, 5 );
+                        if( label?.classList.contains( "number-slider-label" ) )
+                          label.parentElement.setLabel( property );
+                      }
+                      if( basis.controlPath.at(-1) === "controlValue" ) {
+                        const valueElements = [ ...document.querySelectorAll( ".control-element-value" ) ];
+                        const valueElement = valueElements.find( l => l.parentElement.controlName === basedControl.controlName );
+                        if( valueElement?.classList.contains( "number-slider-number-preview" ) )
+                          valueElement.parentElement.setValue( property );
+                        else valueElement.textContent = property;
+                      }
+                      target[ basis.controlPath.at(-1) ] = property;
+                    }
+                  }
+                }
+              }
             }
             //console.log( "Opening assets: ", control.assetName, assetsLibrary[ control.assetName ] )
-            openAssetBrowser( assetsLibrary[ control.assetName ] || [], callback );
+            openAssetBrowser( assetsLibrary[ controlScheme.assetName ] || [], callback );
           }
         },
-        { tooltip: [ "Select " + control.assetName, "below", "to-right-of-center" ], zIndex:10000, },
+        { tooltip: [ "Select " + controlScheme.assetName, "below", "to-right-of-center" ], zIndex:10000, },
       );
       setupUIGenerativeControls.registeredControls.push( assetSelectorButton );
       controlsPanel.appendChild( assetSelectorButton );
     }
-    if( control.controlType === "text" ) {
+    if( controlScheme.controlType === "text" ) {
       const controlElement = document.createElement( "div" );
-      controlElement.classList.add( "text-input-control", "animated" );
-      controlElement.controlName = control.controlName;
+      controlElement.classList.add( "text-input-control", "animated", "control-element" );
+      if( controlScheme.visible === false ) controlElement.classList.add( "hidden" );
+      controlElement.controlName = controlScheme.controlName;
       const controlElementText = document.createElement( "div" );
-      controlElementText.classList.add( "text-input-control-text" );
-      controlElementText.textContent = control.controlValue;
+      controlElementText.classList.add( "text-input-control-text", "control-element-value" );
+      controlElementText.textContent = controlScheme.controlValue;
       controlElement.appendChild( controlElementText );
       const controlElementLabel = document.createElement( "div" );
       controlElementLabel.classList.add( "control-element-label" );
-      controlElementLabel.textContent = control.controlName;
+      controlElementLabel.textContent = controlScheme.controlLabel || controlScheme.controlName;
       controlElement.appendChild( controlElementLabel );
       setupUIGenerativeControls.registeredControls.push( controlElement );
       UI.registerElement(
@@ -5479,100 +5613,60 @@ function setupUIGenerativeControls( apiFlowName ) {
         {
           onclick: () => {
             const textInput = document.querySelector( "#multiline-text-input-overlay" );
-            textInput.setText( control.controlValue );
+            textInput.setText( controlScheme.controlValue );
             textInput.onapply = text => {
               controlElementText.textContent = text;
-              control.controlValue = text;
+              controlScheme.controlValue = text;
               //store updated value in selected layer
-              selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
+              selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
             }
             textInput.show();
           } 
         },
-        { tooltip: [ control.controlName, "below", "to-right-of-center" ], zIndex:10000, }
+        { tooltip: [ controlScheme.controlLabel || controlScheme.controlName, "below", "to-right-of-center" ], zIndex:10000, }
       );
       controlsPanel.appendChild( controlElement );
     }
-    if( control.controlType === "number" ) {
+    if( controlScheme.controlType === "number" ) {
       const controlElement = UI.make.numberSlider({
-        label: control.controlName,
-        value: control.controlValue,
-        max: control.max,
-        min: control.min,
-        step: control.step,
+        label: controlScheme.controlLabel || controlScheme.controlName,
+        value: controlScheme.controlValue,
+        max: controlScheme.max,
+        min: controlScheme.min,
+        step: controlScheme.step,
         slideMode: "contain-step",
         onstart: () => {},
         onupdate: () => {},
-        onend: value => control.controlValue = value,
+        onend: value => controlScheme.controlValue = value,
       });
+      controlElement.controlName = controlScheme.controlName;
+      controlElement.classList.add( "control-element" );
+      if( controlScheme.visible === false ) controlElement.classList.add( "hidden" );
       controlsPanel.appendChild( controlElement );
+      controlElement.querySelector( ".number-slider-number-preview" ).classList.add( "control-element-value" );
+      controlElement.querySelector( ".number-slider-label" ).classList.add( "control-element-label" );
       setupUIGenerativeControls.registeredControls.push( controlElement );
     }
-    if( false && control.controlType === "number" ) {
+    if( controlScheme.controlType === "asset" ) {}
+    if( controlScheme.controlType === "layer-input" ) {}
+    if( controlScheme.controlType === "image" ) {
       const controlElement = document.createElement( "div" );
-      controlElement.classList.add( "generative-controls-retractable-slider", "animated" );
-      controlElement.controlName = control.controlName;
-      const controlElementLabel = document.createElement( "div" );
-      controlElementLabel.classList.add( "control-element-label" );
-      controlElementLabel.textContent = control.controlName;
-      controlElement.appendChild( controlElementLabel );
-      const leftArrow = controlElement.appendChild( document.createElement( "div" ) );
-      leftArrow.classList.add( "generative-controls-retractable-slider-left-arrow" );
-      const numberPreview = controlElement.appendChild( document.createElement( "div" ) );
-      numberPreview.classList.add( "generative-controls-retractable-slider-number-preview" );
-      numberPreview.textContent = control.controlValue;
-      const rightArrow = controlElement.appendChild( document.createElement( "div" ) );
-      rightArrow.classList.add( "generative-controls-retractable-slider-right-arrow" );
-      let startingNumber,
-        adjustmentScale;
-      UI.registerElement(
-        controlElement,
-        {
-          ondrag: ({ rect, start, current, ending, starting, element }) => {
-            if( starting ) {
-              controlElement.querySelector( ".tooltip" ).style.opacity = 0;
-              startingNumber = control.controlValue;
-              adjustmentScale = ( control.max - control.min ) / 300; //300 pixel screen-traverse
-            }
-            const dx =  current.x - start.x;
-            const adjustment = dx * adjustmentScale;
-            let number = startingNumber + adjustment;
-            number = Math.max( control.min, Math.min( control.max, number ) );
-            number = parseInt( number / control.step ) * control.step;
-            control.controlValue = number;
-            //store updated value in selected layer
-            selectedLayer.generativeControls[ apiFlowName ][ control.controlName ] = control.controlValue;
-            const trimLength = control.step.toString().indexOf( "." ) + 1;
-            numberPreview.textContent = trimLength ? number.toString().substring( 0, trimLength+2 ) : number;
-            if( ending ) {
-              controlElement.querySelector( ".tooltip" ).style = "";
-            }
-          },
-          //updateContext: () => {}
-        },
-        { tooltip: [ '<img src="icon/arrow-left.png"> Adjust ' + control.controlName + ' <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      controlsPanel.appendChild( controlElement );
-    }
-    if( control.controlType === "asset" ) {}
-    if( control.controlType === "layer-input" ) {}
-    if( control.controlType === "image" ) {
-      const controlElement = document.createElement( "div" );
-      controlElement.classList.add( "image-input-control", "animated" );
+      controlElement.classList.add( "image-input-control", "animated", "control-element" );
+      if( controlScheme.visible === false ) controlElement.classList.add( "hidden" );
 
       const controlElementLabel = document.createElement( "div" );
       controlElementLabel.classList.add( "image-control-element-label" );
-      controlElementLabel.textContent = control.controlHint.substring( 0, 5 ); //max 5 hint characters
+      controlElementLabel.textContent = controlScheme.controlHint.substring( 0, 5 ); //max 5 hint characters
       controlElement.appendChild( controlElementLabel );
 
-      controlElement.controlName = control.controlName;
+      controlElement.controlName = controlScheme.controlName;
       controlElement.uplinkLayer = null;
 
       //look for a linked input (the link HTML element is created on UI update context)
       searchForLinkLayer:
       for( const uplinkLayer of layersStack.layers ) {
         for( const uplink of uplinkLayer.nodeUplinks ) {
-          if( uplink.layerId === selectedLayer.layerId && uplink.apiFlowName === apiFlowName && uplink.controlName === control.controlName ) {
+          if( uplink.layerId === selectedLayer.layerId && uplink.apiFlowName === apiFlowName && uplink.controlName === controlScheme.controlName ) {
             controlElement.uplinkLayer = uplinkLayer;
             break searchForLinkLayer;
           }
@@ -5591,7 +5685,7 @@ function setupUIGenerativeControls( apiFlowName ) {
           //erase the control uplink layer (if any)
           if( controlElement.uplinkLayer ) {
             for( const uplink of controlElement.uplinkLayer.nodeUplinks ) {
-              if( uplink.layerId === selectedLayer.layerId && uplink.apiFlowName === apiFlowName && uplink.controlName === control.controlName ) {
+              if( uplink.layerId === selectedLayer.layerId && uplink.apiFlowName === apiFlowName && uplink.controlName === controlScheme.controlName ) {
                 controlElement.uplinkLayer.nodeUplinks.delete( uplink );
                 break;
               }
@@ -5600,7 +5694,7 @@ function setupUIGenerativeControls( apiFlowName ) {
             UI.updateContext();
           }
         } },
-        { tooltip: [ control.controlName, "below", "to-left-of-center" ], zIndex:10000, }
+        { tooltip: [ controlScheme.controlLabel || controlScheme.controlName, "below", "to-left-of-center" ], zIndex:10000, }
       );
       imageInputsPanel.appendChild( controlElement );
       numberOfImageInputs += 1;
@@ -6311,6 +6405,10 @@ const UI = {
         { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust ' + label + ' <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
       );
 
+      sliderElement.setLabel = label => {
+        sliderElement.querySelector( ".number-slider-label" ).textContent = label;
+        sliderElement.querySelector( ".tooltip" ).innerHTML = '<img src="icon/arrow-left.png"> Drag to Adjust ' + label + ' <img src="icon/arrow-right.png">';
+      }
       sliderElement.setValue = v => {
         value = v;
         numberPreview.showValue();
@@ -10655,7 +10753,10 @@ const wait = delay => new Promise( land => setTimeout( land, delay ) );
 
 const apiExecutionQueue = [];
 
+const verboseAPICall = true;
 async function executeAPICall( name, controlValues ) {
+
+  console.error( "Executing API call: ", name );
 
   const selfQueue = [name, controlValues];
   apiExecutionQueue.push( selfQueue );
@@ -10672,7 +10773,7 @@ async function executeAPICall( name, controlValues ) {
   for( let i=0; i<apiFlow.apiCalls.length; i ) {
   //for( apiCall of apiFlow.apiCalls ) {
     const apiCall = apiFlow.apiCalls[ i ];
-    //console.log( "On apicall ", apiCall.apiCallName )
+    if( verboseAPICall ) console.log( "On apicall ", apiCall.apiCallName )
 
     let resultSchemeExpectingRawFile = false;
     for( const resultScheme of apiCall.results ) {
@@ -10691,10 +10792,10 @@ async function executeAPICall( name, controlValues ) {
           if( resultSchemeExpectingRawFile.resultType === "file-image" ) {
             const reader = new FileReader();
             reader.onload = () => {
-              //console.log( "Finished reading raw file as dataURL: " + reader.result.substring( 0, 20 ) + "..." );
+              if( verboseAPICall ) console.log( "Finished reading raw file as dataURL: " + reader.result.substring( 0, 20 ) + "..." );
               const img = new Image();
               img.onload = () => {
-                //console.log( "Finished loading image from dataURL and storing in result ",  resultSchemeExpectingRawFile.resultName );
+                if( verboseAPICall ) console.log( "Finished loading image from dataURL and storing in result ",  resultSchemeExpectingRawFile.resultName );
                 results[ resultSchemeExpectingRawFile.resultName ] = img;
                 complete( true );
               }
@@ -10704,7 +10805,7 @@ async function executeAPICall( name, controlValues ) {
               img.src = reader.result;
               
             }
-            //console.log( "Going to try reading response as file | type ", xhr.responseType, " | ", typeof xhr.response );
+            if( verboseAPICall ) console.log( "Going to try reading response as file | type ", xhr.responseType, " | ", typeof xhr.response );
             //Hmm... Isn't it cached now? Can't I just set the URL as my image url? No... Because it's reflected. :-/ Hmm.
             //reader.readAsDataURL( new Blob( [xhr.response], { type: "image/png" } ) );
             reader.readAsDataURL( xhr.response );
@@ -10712,10 +10813,10 @@ async function executeAPICall( name, controlValues ) {
           }
         }
         else {
-          let jsonResponse;
+          let jsonResponse = undefined;
 
           if( (xhr.response === "" || xhr.response === "{}") && apiCall.retryOnEmpty ) {
-            //console.log( "Got empty response. Retrying in ", uiSettings.retryAPIDelay, " ms." );
+            if( verboseAPICall ) console.log( "Got empty response. Retrying in ", uiSettings.retryAPIDelay, " ms." );
             await wait( uiSettings.retryAPIDelay );
             complete( "retry" );
             return;
@@ -10723,17 +10824,18 @@ async function executeAPICall( name, controlValues ) {
           }
 
           try {
+            console.log( "Parsing response as JSON" );
             jsonResponse = JSON.parse( xhr.response );
           }
           catch ( e ) {
               console.error( "Not JSON. Alert api call failed. Response: ", xhr.response );
               complete( false );
           }
-          if( jsonResponse ) {
-            //console.log( "Got API JSON response: ", jsonResponse );
+          if( jsonResponse !== undefined ) {
+            if( verboseAPICall ) console.log( "Got API JSON response: ", jsonResponse );
 
             for( const resultScheme of apiCall.results ) {
-              //console.log( "Starting with result ", resultScheme );
+              if( verboseAPICall ) console.log( "Starting with result ", resultScheme );
               const resultSuccessful = await new Promise( proceed => {
                 const path = [ ...resultScheme.resultPath ];
                 results[ resultScheme.resultName ] = jsonResponse;
@@ -10763,13 +10865,17 @@ async function executeAPICall( name, controlValues ) {
                   }
                   img.src = "data:image/png;base64," + results[ resultScheme.resultName ];
                 }
+                if( resultScheme.resultType === "dictionary-object-list" ) {
+                  results[ resultScheme.resultName ] = Object.entries( results[ resultScheme.resultName ] );
+                  proceed( true );
+                }
                 if( resultScheme.resultType === "array-object" ) {
                   //results[ resultScheme.resultName ] = jsonResponse;
                   proceed( true );
                 }
                 if( resultScheme.resultType === "array-string" ) {
                   //console.log( "Updated results: ", results );
-                  results[ resultScheme.resultName ] = results[ resultScheme.resultName ][ 0 ]; //THIS IS A BUG! I don't know why I need this line. :-|
+                  //results[ resultScheme.resultName ] = results[ resultScheme.resultName ][ 0 ]; //THIS IS A BUG! I don't know why I need this line. :-|
                   proceed( true );
                 }
                 if( resultScheme.resultType === "string" ) {
@@ -10784,7 +10890,7 @@ async function executeAPICall( name, controlValues ) {
                 complete( false );
               }
             }
-            //console.log( "Now have accumulated results: ", results );
+            if( verboseAPICall ) console.log( "Now have accumulated results: ", results );
             //populated all results
             complete( true );
           }
@@ -10792,7 +10898,7 @@ async function executeAPICall( name, controlValues ) {
       }
       //load api values from controls
       for( const controlScheme of apiFlow.controls ) {
-        //console.log( "On controlscheme ", controlScheme.controlName );
+        if( verboseAPICall ) console.log( "On controlscheme ", controlScheme.controlName );
         if( controlScheme.controlPath[ 0 ] === apiCall.apiCallName || controlScheme.controlPath[ 0 ] === "controlValue" ) {
 
           let target;
@@ -10830,31 +10936,42 @@ async function executeAPICall( name, controlValues ) {
               //nothing to set yet in this call.
               continue;
             }
-            //console.log( "Assigning result ", retrievedResult, " to target ", target[ controlPath[ 0 ] ] );
+            if( verboseAPICall ) console.log( "Assigning result ", retrievedResult, " to target ", target[ controlPath[ 0 ] ] );
             target[ controlPath.shift() ] = retrievedResult;
           }
-
+          else if( controlScheme.controlType === "control-value" ) {
+            let retrievedValue = apiFlow.controls.find( c => c.controlName === controlScheme.controlValuePath[ 0 ] );
+            for( let i=1; i<controlScheme.controlValuePath.length; i++ ) {
+              retrievedValue = retrievedValue?.[ controlScheme.controlValuePath[ i ] ];
+            }
+            if( ! retrievedValue ) {
+              //Could be problematic, but moving on. Hopefully the default is usable!
+              continue;
+            }
+            if( verboseAPICall ) console.log( "Assigning control-value ", retrievedValue, " to target ", target[ controlPath[ 0 ] ] );
+            target[ controlPath.shift() ] = retrievedValue;
+          }
+          else if( controlScheme.controlType === "apiPort") {
+            controlScheme.controlValue = uiSettings.backendPort;
+            target[ controlPath.shift() ] = uiSettings.backendPort;
+          }
           else if( controlScheme.controlType === "string-compose" ) {
             //check if this is an api-result from the current apicall, probably unnecessary given
-            /* if( controlScheme.controlPath[ 0 ] !== apiCall.apiCallName ) {
-              console.log( "Ignoring control ", controlScheme.controlName, " just during apicall ", apiCall.apiCallName );
-              continue; //nothing to set from here
-            } */
             let composedString = "";
             for( const composePath of controlScheme.composePaths ) {
               const compositionPath = [ ...composePath ];
               if( typeof composePath === "string" ) composedString += composePath;
               else {
                 const controlName = compositionPath.shift();
-                //console.log( "Looking up controlname for composition: ", controlName );
+                if( verboseAPICall ) console.log( "Looking up controlname for composition: ", controlName );
                 let lookup = apiFlow.controls.find( c => c.controlName === controlName );
                 for( let i=0; i<compositionPath.length; i++ ) 
                   lookup = lookup[ compositionPath[ i ] ]; //incase controlValue is an obj{} IDK
-                //console.log( "Got loookup ", lookup, " from path ", compositionPath );
+                  if( verboseAPICall ) console.log( "Got loookup ", lookup, " from path ", compositionPath );
                 composedString += lookup;
               }
             }
-            //console.log( "Installing composed string ", composedString, " onto target ", target[ controlPath[ 0 ] ] );
+            if( verboseAPICall ) console.log( "Installing composed string ", composedString, " onto target ", target[ controlPath[ 0 ] ] );
             target[ controlPath.shift() ] = composedString;
           }
 
@@ -10901,7 +11018,7 @@ async function executeAPICall( name, controlValues ) {
     } );
     if( completionStatus === true ) {
       apiResults[ apiCall.apiCallName ] = results;
-      //console.log( "Finished API call successfully with results: ", results );
+      if( verboseAPICall ) console.log( "Finished API call successfully with results: ", results );
       ++i;
       retryCount = 0;
     }
@@ -10925,15 +11042,17 @@ async function executeAPICall( name, controlValues ) {
       outputs[ outputScheme.outputName ] = result;
     }
     if( outputScheme.outputType === "assets" ) {
-      //console.log( "Mapping outputscheme ", outputScheme, " with result ", result );
+      if( verboseAPICall ) console.log( "Mapping outputscheme ", outputScheme, " with result ", result );
       const library = assetsLibrary[ outputScheme.outputLibraryName ] ||= [];
       const mappedAssets = [];
       for( const resultEntry of result ) {
         const mappedAsset = {};
-        for( const {key,path} of outputScheme.assetMap ) {
+        for( const {key,path,optional} of outputScheme.assetMap ) {
           mappedAsset[ key ] = resultEntry;
           for( let i=0; i<path.length; i++ )
             mappedAsset[ key ] = mappedAsset[ key ]?.[ path[ i ] ];
+          if( optional === true && mappedAsset[ key ] === undefined )
+            delete mappedAsset[ key ];
         }
         library.push( mappedAsset );
         mappedAssets.push( mappedAsset );
@@ -10941,7 +11060,7 @@ async function executeAPICall( name, controlValues ) {
       outputs[ outputScheme.outputName ] = mappedAssets;
     }
   }
-  //console.log( "Finished apiFlow with outputs: ", outputs );
+  if( verboseAPICall ) console.log( "Finished apiFlow with outputs: ", outputs );
 
   apiExecutionQueue.splice( apiExecutionQueue.indexOf( selfQueue ), 1 );
 
@@ -10961,6 +11080,41 @@ and get a gen onscreen again finally
 asset browser has to fit above keyboard on tablet. small icons, large preview is the way to go.
 
 */
+
+const defaultAPIFlowNames = [
+  "Comfy-SD1.5-SDXL-t2i",
+  "Comfy-SD1.5-SDXL-i2i",
+  "Comfy-SC",
+  "Comfy-Assets",
+  "A1111-Preprocessor",
+  "A1111-i2i",
+  "A1111-t2i",
+  "A1111-t2i-cn",
+  "A1111-Models",
+  "A1111-Samplers",
+  "A1111-VAEs",
+  "A1111-Controlnet-Preprocessors",
+  "A1111-Controlnets",
+];
+
+function loadDefaultAPIFlows() {
+  for( const defaultAPIFlowName of defaultAPIFlowNames ) {
+    fetch( "apiFlows/" + defaultAPIFlowName + ".json" ).then(
+      async response => {
+        if( response.ok ) {
+          const apiFlow = await response.json();
+          apiFlows.push( apiFlow );
+          console.log( "Loaded apiflow ", defaultAPIFlowName );
+        } else {
+          console.error( "Failed to load default apiflow: ", defaultAPIFlowName );
+        }
+      }
+    );
+  }
+}
+
+loadDefaultAPIFlows();
+
 
 const apiFlows = [
   {
@@ -11111,8 +11265,9 @@ const apiFlows = [
       }
     ],
   },
+  /* 
   {
-    apiFlowName: "Comfy Whatnot",
+    apiFlowName: "Comfy Asset Loaders",
     assetLibraries: [ "Comfy Models", "Comfy ControlNets", "Comfy Samplers", "Comfy Schedulers", "Comfy VAEs", "Comfy UNETs" ],
     apiFlowType: "asset",
     outputs: [
@@ -11222,6 +11377,10 @@ const apiFlows = [
       }
     ],
   },
+ */
+
+
+  /*
   {
     apiFlowName: "Comfy SD1.5/SDXL txt2img",
     apiFlowType: "generative",
@@ -11239,7 +11398,7 @@ const apiFlows = [
       { controlName: "CFG", controlType: "number", min:1, max:50, step:0.25, controlValue:1.5, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "cfg" ], },
 
       { controlName: "Model", controlType: "asset", assetName:"Comfy Models", controlValue:"--no model--", controlPath: [ "sd-prompt", "api", "prompt", "61", "inputs", "ckpt_name" ], },
-      /* { controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "29", "inputs", "vae_name" ], }, */
+      //{ controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "29", "inputs", "vae_name" ], },
 
       { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "seed" ], },
       { controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlPath: [ "sd-prompt", "api", "prompt", "66", "inputs", "width" ], },
@@ -11421,6 +11580,9 @@ const apiFlows = [
       }
     ]
   },
+  */
+
+/* 
   {
     apiFlowName: "Comfy SD1.5/SDXL img2img",
     apiFlowType: "generative",
@@ -11443,7 +11605,7 @@ const apiFlows = [
       { controlName: "Denoise", controlType: "number", min:0, max:1, step:0.01, controlValue:0.5, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "denoise" ], },
 
       { controlName: "Model", controlType: "asset", assetName:"Comfy Models", controlValue:"--no model--", controlPath: [ "sd-prompt", "api", "prompt", "61", "inputs", "ckpt_name" ], },
-      /* { controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "29", "inputs", "vae_name" ], }, */
+      //{ controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "29", "inputs", "vae_name" ], },
 
       { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "seed" ], },
       //{ controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlPath: [ "sd-prompt", "api", "prompt", "66", "inputs", "width" ], },
@@ -11660,6 +11822,9 @@ const apiFlows = [
       }
     ]
   },
+ */
+
+  /* 
   {
     apiFlowName: "Comfy SC Test",
     apiFlowType: "generative",
@@ -11960,6 +12125,9 @@ const apiFlows = [
       }
     ]
   },
+ */
+
+  /* 
   {
     apiFlowName: "A1111 Layer to Lineart Demo",
     apiFlowType: "generative",
@@ -12004,6 +12172,9 @@ const apiFlows = [
       }
     ]
   },
+ */
+
+  /* 
   {
     apiFlowName: "A1111 Lightning Demo img2img Mini",
     apiFlowType: "generative",
@@ -12070,11 +12241,7 @@ const apiFlows = [
           "negative_prompt": "",
           "prompt": "desktop cat",
           "restore_faces": false,
-          /* "s_churn": 0,
-          "s_min_uncond": 0,
-          "s_noise": 1,
-          "s_tmax": null,
-          "s_tmin": 0, */
+          
           "sampler_name": "DPM++ SDE",
           "script_name": null,
           "seed": 3718586839,
@@ -12085,6 +12252,9 @@ const apiFlows = [
       }
     ]
   },
+ */
+
+  /* 
   {
     apiFlowName: "A1111 Lightning Demo txt2img Mini",
     apiFlowType: "generative",
@@ -12149,6 +12319,8 @@ const apiFlows = [
       },
     ]
   },
+ */
+
   {
     isDemo: true,
     //just replicate t2i functionality: prompt -> lightning

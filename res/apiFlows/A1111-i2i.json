@@ -1,0 +1,232 @@
+{
+  "apiFlowName": "A1111 img2img",
+  "apiFlowType": "generative",
+  "outputs": [
+    {
+      "outputName": "generated-image",
+      "outputType": "image",
+      "outputResultPath": [
+        "i2i",
+        "generated-image"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "prompt",
+      "controlType": "text",
+      "controlValue": "desktop cat",
+      "controlPath": [
+        "i2i",
+        "api",
+        "prompt"
+      ]
+    },
+    {
+      "controlName": "negative-prompt",
+      "controlType": "text",
+      "controlValue": "",
+      "controlPath": [
+        "i2i",
+        "api",
+        "negative_prompt"
+      ]
+    },
+    {
+      "controlName": "apiPath",
+      "controlType": "static",
+      "controlValue": "/sdapi/v1/img2img",
+      "controlPath": [
+        "i2i",
+        "apiPath"
+      ]
+    },
+    {
+      "controlName": "seed",
+      "controlType": "randomInt",
+      "min": 0,
+      "max": 999999999,
+      "step": 1,
+      "controlPath": [
+        "i2i",
+        "api",
+        "seed"
+      ]
+    },
+    {
+      "controlName": "sampler",
+      "controlType": "static",
+      "controlValue": "DPM++ SDE",
+      "controlPath": [
+        "i2i",
+        "api",
+        "sampler_name"
+      ]
+    },
+    {
+      "controlName": "denoise",
+      "controlType": "number",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "controlValue": 0.75,
+      "controlPath": [
+        "i2i",
+        "api",
+        "denoising_strength"
+      ]
+    },
+    {
+      "controlName": "steps",
+      "controlType": "number",
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "controlValue": 4,
+      "controlPath": [
+        "i2i",
+        "api",
+        "steps"
+      ]
+    },
+    {
+      "controlName": "cfg",
+      "controlType": "number",
+      "controlValue": 1.5,
+      "min": 0,
+      "max": 20,
+      "step": 0.5,
+      "controlPath": [
+        "i2i",
+        "api",
+        "cfg_scale"
+      ]
+    },
+    {
+      "controlName": "width",
+      "controlType": "layer-input",
+      "layerPath": [
+        "w"
+      ],
+      "controlValue": 1024,
+      "controlPath": [
+        "i2i",
+        "api",
+        "width"
+      ]
+    },
+    {
+      "controlName": "height",
+      "controlType": "layer-input",
+      "layerPath": [
+        "h"
+      ],
+      "controlValue": 1024,
+      "controlPath": [
+        "i2i",
+        "api",
+        "height"
+      ]
+    },
+    {
+      "controlName": "Model",
+      "controlType": "asset",
+      "assetName": "A1111 Models",
+      "controlValue": "--no model--",
+      "controlPath": [
+        "set-model",
+        "api",
+        "sd_model_checkpoint"
+      ]
+    },
+    {
+      "controlName": "Sampler",
+      "controlType": "asset",
+      "assetName": "A1111 Samplers",
+      "controlValue": "DPM++ 3M SDE Exponential",
+      "controlPath": [
+        "t2i",
+        "api",
+        "sampler_name"
+      ]
+    },
+    {
+      "controlName": "img2img",
+      "controlHint": "i2i",
+      "controlType": "image",
+      "controlValue": "",
+      "controlLayer": null,
+      "controlPath": [
+        "i2i",
+        "api",
+        "init_images",
+        0
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "set-model",
+      "results": [],
+      "host": "device",
+      "port": 7860,
+      "apiPath": "/sdapi/v1/options",
+      "method": "POST",
+      "dataFormat": "JSON",
+      "convertDataImages": false,
+      "api": {
+        "sd_model_checkpoint": ""
+      }
+    },
+    {
+      "apiCallName": "i2i",
+      "results": [
+        {
+          "resultName": "generated-image",
+          "resultType": "base64-image",
+          "resultPath": [
+            "images",
+            0
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 7860,
+      "apiPath": "/sdapi/v1/img2img",
+      "method": "POST",
+      "dataFormat": "JSON",
+      "convertDataImages": false,
+      "api": {
+        "denoising_strength": 0.74,
+        "image_cfg_scale": 1.5,
+        "init_images": [
+          ""
+        ],
+        "initial_noise_multiplier": 1,
+        "inpaint_full_res": 0,
+        "inpaint_full_res_padding": 32,
+        "inpainting_fill": 1,
+        "inpainting_mask_invert": 0,
+        "mask_blur": 4,
+        "mask_blur_x": 4,
+        "mask_blur_y": 4,
+        "batch_size": 1,
+        "cfg_scale": 1.5,
+        "disable_extra_networks": false,
+        "do_not_save_grid": false,
+        "do_not_save_samples": false,
+        "enable_hr": false,
+        "height": 1024,
+        "negative_prompt": "",
+        "prompt": "desktop cat",
+        "restore_faces": false,
+        "sampler_name": "DPM++ SDE",
+        "script_name": null,
+        "seed": 3718586839,
+        "steps": 4,
+        "tiling": false,
+        "width": 1024
+      }
+    }
+  ]
+}

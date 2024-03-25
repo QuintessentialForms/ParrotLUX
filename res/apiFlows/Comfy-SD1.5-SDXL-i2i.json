@@ -1,0 +1,498 @@
+{
+  "apiFlowName": "Comfy SD1.5/SDXL img2img",
+  "apiFlowType": "generative",
+  "outputs": [
+    {
+      "outputName": "generated-image",
+      "outputType": "image",
+      "outputResultPath": [
+        "view",
+        "generated-image"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "img2img",
+      "controlHint": "i2i",
+      "controlType": "image",
+      "controlValue": "",
+      "controlLayer": null,
+      "controlPath": [
+        "upload-image",
+        "api",
+        "image"
+      ]
+    },
+    {
+      "controlName": "i2i-image-filename",
+      "controlType": "api-result",
+      "resultPath": [
+        "upload-image",
+        "image-filename"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite with uploadname"
+    },
+    {
+      "controlName": "Prompt",
+      "controlType": "text",
+      "controlValue": "desktop cat",
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "62",
+        "inputs",
+        "text"
+      ]
+    },
+    {
+      "controlName": "Negative Prompt",
+      "controlType": "text",
+      "controlValue": "",
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "63",
+        "inputs",
+        "text"
+      ]
+    },
+    {
+      "controlName": "Steps",
+      "controlType": "number",
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "controlValue": 4,
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "60",
+        "inputs",
+        "steps"
+      ]
+    },
+    {
+      "controlName": "CFG",
+      "controlType": "number",
+      "min": 1,
+      "max": 50,
+      "step": 0.25,
+      "controlValue": 1.5,
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "60",
+        "inputs",
+        "cfg"
+      ]
+    },
+    {
+      "controlName": "Denoise",
+      "controlType": "number",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "controlValue": 0.5,
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "60",
+        "inputs",
+        "denoise"
+      ]
+    },
+    {
+      "controlName": "Model",
+      "controlType": "asset",
+      "assetName": "Comfy Models",
+      "controlValue": "--no model--",
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "61",
+        "inputs",
+        "ckpt_name"
+      ]
+    },
+    {
+      "controlName": "Sampler",
+      "controlType": "asset",
+      "assetName": "Comfy Samplers",
+      "controlValue": "euler",
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "60",
+        "inputs",
+        "sampler_name"
+      ]
+    },
+    {
+      "controlName": "Scheduler",
+      "controlType": "asset",
+      "assetName": "Comfy Schedulers",
+      "controlValue": "normal",
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "60",
+        "inputs",
+        "scheduler"
+      ]
+    },
+    {
+      "controlName": "seed",
+      "controlType": "randomInt",
+      "min": 0,
+      "max": 999999999,
+      "step": 1,
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "60",
+        "inputs",
+        "seed"
+      ]
+    },
+    {
+      "controlName": "prompt-i2i-filename",
+      "controlType": "string-compose",
+      "composePaths": [
+        "",
+        [
+          "i2i-image-filename",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "67",
+        "inputs",
+        "image"
+      ]
+    },
+    {
+      "controlName": "UID",
+      "controlType": "api-result",
+      "resultPath": [
+        "sd-prompt",
+        "prompt_id"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite"
+    },
+    {
+      "controlName": "history-path",
+      "controlType": "string-compose",
+      "composePaths": [
+        "/history/",
+        [
+          "UID",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "get-filename",
+        "apiPath"
+      ]
+    },
+    {
+      "controlName": "result-history-filename",
+      "controlType": "string-compose",
+      "composePaths": [
+        "",
+        [
+          "UID",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "get-filename",
+        "results",
+        0,
+        "resultPath",
+        0
+      ]
+    },
+    {
+      "controlName": "result-history-subfolder",
+      "controlType": "string-compose",
+      "composePaths": [
+        "",
+        [
+          "UID",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "get-filename",
+        "results",
+        1,
+        "resultPath",
+        0
+      ]
+    },
+    {
+      "controlName": "filename",
+      "controlType": "api-result",
+      "resultPath": [
+        "get-filename",
+        "image-filename"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite with filename"
+    },
+    {
+      "controlName": "view-filename",
+      "controlType": "string-compose",
+      "composePaths": [
+        "/view?filename=",
+        [
+          "filename",
+          "controlValue"
+        ],
+        "&subfolder=&type=output&rand=0.0923485734985"
+      ],
+      "controlPath": [
+        "view",
+        "apiPath"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "upload-image",
+      "results": [
+        {
+          "resultName": "image-filename",
+          "resultType": "string",
+          "resultPath": [
+            "name"
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "apiPath": "/upload/image",
+      "method": "POST",
+      "dataFormat": "FORM",
+      "convertDataImages": true,
+      "api": {
+        "image": ""
+      }
+    },
+    {
+      "apiCallName": "sd-prompt",
+      "results": [
+        {
+          "resultName": "prompt_id",
+          "resultType": "string",
+          "resultPath": [
+            "prompt_id"
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "apiPath": "/prompt",
+      "method": "POST",
+      "dataFormat": "JSON",
+      "convertDataImages": false,
+      "api": {
+        "prompt": {
+          "60": {
+            "inputs": {
+              "seed": 1037991131309544,
+              "steps": 4,
+              "cfg": 1.5,
+              "sampler_name": "dpmpp_sde",
+              "scheduler": "normal",
+              "denoise": 0.62,
+              "model": [
+                "61",
+                0
+              ],
+              "positive": [
+                "62",
+                0
+              ],
+              "negative": [
+                "63",
+                0
+              ],
+              "latent_image": [
+                "68",
+                0
+              ]
+            },
+            "class_type": "KSampler",
+            "_meta": {
+              "title": "KSampler"
+            }
+          },
+          "61": {
+            "inputs": {
+              "ckpt_name": "SDXL-Juggernaut-Lightning-4S.DPMppSDE.832x1216.CFG1-2.safetensors"
+            },
+            "class_type": "CheckpointLoaderSimple",
+            "_meta": {
+              "title": "Load Checkpoint"
+            }
+          },
+          "62": {
+            "inputs": {
+              "text": "test",
+              "clip": [
+                "61",
+                1
+              ]
+            },
+            "class_type": "CLIPTextEncode",
+            "_meta": {
+              "title": "CLIP Text Encode (Prompt)"
+            }
+          },
+          "63": {
+            "inputs": {
+              "text": "",
+              "clip": [
+                "61",
+                1
+              ]
+            },
+            "class_type": "CLIPTextEncode",
+            "_meta": {
+              "title": "CLIP Text Encode (Prompt)"
+            }
+          },
+          "64": {
+            "inputs": {
+              "samples": [
+                "60",
+                0
+              ],
+              "vae": [
+                "61",
+                2
+              ]
+            },
+            "class_type": "VAEDecode",
+            "_meta": {
+              "title": "VAE Decode"
+            }
+          },
+          "65": {
+            "inputs": {
+              "filename_prefix": "ComfyUI",
+              "images": [
+                "64",
+                0
+              ]
+            },
+            "class_type": "SaveImage",
+            "_meta": {
+              "title": "Save Image"
+            }
+          },
+          "67": {
+            "inputs": {
+              "image": "00008-3677720763.png",
+              "upload": "image"
+            },
+            "class_type": "LoadImage",
+            "_meta": {
+              "title": "Load Image"
+            }
+          },
+          "68": {
+            "inputs": {
+              "pixels": [
+                "67",
+                0
+              ],
+              "vae": [
+                "61",
+                2
+              ]
+            },
+            "class_type": "VAEEncode",
+            "_meta": {
+              "title": "VAE Encode"
+            }
+          }
+        }
+      }
+    },
+    {
+      "retryOnEmpty": true,
+      "apiCallName": "get-filename",
+      "results": [
+        {
+          "resultName": "image-filename",
+          "resultType": "string",
+          "resultPath": [
+            "{UID for filename}",
+            "outputs",
+            65,
+            "images",
+            0,
+            "filename"
+          ]
+        },
+        {
+          "resultName": "image-subfolder",
+          "resultType": "string",
+          "resultPath": [
+            "{UID for subfolder}",
+            "outputs",
+            65,
+            "images",
+            0,
+            "subfolder"
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/history/{UID}"
+    },
+    {
+      "apiCallName": "view",
+      "results": [
+        {
+          "resultName": "generated-image",
+          "resultType": "file-image",
+          "resultPath": "file"
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/view?filename={FILENAME}"
+    }
+  ]
+}

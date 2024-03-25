@@ -1,0 +1,57 @@
+{
+  "apiFlowName": "A1111 Models Asset Loader",
+  "assetLibraries": [
+    "A1111 Models"
+  ],
+  "apiFlowType": "asset",
+  "outputs": [
+    {
+      "outputName": "a1111-models-list",
+      "outputLibraryName": "A1111 Models",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": [ "title" ]
+        },
+        {
+          "key": "name",
+          "path": [ "title" ]
+        }
+      ],
+      "outputResultPath": [
+        "get-models-array",
+        "models-array"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "apiPort",
+      "controlType": "apiPort",
+      "controlValue": 7860,
+      "controlPath": [
+        "get-models-array",
+        "port"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "get-models-array",
+      "results": [
+        {
+          "resultName": "models-array",
+          "resultType": "array-object",
+          "resultPath": []
+        }
+      ],
+      "host": "device",
+      "port": 7860,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/sdapi/v1/sd-models"
+    }
+  ]
+}

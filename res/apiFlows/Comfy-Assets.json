@@ -1,0 +1,208 @@
+{
+  "apiFlowName": "Comfy Asset Loaders",
+  "assetLibraries": [
+    "Comfy Models",
+    "Comfy ControlNets",
+    "Comfy Samplers",
+    "Comfy Schedulers",
+    "Comfy VAEs",
+    "Comfy UNETs"
+  ],
+  "apiFlowType": "asset",
+  "outputs": [
+    {
+      "outputName": "comfy-models-list",
+      "outputLibraryName": "Comfy Models",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": []
+        },
+        {
+          "key": "name",
+          "path": []
+        }
+      ],
+      "outputResultPath": [
+        "get-object-info",
+        "models-array"
+      ]
+    },
+    {
+      "outputName": "comfy-controlnets-list",
+      "outputLibraryName": "Comfy ControlNets",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": []
+        },
+        {
+          "key": "name",
+          "path": []
+        }
+      ],
+      "outputResultPath": [
+        "get-object-info",
+        "controlnets-array"
+      ]
+    },
+    {
+      "outputName": "comfy-samplers",
+      "outputLibraryName": "Comfy Samplers",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": []
+        },
+        {
+          "key": "name",
+          "path": []
+        }
+      ],
+      "outputResultPath": [
+        "get-object-info",
+        "samplers-array"
+      ]
+    },
+    {
+      "outputName": "comfy-schedulers",
+      "outputLibraryName": "Comfy Schedulers",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": []
+        },
+        {
+          "key": "name",
+          "path": []
+        }
+      ],
+      "outputResultPath": [
+        "get-object-info",
+        "schedulers-array"
+      ]
+    },
+    {
+      "outputName": "comfy-schedulers",
+      "outputLibraryName": "Comfy VAEs",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": []
+        },
+        {
+          "key": "name",
+          "path": []
+        }
+      ],
+      "outputResultPath": [
+        "get-object-info",
+        "vaes-array"
+      ]
+    },
+    {
+      "outputName": "comfy-unets",
+      "outputLibraryName": "Comfy UNETs",
+      "outputType": "assets",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": []
+        },
+        {
+          "key": "name",
+          "path": []
+        }
+      ],
+      "outputResultPath": [
+        "get-object-info",
+        "unets-array"
+      ]
+    }
+  ],
+  "controls": [],
+  "apiCalls": [
+    {
+      "apiCallName": "get-object-info",
+      "results": [
+        {
+          "resultName": "models-array",
+          "resultType": "array-string",
+          "resultPath": [
+            "CheckpointLoaderSimple",
+            "input",
+            "required",
+            "ckpt_name",
+            0
+          ]
+        },
+        {
+          "resultName": "controlnets-array",
+          "resultType": "array-string",
+          "resultPath": [
+            "ControlNetLoader",
+            "input",
+            "required",
+            "control_net_name",
+            0
+          ]
+        },
+        {
+          "resultName": "samplers-array",
+          "resultType": "array-string",
+          "resultPath": [
+            "KSampler",
+            "input",
+            "required",
+            "sampler_name",
+            0
+          ]
+        },
+        {
+          "resultName": "schedulers-array",
+          "resultType": "array-string",
+          "resultPath": [
+            "KSampler",
+            "input",
+            "required",
+            "scheduler",
+            0
+          ]
+        },
+        {
+          "resultName": "vaes-array",
+          "resultType": "array-string",
+          "resultPath": [
+            "VAELoader",
+            "input",
+            "required",
+            "vae_name",
+            0
+          ]
+        },
+        {
+          "resultName": "unets-array",
+          "resultType": "array-string",
+          "resultPath": [
+            "UNETLoader",
+            "input",
+            "required",
+            "unet_name",
+            0
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/object_info"
+    }
+  ]
+}

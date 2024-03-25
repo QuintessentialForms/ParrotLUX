@@ -63,8 +63,8 @@ Coming very soon! Windows binary and Android APK will be available.
         - ✅ Some
         - ❌ All
     - ❌ Keyboard Shortcuts
-        - ✅ Some
-        - ❌ All
+        - ✅ Undo / Redo, Enter
+        - ❌ Others
 - ✅ Layers
     - ✅ Paint
     - ✅ AI Generation
@@ -82,9 +82,10 @@ Coming very soon! Windows binary and Android APK will be available.
 - ✅ Undo / Redo
 - ✅ Save / Load
 - ✅ Import image
-- ❌ Gallery View (Android APK only?)
+- ❌ Gallery View
 - ✅ Export
 - ❌ Settings Panel
+    - ❌ Settings Persist
 - ✅ Paint
     - ✅ Brush tip image
     - ✅ Pressure & tilt dynamics
@@ -103,16 +104,16 @@ Coming very soon! Windows binary and Android APK will be available.
     - ❌ Generation history
     - ✅ Universal APIFlow System
     - ✅ Builtin APIFlows
-        - ✅ A1111 img2img / inpainting-with-mask (demo)
-        - ✅ A1111 txt2img (demo)
-        - ❌ A1111 controlnet (demo)
-        - ✅ A1111 controlnet preprocessor (demo)
-        - ~~❌ A1111 upscale (demo)~~ (A1111 extras API currently broken)
-        - ✅ Comfy img2img / inpainting-with-mask (demo)
+        - ✅ A1111 img2img + Inpainting
+        - ✅ A1111 txt2img
+        - ✅ A1111 txt2img + ControlNet
+        - ✅ A1111 ControlNet Preprocessor
+        - ~~❌ A1111 Upscale~~ (A1111 extras API currently broken)
+        - ✅ Comfy img2img + Inpainting
         - ✅ Comfy txt2img
-        - ❌ Comfy controlnet (demo)
-        - ❌ Comfy controlnet preprocessor (demo)
-        - ❌ Comfy upscale (demo)
+        - ❌ Comfy controlnet
+        - ❌ Comfy controlnet preprocessor
+        - ❌ Comfy upscale
     - ❌ Design custom APIFlows in-app
     - ❌ Export / Import / Share APIFlows
 - ✅ Layer Masks
@@ -131,11 +132,11 @@ Coming very soon! Windows binary and Android APK will be available.
     - ❌ Snap
     - ❌ Arrange / Distribute
 - ❌ Paint Helper Tools
-    - Symmetry
-    - Line
-    - Arc
-    - Circle
-    - Polygons
+    - ❌ Symmetry
+    - ❌ Line
+    - ❌ Arc
+    - ❌ Circle
+    - ❌ Polygons
 - ❌ Filters
     - ❌ Basic (Hue,Saturation,Luminance,Contrast...)
     - ❌ Channels
@@ -144,6 +145,8 @@ Coming very soon! Windows binary and Android APK will be available.
     - ❌ Import fonts in asset browser
 - ✅ Pose Rig
     - ✅ Pose Layer
+    - ❌ Scale
+    - ❌ Flip
     - ❌ Import image as pose
     - ❌ Layer to pose? Generative to pose?
     - ❌ Poses asset browser
