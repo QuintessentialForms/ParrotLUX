@@ -1247,7 +1247,7 @@ function reorganizeLayerButtons() {
 
 //after sampleLayerInLayer, we'll swap out the img2img pull code with sampling like this
 
-function sampleLayerInLayer( sourceLayer, rectLayer, compositingLayer ) {
+function sampleLayerInLayer( sourceLayer, rectLayer, compositingLayer, backgroundColorStyle = null ) {
 
   //match our compositingLayer to the rectLayer
   compositingLayer.canvas.width = rectLayer.w;
@@ -1290,6 +1290,10 @@ function sampleLayerInLayer( sourceLayer, rectLayer, compositingLayer ) {
   const ctx = compositingLayer.context;
   ctx.save();
   ctx.clearRect( 0,0,rectLayer.w,rectLayer.h );
+  if( backgroundColorStyle !== null ) {
+    ctx.fillStyle = backgroundColorStyle;
+    ctx.fillRect( 0,0,rectLayer.w, rectLayer.h );
+  }
   ctx.translate( castPoints.topLeft.x, castPoints.topLeft.y );
   ctx.rotate( sourceRotation );
   //ctx.scale( relativeScale, relativeScale );
@@ -1629,8 +1633,9 @@ function renderLayerPose( layer ) {
   const rig = layer.rig;
   const ctx = layer.context,
     { w,h } = layer;
-  ctx.fillStyle = "rgb(0,0,0)";
-  ctx.fillRect( 0,0,w,h );
+  //ctx.fillStyle = "rgb(0,0,0)";
+  //ctx.fillRect( 0,0,w,h );
+  ctx.clearRect( 0,0,w,h );
   //draw the node links
   const nodes = Object.values( rig );
   for( const node of nodes ) {
@@ -4386,7 +4391,7 @@ function setupUI() {
                 }
                 //cast source layer to generative layer's space
                 const previewLayer = layersStack.layers.find( l => l.layerType === "paint-preview" );
-                sampleLayerInLayer( sourceLayer, selectedLayer, previewLayer );
+                sampleLayerInLayer( sourceLayer, selectedLayer, previewLayer, "rgb(0,0,0)" );
                 const dataURL = previewLayer.canvas.toDataURL();
                 //controlValues[ control.controlName ] = dataURL.substring( dataURL.indexOf( "," ) + 1 );
                 controlValues[ control.controlName ] = dataURL;
