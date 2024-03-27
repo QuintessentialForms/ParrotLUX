@@ -1,27 +1,12 @@
 
-/* Working Proof of Concept:
+/* 
 
-    What next?
-    Iterate! Don't optimize!
-    
-
-    UI:
-    - layer drag+drop groups (for visible->img2img)
-    - gen history
-    - comfy
-    - asset browser for some hard-coded brush configs, gen presets, models, loras, *?
-      : brushes pencil and brushpen
-    - air undo / redo
-    - air brush size/opacity/softness
-    - flood fill
-    - text
-    Misc:
-    - air wheel
-    - flood fill
-    - text
-
-    
-    Painting -> GPU (think about it, but not until the UI work is real)
+  This needs so much debugging tho... :-|
+  - layer controls (duplicate, delete) failed to reappear on selecting a layer, despite its border changing to white
+  - layer button disappeared while dragging (reappeared on drop)
+  - mask controls failed to appear (fixed)
+  - brush spacing is out of control pointilism
+  
 
 */
 const VERSION = 3;
@@ -1350,8 +1335,6 @@ function updateLayerGroupCoordinates( layerGroup ) {
   maxX = maxX;
   maxY = maxY;
 
-  console.log( minX, maxX, minY, maxY );
-
   //update the rect
   layerGroup.topLeft[0] = minX;
   layerGroup.topLeft[1] = minY;
@@ -1743,12 +1726,89 @@ function composeLayers( destinationLayer, layers, pixelScale=1 ) {
   
 }
 
+//filter functions should execute in an iframe[about:blank] -> off-main thread
+//  - pass back and forth w,h,imageData[u8*]
+//  - to avoid performance penalty, some will render here on the main thread
+//  - may also have GLSL filters? IDK
+
+function renderStandardFilterLayer( layer ) {
+  if( layer.filteringLayerId === null ) return;
+  if( layer.filterSettings.filterName !== "standard" ) return;
+  const ctx = layer.context;
+  //find the filtered layer
+  const filteredLayer = layersStack.layers.find( l => l.layerId === layer.filteringLayerId );
+  if( ! filteredLayer ) {
+    ctx.clearRect( 0, 0, layer.w, layer.h )
+    layer.filteringLayerId = null;
+    flagLayerTextureChanged( layer );
+    return;
+  }
+
+  let w = filteredLayer.w, h = filteredLayer.h,
+    x = 0, y = 0;
+  const formats = {
+    "blur": px => `blur(${px}px)`,
+    "brightness": b => `brightness(${b}%)`,
+    "contrast": c => `contrast(${c}%)`,
+    //"drop-shadow": ({x,y,blur,color}) => `contrast(${x}px ${y}px ${blur}px ${color})`,
+    "grayscale": g => `grayscale(${g}%)`,
+    "hue-rotate": r => `hue-rotate(${r}turn)`,
+    "invert": i => `invert(${i}%)`,
+    "saturation": i => `saturate(${i}%)`
+    //"sepia": i => `sepia(${i}%)`, //needs to be applied in order?
+  };
+
+  const filterComponents = [];
+  //this needs to be looping thru controls.
+  //might have multiples, and order matters
+  for( const key in formats ) {
+    const { value, defaultValue } = layer.filterControls[ layer.filterSettings.filterName ];
+    if( value === defaultValue ) continue;
+    filterComponents.push( formats[ key ]( value ) );
+    if( key === "blur" ) {
+      w += 2*value;
+      h += 2*value;
+      x = value;
+      y = value;
+    }
+  }
+
+  if( layer.w !== w || layer.h !== h ) {
+    resetLayerSizeAndClear( layer, w, h );
+  }
+
+  const mtx = layer.maskContext;
+  mtx.clearRect( 0,0,w,h );
+  mtx.save();
+  mtx.drawImage( filteredLayer.canvas, x, y );
+  if( filteredLayer.maskInitialized ) {
+    mtx.globalCompositeOperation = "destination-in";
+    mtx.drawImage( filteredLayer.mask, x, y );
+  }
+  mtx.restore();
+
+  ctx.clearRect( 0,0,w,h );
+  ctx.filter = filterComponents.join( " " );
+  ctx.drawImage( layer.maskCanvas, 0, 0 );
+  mtx.clearRect( 0,0,w,h ); //not ideal, since now we can't mask filters. Can we draw a canvas to itself? Probably???
+  flagLayerTextureChanged( layer );
+
+}
+
+function flagLayerFilterChanged( layer ) {
+  //look for filters pulling this layer.
+  const filters = layersStack.layers.filter( l => l.layerType === "filter" && l.filteringLayerId === layer.layerId );
+  for( const filter of filters ) {
+    renderStandardFilterLayer( filter );
+  }
+}
 function flagLayerGroupChanged( layer ) {
   let groupChainLayer = layer;
   while( groupChainLayer.layerGroupId !== null ) {
     const groupLayer = layersStack.layers.find( l => l.layerId ===groupChainLayer.layerGroupId )
     //if( ! groupLayer ) { console.error( "Layer missing declared group: ", groupChainLayer ); }
     groupLayer.groupCompositeUpToDate = false;
+    flagLayerFilterChanged( groupLayer );
     groupChainLayer = groupLayer;
   }
 }
@@ -1766,6 +1826,7 @@ function flagLayerTextureChanged( layer, rect=null ) {
     layer.textureChangedRect.h = rect.h;
   }
   flagLayerGroupChanged( layer );
+  flagLayerFilterChanged( layer );
 }
 function flagLayerMaskChanged( layer, rect=null ) {
   layer.maskChanged = true;
@@ -1781,6 +1842,7 @@ function flagLayerMaskChanged( layer, rect=null ) {
     layer.maskChangedRect.h = rect.h;
   }
   flagLayerGroupChanged( layer );
+  flagLayerFilterChanged( layer );
 }
 
 function collectGroupedLayersAsFlatList( groupLayerId ) {
@@ -1829,6 +1891,14 @@ function getLayerGroupDepth( layer ) {
   return 1 + getLayerGroupDepth( layersStack.layers.find( l => l.layerId === layer.layerGroupId ) );
 }
 
+function existsVisibleLayer() {
+  for( const layer of layersStack.layers ) {
+    if( layer.layerType === "paint-preview" ) continue;
+    if( layer.layerType === "group" ) continue;
+    if( getLayerVisibility( layer ) ) return true;
+  }
+  return false;
+}
 function getLayerVisibility( layer ) {
   if( layer.visible === false ) return false;
   if( layer.layerGroupId === null && layer.visible === true ) return true;
@@ -1847,6 +1917,48 @@ function buildDataCache( layer ) {
   clearDataCache( layer );
   layer.dataCache.push( layer.context.getImageData( 0, 0, layer.w, layer.h ) );
   if( layer.maskInitialized ) layer.dataCache.push( layer.maskContext.getImageData( 0,0,layer.w,layer.h ) );
+}
+
+async function resetLayerSizeAndClear( layer, width, height ) {
+  if( layer.dataCache.length ) clearDataCache( layer );
+
+  const widthScale = width / layer.w,
+    heightScale = height / layer.h;
+
+  layer.canvas.width = layer.maskCanvas.width = layer.w = width;
+  layer.canvas.height = layer.maskCanvas.height = layer.h = height;
+  
+  const tl = layer.topLeft,
+    tr = layer.topRight,
+    bl = layer.bottomLeft,
+    br = layer.bottomRight;
+  
+  //resize width vectors
+  const topCenter = [ (tl[0]+tr[0])/2, (tl[1]+tr[1])/2 ],
+    bottomCenter = [ (bl[0]+br[0])/2, (bl[1]+br[1])/2 ];
+
+  for( const [points,center] of [ [[tl,tr],topCenter], [[bl,br],bottomCenter] ]) {
+    for( const point of points ) {
+      point[0] = ((point[0]-center[0]) * widthScale)+center[0];
+      point[1] = ((point[1]-center[1]) * widthScale)+center[1];
+    }
+  }
+
+  //resize height vectors
+  const leftCenter = [ (tl[0]+bl[0])/2, (tl[1]+bl[1])/2 ],
+    rightCenter = [ (tr[0]+br[0])/2, (tr[1]+br[1])/2 ];
+
+  for( const [points,center] of [ [[tl,bl],leftCenter], [[tr,br],rightCenter] ]) {
+    for( const point of points ) {
+      point[0] = ((point[0]-center[0]) * heightScale)+center[0];
+      point[1] = ((point[1]-center[1]) * heightScale)+center[1];
+    }
+  }
+
+  flagLayerTextureChanged( layer );
+  flagLayerMaskChanged( layer );
+  layer.maskInitialized = false;
+
 }
 
 async function cropLayerSize( layer, width, height, x=null, y=null ) {
@@ -1889,7 +2001,6 @@ async function cropLayerSize( layer, width, height, x=null, y=null ) {
     }
   }
 
-  //whatever process called this function had better flag it for upload!
   layer.context.putImageData( layer.dataCache[ 0 ], x, y );
   if( layer.maskInitialized ) layer.maskColor.putImageData( layer.dataCache[ 1 ], x, y );
 
@@ -2051,7 +2162,8 @@ function Loop( t ) {
 Info: ${info}`;
 
     if( looping ) window.requestAnimationFrame( Loop );
-    
+    else return requestAnimationFrame( Loop );
+
     updateCycle( t );
 
     
@@ -2576,7 +2688,7 @@ let uiSettings = {
           brushTiltMinAngle: 0.25, //~23 degrees
           brushSize: 3.7,
           minBrushSize: 2,
-          maxBrushSize: 14,
+          maxBrushSize: 50,
           brushOpacity: 1,
           brushBlur: 0,
           minBrushBlur: 0,
@@ -3327,7 +3439,7 @@ function setupUI() {
             }
           }
           else if( uiSettings.activeTool === "mask" ) {
-            if( [ "paint", "generative", "text" ].contains( selectedLayer?.layerType ) ) {
+            if( [ "paint", "generative", "text" ].includes( selectedLayer?.layerType ) ) {
               paintToolsOptionsRow.classList.remove( "hidden" );
               const colorWell = document.querySelector( ".paint-tools-options-color-well" );
               colorWell.classList.add( "hidden" );
@@ -5558,17 +5670,12 @@ function setupUIGenerativeControls( apiFlowName ) {
               controlScheme.controlValue = asset.name;
               selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
               const assetBasisControls = apiFlow.controls.filter( c => !!c.assetBasis );
-              if( assetBasisControls.length ) console.log( "Using this asset: ", asset );
               for( const basedControl of assetBasisControls ) {
-                console.log( "Updating basedControl ", basedControl );
                 for( const basis of basedControl.assetBasis ) {
                   if( basis.controlName === controlScheme.controlName ) {
-                    console.log( "Found relevant basis: ", basis );
                     let property = asset;
                     for( let i=0; i<basis.propertyPath.length; i++ )
                       property = property?.[ basis.propertyPath[ i  ] ];
-
-                    console.log( "For path ", basis.propertyPath.join(","), " got property ", property );
 
                     if( basis[ "exists" ] === "visible" ) {
                       const controlElements = [ ...document.querySelectorAll( ".control-element" ) ];
@@ -5593,11 +5700,8 @@ function setupUIGenerativeControls( apiFlowName ) {
                       for( let i=0; i<basis.controlPath.length-1; i++ )
                         target = target[ basis.controlPath[ i ] ];
                       if( basis.controlPath.at(-1) === "controlLabel" ) {
-                        console.log( "Updating label." );
                         const labels = [ ...document.querySelectorAll( ".control-element-label, .image-control-element-label" ) ];
-                        console.log( "Checking labels: ", labels );
                         const label = labels.find( l => l.parentElement.controlName === basedControl.controlName );
-                        console.log( "Found label to update: ", label, " have property: ", property );
                         if( label?.classList.contains( "control-element-label" ) )
                           label.textContent = property;
                         if( label?.classList.contains( "image-control-element-label" ) )
@@ -5618,7 +5722,6 @@ function setupUIGenerativeControls( apiFlowName ) {
                 }
               }
             }
-            //console.log( "Opening assets: ", control.assetName, assetsLibrary[ control.assetName ] )
             openAssetBrowser( assetsLibrary[ controlScheme.assetName ] || [], callback );
           }
         },
@@ -6075,6 +6178,7 @@ function loadImage() {
 
 function loadJSON() {
   console.error( "Need to lock UI for async file load." );
+  looping = false;
 
   const fileInput = document.createElement( "input" );
   fileInput.type = "file";
@@ -6107,7 +6211,8 @@ function loadJSON() {
         
         let lastLayer;
         for( const layer of layersSave ) {
-          let newLayer = await addCanvasLayer( layer.layerType, layer.w, layer.h, lastLayer );
+          let doNotUpdate = true;
+          let newLayer = await addCanvasLayer( layer.layerType, layer.w, layer.h, lastLayer, doNotUpdate );
           lastLayer = newLayer;
           const img = new Image();
           img.onload = () => {
@@ -6189,6 +6294,8 @@ function loadJSON() {
         reorganizeLayerButtons();
 
         UI.updateContext();
+
+        looping = true;
 
       }
       
@@ -6811,7 +6918,7 @@ const startHandler = p => {
         cursor.current.x = 0;
         cursor.current.y = 0;
     }
-    if( pointers.count === 2 && selectedLayer && getLayerVisibility( selectedLayer )  ) {
+    if( pointers.count === 2 && existsVisibleLayer()  ) {
 
 
         pincher.ongoing = true;
@@ -7080,7 +7187,7 @@ const stopHandler = p => {
             painter.queue.length = 0;
         }
     }
-    if( pointers.count === 2 && selectedLayer && getLayerVisibility( selectedLayer )  ) {
+    if( pointers.count === 2 && existsVisibleLayer()  ) {
         //we should delete both to end the event.
         if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true) {
           finalizeLayerTransform();
@@ -7219,7 +7326,7 @@ function updateCycle( t ) {
       }
     }
   }
-  if( pointers.count === 2 && selectedLayer && getLayerVisibility( selectedLayer ) ) {
+  if( pointers.count === 2 && existsVisibleLayer() ) {
     if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true ) {
       const a = pincher.current.a, 
           b = pincher.current.b;
@@ -7879,20 +7986,24 @@ function beginPaintGPU( layer ) {
 
 
   //upload our brush tip texture
-  //TODO: Switch this to a soft-drawn canvas
   const brushTipImage = uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages[ 0 ];
   const brushTipCanvas = paintGPUResources.brushTipCanvas;
   {
     const { brushBlur, brushSize } = uiSettings.toolsSettings.paint.modeSettings.all;
     const blur = brushBlur * brushSize;
-    let w = brushTipCanvas.width = brushSize + 2 * blur;
-    let h = brushTipCanvas.height = brushSize * brushTipImage.height / brushTipImage.width + 2 * blur;
+    let w = brushTipCanvas.width = brushSize + 6 * blur;
+    let h = brushTipCanvas.height = brushSize * brushTipImage.height / brushTipImage.width + 6 * blur;
+    let iw = brushSize, ih = brushSize * brushTipImage.height / brushTipImage.width;
     const btx = brushTipCanvas.getContext( "2d" );
     btx.save();
     btx.clearRect( 0, 0, w, h );
     btx.filter = "blur(" + blur + "px)";
-    btx.drawImage( brushTipImage, blur, blur, brushSize, brushSize * brushTipImage.height / brushTipImage.width );
+    btx.translate( w/2 - iw/2, h/2 - ih/2 )
+    for( let i=0, j=blur; i<=j; i++ )
+      btx.drawImage( brushTipImage, i, i, iw-2*i, ih-2*i );
     btx.restore();
+    document.body.appendChild( brushTipCanvas );
+    brushTipCanvas.style = "position:absolute; left:20px; width:100px; border:1px solid red; background-color:white;";
   }
   gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.brushTipTexture );
   {
@@ -7929,6 +8040,8 @@ function beginPaintGPU( layer ) {
   paintGPUResources.pointHistory.length = 0;
 
 }
+
+
 function paintGPU( points, layer ) {
 
   if( points.length < 4 ) return; //spline interpolating, minimum 3
@@ -8063,8 +8176,30 @@ function paintGPU( points, layer ) {
     //console.error( "PaintGPU: Needs to do point vector math." );
     //compute our initial vector
     //Vector spline interpolation temporarily on hold. D-: Have to figure this out though or no smooth paint.
-    for( let i = 0; i<lineLength; i+=pixelSpacing ) {
-    //for( let i = 0; i<lineLength; i++ ) {
+    //for( let i = 0; i<lineLength; i+=pixelSpacing ) {
+
+    /* 
+    
+    TODO--------------------------------------------------------------------------------------------------
+
+    Optimize the paint loop below!
+    - stop the long property lookups
+    - don't use arrays
+    - sweet mercy don't next for/for/while loops! That's the big fix.
+    - when breaking up arrays, unroll the UVs loop to statements.
+    - move blendPull to a separate loop. It's just looping over xyuvs generated this time around anyway. Track and use.
+
+    ------------------------------------------------------------------------------------------------------
+    
+    */
+
+    const [ crf, cgf, cbf ] = currentRGBFloat;
+
+    let pointsWritten = 0;
+
+    //but basically, pointStep should be decided based on pixelSpacing?
+
+    for( let i = 0; i<lineLength; i+=0.5 ) {
       //get our interpolation, linear for now to see how it looks
       let fr = i / lineLength,
         f = 1 - fr;
@@ -8091,6 +8226,17 @@ function paintGPU( points, layer ) {
         azimuthAngle = bAzimuthAngle*fr + aAzimuthAngle*f, //around screen, direction pointing
         normalizedAltitudeAngle = 1 - ( altitudeAngle / 1.5707963267948966 ); //0 === perpendicular, 1 === parallel
 
+      //when interpreting azimuth angle, we can't slerp from 6 -> 0.1 the long way, rather 6 -> 6.1
+      if( Math.abs( bAzimuthAngle - aAzimuthAngle ) > 3.141 ) {
+        if( bAzimuthAngle < aAzimuthAngle ) {
+          bAzimuthAngle += 6.284;
+          azimuthAngle = bAzimuthAngle*fr + aAzimuthAngle*f;
+        } else {
+          aAzimuthAngle += 6.284;
+          azimuthAngle = bAzimuthAngle*fr + aAzimuthAngle*f;
+        }
+      }
+
       //we're either adding or subtracting our current view angle
       //get the current view angle
       azimuthAngle += Math.atan2( viewMatrices.current[ 1 ], viewMatrices.current[ 0 ] );
@@ -8105,7 +8251,7 @@ function paintGPU( points, layer ) {
         normalizedClippedAltitudeAngle = tiltClippedAltitudeAngle / ( 1 - brushTiltMinAngle ),
         tiltScale = 1 + normalizedClippedAltitudeAngle * brushTiltScale;
 
-      let scaledBrushSize = brushSize * uiSettings.toolsSettings.paint.modeSettings.all.pressureScaleCurve( paintPressure );
+      let scaledBrushSize = brushSize * uiSettings.toolsSettings.paint.modeSettings.all.pressureScaleCurve( paintPressure ) * ( 1 + 1*brushBlur );
       let scaledOpacity = brushOpacity * uiSettings.toolsSettings.paint.modeSettings.all.pressureOpacityCurve( paintPressure );
       tempOpacity = scaledOpacity;
   
@@ -8117,113 +8263,126 @@ function paintGPU( points, layer ) {
 
       //if the pen is very vertical, we want to center the brush
       //TEMPORARY: ignoring
-      const xOffset = scaledTipImageWidth/2 * ( normalizedUnTiltClippedAltitudeAngle );
+      const xOffset = ( scaledTipImageWidth/2 ) * ( normalizedUnTiltClippedAltitudeAngle ) * ( 1 - brushBlur/2 );
 
       //compute our verts
       {
         //rotate by azimuthAngle  
         //get our unit transform legs
-        const hLegU = [ Math.cos( azimuthAngle ), Math.sin( azimuthAngle ) ],
-          vLegU = [ hLegU[1], -hLegU[0] ];
+
+        let hLegUX = Math.cos( azimuthAngle ), hLegUY = Math.sin( azimuthAngle );
+        let vLegUX = hLegUY, vLegUY = -hLegUX;
+
         //scale our transform legs up to canvas pixel dimensions
-        const hLeg = [ hLegU[ 0 ] * scaledTipImageWidth, hLegU[ 1 ] * scaledTipImageWidth ];
-        const vLeg = [ vLegU[ 0 ] * scaledTipImageHeight, vLegU[ 1 ] * scaledTipImageHeight ];
+        let hLegX = hLegUX * scaledTipImageWidth, hLegY = hLegUY * scaledTipImageWidth;
+        let vLegX = vLegUX * scaledTipImageHeight, vLegY = vLegUY * scaledTipImageHeight;
         //origin is paintX, paintY
         //transform our origin along the hLeg by the offset (in pixels)
-        paintX += hLegU[ 0 ] * xOffset;
-        paintY += hLegU[ 1 ] * xOffset;
+        paintX += hLegUX * xOffset;
+        paintY += hLegUY * xOffset;
         
         //now we can compute each vertex by translating from our origin along each leg half its distance
         //first, scale our legs down
-        hLeg[0] /= 2; hLeg[1] /= 2;
-        vLeg[0] /= 2; vLeg[1] /= 2;
+        hLegX /= 2; hLegY /= 2;
+        vLegX /= 2; vLegY /= 2;
         //topLeft is minus hLeg, minus vLeg... and we might have to flip all our y coordinates??? Hmm.
-        const topLeft = [ paintX - hLeg[ 0 ] - vLeg[ 0 ], paintY - hLeg[ 1 ] - vLeg[ 1 ] ],
-          topRight = [ paintX + hLeg[ 0 ] - vLeg[ 0 ], paintY + hLeg[ 1 ] - vLeg[ 1 ] ],
-          bottomRight = [ paintX + hLeg[ 0 ] + vLeg[ 0 ], paintY + hLeg[ 1 ] + vLeg[ 1 ] ],
-          bottomLeft = [ paintX - hLeg[ 0 ] + vLeg[ 0 ], paintY - hLeg[ 1 ] + vLeg[ 1 ] ];
+        /* const topLeft = [ paintX - hLegX - vLegX, paintY - hLegY - vLegY ],
+          topRight = [ paintX + hLegX - vLegX, paintY + hLegY - vLegY ],
+          bottomRight = [ paintX + hLegX + vLegX, paintY + hLegY + vLegY ],
+          bottomLeft = [ paintX - hLegX + vLegX, paintY - hLegY + vLegY ]; */
           
+        //transform our canvas points to GL points
+        let iw = 2 / layer.w,
+        ih = 2 / layer.h;
+      /* for( let j=0; j<xyuvs.length; j+=4 ) {
+        //scale to range 0:2
+        xyuvs[ j+0 ] *= iw;
+        xyuvs[ j+1 ] *= ih;
+        //translate to range -1:1
+        xyuvs[ j+0 ] -= 1;
+        xyuvs[ j+1 ] -= 1;
+      } */
+
+        const x1 = (paintX - hLegX - vLegX), x2 = (paintX + hLegX - vLegX), x3 = (paintX - hLegX + vLegX), x4 = (paintX + hLegX + vLegX),
+        y1 = (paintY - hLegY - vLegY), y2 = (paintY + hLegY - vLegY), y3 = (paintY - hLegY + vLegY), y4 = (paintY + hLegY + vLegY);
+
         //update our mod rect
-        modRect.x = Math.min( modRect.x, topLeft[0], topRight[0], bottomRight[0], bottomLeft[0] );
-        modRect.y = Math.min( modRect.y, topLeft[1], topRight[1], bottomRight[1], bottomLeft[1] );
-        modRect.x2 = Math.max( modRect.x2, topLeft[0], topRight[0], bottomRight[0], bottomLeft[0] );
-        modRect.y2 = Math.max( modRect.y2, topLeft[1], topRight[1], bottomRight[1], bottomLeft[1] );
+        modRect.x = Math.min( modRect.x, x1, x2, x3, x4 );
+        modRect.y = Math.min( modRect.y, y1, y2, y3, y4 );
+        modRect.x2 = Math.max( modRect.x2, x1, x2, x3, x4 );
+        modRect.y2 = Math.max( modRect.y2, y1, y2, y3, y4 );
 
         const xyuvs = [
           //top-left triangle
-          ...topLeft, 0,0,
-          ...topRight, 1,0,
-          ...bottomLeft, 0,1,
+          x1 * iw - 1, y1 * ih - 1, 0,0,
+          x2 * iw - 1, y2 * ih - 1, 1,0,
+          x3 * iw - 1, y3 * ih - 1, 0,1,
           //bottom-right triangle
-          ...topRight, 1,0,
-          ...bottomRight, 1,1,
-          ...bottomLeft, 0,1,
+          x2 * iw - 1, y2 * ih - 1, 1,0,
+          x4 * iw - 1, y4 * ih - 1, 1,1,
+          x3 * iw - 1, y3 * ih - 1, 0,1,
         ];
 
-        //transform our canvas points to GL points
-        let iw = 2 / layer.w,
-          ih = 2 / layer.h;
-        for( let j=0; j<xyuvs.length; j+=4 ) {
-          //scale to range 0:2
-          xyuvs[ j+0 ] *= iw;
-          xyuvs[ j+1 ] *= ih;
-          //translate to range -1:1
-          xyuvs[ j+0 ] -= 1;
-          xyuvs[ j+1 ] -= 1;
-        }
-
         vertices.push( ...xyuvs );
+        ++pointsWritten;
 
         //push our color data
         const colors = [
           //top-left triangle
-          ...currentRGBFloat, scaledOpacity,
-          ...currentRGBFloat, scaledOpacity,
-          ...currentRGBFloat, scaledOpacity,
+          crf, cgf, cbf, scaledOpacity,
+          crf, cgf, cbf, scaledOpacity,
+          crf, cgf, cbf, scaledOpacity,
           //bottom-right triangle
-          ...currentRGBFloat, scaledOpacity,
-          ...currentRGBFloat, scaledOpacity,
-          ...currentRGBFloat, scaledOpacity,
+          crf, cgf, cbf, scaledOpacity,
+          crf, cgf, cbf, scaledOpacity,
+          crf, cgf, cbf, scaledOpacity,
         ];
 
         rgbas.push( ...colors );
 
         //save our history
-        paintGPUResources.pointHistory.push( [ xyuvs, rgbas ] );
-
-        if( blendPull > 0 ) {
-          //the higher blend pull, the longer we trail
-          //that means our trail decays by 1-blendPull
-          let blendTrailAlpha = 1,
-            k = paintGPUResources.pointHistory.length - 1;
-          while( blendTrailAlpha > 0 && k >= 0 ) {
-            const historyPoint = paintGPUResources.pointHistory[ k ];
-            //these vert data are where we're reading from while blending at this point on the trail
-            const blendSourceXYA = [
-              //top left triangle
-              historyPoint[0][0], historyPoint[0][1], blendTrailAlpha,
-              historyPoint[0][4], historyPoint[0][5], blendTrailAlpha,
-              historyPoint[0][8], historyPoint[0][9], blendTrailAlpha,
-              //bottom right triangle
-              historyPoint[0][12], historyPoint[0][13], blendTrailAlpha,
-              historyPoint[0][16], historyPoint[0][17], blendTrailAlpha,
-              historyPoint[0][20], historyPoint[0][21], blendTrailAlpha,
-            ];
-            //the vert data we're writing to is just the current location of this paint-point
-            const blendDestXYUV = xyuvs;
-            
-            //push the verts to our streaming queue
-            blendSourceXYAs.push( ...blendSourceXYA );
-            blendDestXYUVs.push( ...blendDestXYUV );
-
-            blendTrailAlpha -= ( 1 - blendPull );
-            --k;
-          }
-        }
+        paintGPUResources.pointHistory.push( [ xyuvs, colors ] );
 
       }
 
     }
+
+    //put the thing here
+    //There's something wrong with my blending code. :-/
+    //It's pointilating at high speeds, and that doesn't seem possible from this setup.
+
+    if( blendPull > 0 && blendAlpha > 0 ) {
+      //the higher blend pull, the longer we trail
+      //that means our trail decays by 1-blendPull
+      let blendTrailAlpha = 1,
+        k = paintGPUResources.pointHistory.length - pointsWritten;
+      for( let i=0; i<pointsWritten; ) {
+        const historyPoint = paintGPUResources.pointHistory[ k ];
+
+        //these vert data are where we're reading from while blending at this point on the trail
+        blendSourceXYAs.push(
+          //top left triangle
+          historyPoint[0][0], historyPoint[0][1], blendTrailAlpha,
+          historyPoint[0][4], historyPoint[0][5], blendTrailAlpha,
+          historyPoint[0][8], historyPoint[0][9], blendTrailAlpha,
+          //bottom right triangle
+          historyPoint[0][12], historyPoint[0][13], blendTrailAlpha,
+          historyPoint[0][16], historyPoint[0][17], blendTrailAlpha,
+          historyPoint[0][20], historyPoint[0][21], blendTrailAlpha,
+        );
+        //push the verts to our streaming queue
+        blendDestXYUVs.push( ...paintGPUResources.pointHistory.at( -( pointsWritten - i ) )[ 0 ] );
+
+        blendTrailAlpha -= ( 1 - blendPull );
+        --k;
+        if( blendTrailAlpha <= 0 || k < 0 ) {
+          ++i;
+          blendTrailAlpha = 1;
+          k = paintGPUResources.pointHistory.length - ( pointsWritten - i );
+        }
+      }
+    }
+
   }
 
   //execute the blend pass render
@@ -8342,7 +8501,8 @@ function paintGPU( points, layer ) {
     //gl.disable(gl.DEPTH_TEST);
     //Let lower alpha be clipped by higher alpha paint.
     gl.enable( gl.DEPTH_TEST );
-    gl.depthFunc( gl.GREATER );
+    //gl.depthFunc( gl.GREATER );
+    gl.depthFunc( gl.GEQUAL );
     if( paintGPUResources.starting === true ) {
       paintGPUResources.starting = false;
       gl.clearDepth( 0.0 );
@@ -8414,6 +8574,8 @@ function paintGPU( points, layer ) {
   //Unless... Hmm. Well, it seems 100% necessary at the moment.
 
 }
+
+
 function finalizePaintGPU( layer ) {
   
   //readpixels for our modrect from the old gltexture and this new one,
@@ -9627,1166 +9789,12 @@ function rgbToHsl(r, g, b) {
 
   return [h, s, l];
 }
-/*
-TODO: Finish this map and make a simpler map 
-    (copy-paste, remove in-function flows)
-
-Map
-
-- VERSION
-- cnv, ctx, W, H
-- Setup()
-
-- keys{}, keyHandler(e,state)
-
-- perfectlySizeCanvas()
-
-- painter{queue[],active}
-- cursor{
-    current{x,y}
-    mode <"none"|"pan"|"rotate"|"zoom">
-    origin{x,y}
-    zoomLength:50
-}
-- pincher {
-    ongoing,
-    origin{
-        a{x,y,id},
-        b{x,y,id},
-        center{x,y}
-        length, angle
-    },
-    current{
-        a{x,y,id},
-        b{x,y,id}
-    }
-}
-- pointers{active{},count}
-
-- startHandler(p)
-    : compute x,y
-    : update pointers.active[]
-    : update pointers.count
-    : if 1 pointer
-        : disable pincher
-        : if space
-            : update cursor origin, current
-            : update cursor mode from buttons
-        : if not space
-            : activate painter
-    >: if not 1 pointer
-        : disable cursor
-            : mode "none"
-            : zero origin, current
-    : if 2 pointers
-        : enable pincher
-        : update pincher origin, current
-            from 2 active pointers
-        : set pincher origin specials
-            (angle, length, center)
-    
-    : shuttle p to moveHandler
-- moveHandler(p)
-    : compute x,y
-    : if 1 pointer
-        : if cursor mode, update current
-        : if painter
-            : untransform input point
-            : push to painter queue
-    : update pointers.active[] if applicable
-- stopHandler(p)
-    : shuttle p to moveHandler
-    : if 1 pointer
-        : if cursor mode
-            : finalizeViewMove()
-            : reset cursor mode,origin,current
-        : if painter
-            : disable painter
-            : flush queue to demoPoints[]
-    : if 2 pointers
-        : finalizeViewMove()
-        : delete pointers
-        : reset pincher origin, current
-    : update pointers.active[]
-    : update pointers.count
-
-- demoPoints[], looping
-- Loop()
-    : animate
-    : clear
-    : updateCycle()
-    : stroke( demoPoints )
-    : draw cursor state
-    : writeInfo()
-
-- writeInfo()
-    : version, view, pincher(origin,current), pointers, width/height, painter
-
-- view{ angle,zoom,pan{x,y},origin{x,y} }
-- updateCycle()
-    : if 1 pointer
-        : if no cursor mode
-            view does not update, drawing via painter
-        : if cursor mode pan
-            : update view (origin, pan{x,y}, moving matrix)
-        : if cursor mode zoom
-            : update view (origin, zoom, moving matrix )
-        : if cursor mode rotate
-            : update view (origin, angle, moving matrix)
-    : if 2 pointers
-        : compute current specials
-            (length, angle, center)
-        : update view (origin, zoom, angle, pan{x,y}, moving matrix)
-
-- _tpoint[3] , _transform[9]
-- stroke( points )
-    : black line
-    : load _originMatrix, _positionMatrix from view.origin
-    : compute _transform = origin * current * moving * position
-    : for each point
-        : load / compute _tpoint = _transform * point
-        : stroke line
-    : if painter active
-        : for each painter queue point
-            : load / compute _tpoint = _transform * point
-            : stroke line
-
-- viewMatrices{ current[9], moving[9] }
-- _final[9] , _originMatrix[9] , _positionMatrix[9]
-
-*/
-
-
-/* async function getImageA1111( {api="txt2img", prompt, seed=-1, sampler="DPM++ SDE", steps=4, cfg=1, width=1024, height=1024, CADS=false, img2img=null, denoise=0.8, inpaint=false, inpaintZoomed=false, inpaintZoomedPadding=32, inpaintFill="original" } ) {
-  //apisSettings.a1111.setPrompt(prompt + " <lora:lcm-lora-sdxl:1>");
-  //apisSettings.a1111.setPrompt(prompt + " <lora:sdxl_lightning_4step_lora:1>");
-  let apiTag = "/sdapi/v1/txt2img";
-  apisSettings.a1111.setAPI( api );
-  apisSettings.a1111.setPrompt( prompt );
-  if( seed === -1 ) seed = parseInt(Math.random()*9999999999);
-  apisSettings.a1111.setSeed( seed );
-  apisSettings.a1111.setSampler( sampler );
-  apisSettings.a1111.setSteps( steps );
-  apisSettings.a1111.setCFG( cfg );
-  apisSettings.a1111.setSize( width, height );
-  if( api==="img2img" ) {
-    apiTag = "/sdapi/v1/img2img";
-    console.log( "Doing img2img API call." );
-    apisSettings.a1111.setImg2Img( img2img );
-    apisSettings.a1111.setDenoisingStrength( denoise );
-    if( inpaint === true ) {
-      console.log( "Doing inpainting API call, with inpaintZoomed: ", inpaintZoomed );
-      apisSettings.a1111.setInpaintFullRes( (inpaintZoomed === true) ? 1 : 0 ),
-      apisSettings.a1111.setInpaintFullResPad( inpaintZoomedPadding ),
-      apisSettings.a1111.setInpaintFill( inpaintFill ); //"fill", "original", "latent noise", "latent nothing"
-    }
-  }
-  if( CADS ) apisSettings.a1111.CADS.enable();
-  else apisSettings.a1111.CADS.disable();
-  return new Promise( async returnImage => {	
-    const response = await process( apisSettings.a1111.getAPI(), apiTag, 7860 );
-    console.log( response );
-    const imageSrc = "data:image/png;base64," + response.images[0];
-    const img = new Image();
-    img.onload = () => {
-        currentImage = img;
-        returnImage( img );
-    }
-    img.src = imageSrc;
-  } );
-}
-
-async function getLineartA1111( {image,res=1024,module="lineart_anime_denoise"} ) {
-  apisSettings.a1111.setPreprocessor( { module, image, res } );
-  return new Promise( async returnImage => {
-    const response = await process( apis.a1111controlnet, "/controlnet/detect", 7860 );
-    console.log( "Controlnet response: ", response );
-    const imageSrc = "data:image/png;base64," + response.images[0];
-    const img = new Image();
-    img.onload = () => {
-        currentImage = img;
-        returnImage( img );
-    }
-    img.src = imageSrc;
-  })
-}
-
-async function getImageComfy( prompt ) {
-  //https://github.com/comfyanonymous/ComfyUI/blob/master/script_examples/websockets_api_example.py
-  apisSettings.comfyLCM.setPrompt(prompt);
-  const apiData = {prompt:apis.comfyLCM};
-  const rsp = await process( apiData, "prompt", 8188 );
-  console.log(rsp);
-  const promptId = rsp.prompt_id;
-  const history = await process( null, "history/" + promptId, 8188 );
-  console.log( history ); //returned empty, should have returned filename :-(
-} */
-/* 
-const apisSettings = {
-  a1111: {
-      setAPI: apiKey => apisSettings.a1111.apiKey = "a1111" + apiKey,
-      setPrompt: prompt => apis[apisSettings.a1111.apiKey].prompt = prompt,
-      setSeed: seed => apis[apisSettings.a1111.apiKey].seed = seed,
-      setSampler: samplerName => apis[apisSettings.a1111.apiKey].sampler_name = samplerName,
-      samplerNames: [ "DPM++ SDE","DPM++ 3M SDE Exponential", "Euler" ],
-      modelNames: [ "SDXL-Juggernaut-Lightning-4S.DPMppSDE.832x1216.CFG1-2", "SDXL-ProteusV0.3.safetensors [29b6b524ce]", "SDXL-3XV3.safetensors [b190397c8a]",  ],
-      setSteps: steps => apis[apisSettings.a1111.apiKey].steps = steps,
-      setCFG: cfg => apis[apisSettings.a1111.apiKey].cfg_scale = cfg,
-      setSize: (w,h) => { apis[apisSettings.a1111.apiKey].width=w; apis[apisSettings.a1111.apiKey].height=h; },
-      setImg2Img: img2img => { apis[apisSettings.a1111.apiKey].init_images[0] = img2img; },
-      setDenoisingStrength: denoise => { apis[apisSettings.a1111.apiKey].denoising_strength = denoise; },
-      setInpaintFullRes: fullRes => { apis[apisSettings.a1111.apiKey].inpaint_full_res = fullRes; },
-      setInpaintFullResPad: fullResPad => { apis[apisSettings.a1111.apiKey].inpaint_full_res_padding = fullResPad; },
-      setInpaintFill: fill => { apis[apisSettings.a1111.apiKey].inpaint_fill = ({"fill":0,"original":1,"latent noise":2,"latent nothing":3})[fill] },
-      setControlNet: ( { enabled=true, slot=0, lineart=null, lineartStrength=0.8, model="sai_xl_sketch_256lora [cd3389b1]" } ) => {
-        const configs = [
-          apis.a1111img2img.alwayson_scripts.ControlNet.args[slot],
-          apis.a1111txt2img.alwayson_scripts.ControlNet.args[slot],
-        ]
-        for( const config of configs ) {
-          config.enabled = enabled;
-          config.image = { image:lineart, mask:lineart };
-          config.model = model;          
-          config.weight = lineartStrength;
-        }
-      },
-      
-      CADS: {
-        enable: () => {},
-        disable: () => {}
-      },
-      CADS_original: {
-          enable: () => apis[apisSettings.a1111.apiKey].alwayson_scripts.CADS.args[0] = true,
-          disable: () => apis[apisSettings.a1111.apiKey].alwayson_scripts.CADS.args[0] = false
-      },
-      apiKey: "a1111txt2img",
-      getAPI: () => apis[apisSettings.a1111.apiKey],
-      
-      preprocessorNames: ["lineart_realistic","lineart_coarse","lineart_anime","lineart_anime_denoise"],
-      setPreprocessor: ( {module,image,res=1024,a=64,b=64} ) => {
-        apis.a1111controlnet.controlnet_module = module;
-        apis.a1111controlnet.controlnet_input_images[ 0 ] = image;
-        apis.a1111controlnet.controlnet_processor_res = res;
-        apis.a1111controlnet.controlnet_threshold_a = a;
-        apis.a1111controlnet.controlnet_threshold_b = b;
-      },
-  },
-  comfyLCM: {
-      setPrompt: t => apis.comfyLCM["62"]["inputs"].text = t,
-  }
-}
- */
-/* const apis = {
-  a1111controlnet: {
-    "controlnet_module": "none",
-    "controlnet_input_images": [],
-    "controlnet_processor_res": 512,
-    "controlnet_threshold_a": 64,
-    "controlnet_threshold_b": 64,
-    "low_vram": false
-  },
-  a1111img2img: {
-    "alwayson_scripts": {
-      "ControlNet": {
-        "args": [
-          {
-            "advanced_weighting" : null,
-            "batch_images" : "",
-            "control_mode" : "Balanced",
-            "enabled" : false,
-            "guidance_end" : 1,
-            "guidance_start" : 0,
-            "hr_option" : "Both",
-            "image" :
-            {
-                "image" : null,
-                "mask" : null,
-            }
-            ,
-            "inpaint_crop_input_image" : false,
-            "input_mode" : "simple",
-            "is_ui" : true,
-            "loopback" : false,
-            "low_vram" : false,
-            "model" : "sai_xl_sketch_256lora [cd3389b1]",
-            "module" : "none",
-            "output_dir" : "",
-            "pixel_perfect" : true,
-            "processor_res" : -1,
-            "resize_mode" : "Crop and Resize",
-            "save_detected_map" : true,
-            "threshold_a" : -1,
-            "threshold_b" : -1,
-            "weight" : 0.8
-          }
-        ]
-      },
-    },
-    "batch_size": 1,
-    "cfg_scale": 1,
-    "comments": {},
-    "denoising_strength": 0.74,
-    "disable_extra_networks": false,
-    "do_not_save_grid": false,
-    "do_not_save_samples": false,
-    "height": 1024,
-    "image_cfg_scale": 1.5,
-    "init_images": [
-      "base64image placeholder"
-    ],
-    "initial_noise_multiplier": 1,
-    "inpaint_full_res": 0,
-    "inpaint_full_res_padding": 32,
-    "inpainting_fill": 1,
-    "inpainting_mask_invert": 0,
-    "mask_blur": 4,
-    "mask_blur_x": 4,
-    "mask_blur_y": 4,
-    "n_iter": 1,
-    "negative_prompt": "",
-    "override_settings": {},
-    "override_settings_restore_afterwards": true,
-    "prompt": "",
-    "resize_mode": 0,
-    "restore_faces": false,
-    "s_churn": 0,
-    "s_min_uncond": 0,
-    "s_noise": 1,
-    "s_tmax": null,
-    "s_tmin": 0,
-    "sampler_name": "DPM++ SDE",
-    "script_args": [],
-    "script_name": null,
-    "seed": 1930619812,
-    "seed_enable_extras": true,
-    "seed_resize_from_h": -1,
-    "seed_resize_from_w": -1,
-    "steps": 4,
-    "styles": [],
-    "subseed": 3903236052,
-    "subseed_strength": 0,
-    "tiling": false,
-    "width": 1024
-  },
-  a1111img2img_original: {
-    "alwayson_scripts": {
-      "API payload": {
-        "args": []
-      },
-      "Agent Attention": {
-        "args": [
-          false,
-          false,
-          20,
-          4,
-          4,
-          0.4,
-          0.95,
-          2,
-          2,
-          0.4,
-          0.5,
-          false,
-          1,
-          false
-        ]
-      },
-      "AnimateDiff": {
-        "args": [
-          {
-            "batch_size": 16,
-            "closed_loop": "R-P",
-            "enable": false,
-            "format": [
-              "GIF",
-              "PNG"
-            ],
-            "fps": 8,
-            "interp": "Off",
-            "interp_x": 10,
-            "last_frame": null,
-            "latent_power": 1,
-            "latent_power_last": 1,
-            "latent_scale": 32,
-            "latent_scale_last": 32,
-            "loop_number": 0,
-            "model": "mm_sd_v14.ckpt",
-            "overlap": -1,
-            "request_id": "",
-            "stride": 1,
-            "video_length": 16,
-            "video_path": "",
-            "video_source": null
-          }
-        ]
-      },
-      "CADS": {
-        "args": [
-          false,
-          0.6,
-          0.9,
-          0.25,
-          1,
-          true,
-          false
-        ]
-      },
-      "Characteristic Guidance": {
-        "args": [
-          1,
-          1,
-          50,
-          0,
-          1,
-          -4,
-          1,
-          0.4,
-          0.5,
-          2,
-          false,
-          "[How to set parameters? Check our github!](https://github.com/scraed/CharacteristicGuidanceWebUI/tree/main)",
-          "More ControlNet",
-          0,
-          1
-        ]
-      },
-      "ControlNet": {
-        "args": [
-          {
-            "advanced_weighting" : null,
-            "batch_images" : "",
-            "control_mode" : "Balanced",
-            "enabled" : false,
-            "guidance_end" : 1,
-            "guidance_start" : 0,
-            "hr_option" : "Both",
-            "image" :
-            {
-                "image" : null,
-                "mask" : null,
-            }
-            ,
-            "inpaint_crop_input_image" : false,
-            "input_mode" : "simple",
-            "is_ui" : true,
-            "loopback" : false,
-            "low_vram" : false,
-            "model" : "sai_xl_sketch_256lora [cd3389b1]",
-            "module" : "none",
-            "output_dir" : "",
-            "pixel_perfect" : true,
-            "processor_res" : -1,
-            "resize_mode" : "Crop and Resize",
-            "save_detected_map" : true,
-            "threshold_a" : -1,
-            "threshold_b" : -1,
-            "weight" : 0.8
-          },
-          {
-            "advanced_weighting": null,
-            "batch_images": "",
-            "control_mode": "Balanced",
-            "enabled": false,
-            "guidance_end": 1,
-            "guidance_start": 0,
-            "hr_option": "Both",
-            "image": null,
-            "inpaint_crop_input_image": false,
-            "input_mode": "simple",
-            "is_ui": true,
-            "loopback": false,
-            "low_vram": false,
-            "model": "None",
-            "module": "none",
-            "output_dir": "",
-            "pixel_perfect": false,
-            "processor_res": -1,
-            "resize_mode": "Crop and Resize",
-            "save_detected_map": true,
-            "threshold_a": -1,
-            "threshold_b": -1,
-            "weight": 1
-          },
-          {
-            "advanced_weighting": null,
-            "batch_images": "",
-            "control_mode": "Balanced",
-            "enabled": false,
-            "guidance_end": 1,
-            "guidance_start": 0,
-            "hr_option": "Both",
-            "image": null,
-            "inpaint_crop_input_image": false,
-            "input_mode": "simple",
-            "is_ui": true,
-            "loopback": false,
-            "low_vram": false,
-            "model": "None",
-            "module": "none",
-            "output_dir": "",
-            "pixel_perfect": false,
-            "processor_res": -1,
-            "resize_mode": "Crop and Resize",
-            "save_detected_map": true,
-            "threshold_a": -1,
-            "threshold_b": -1,
-            "weight": 1
-          }
-        ]
-      },
-      "Dynamic Prompts v2.17.1": {
-        "args": [
-          true,
-          false,
-          1,
-          false,
-          false,
-          false,
-          1.1,
-          1.5,
-          100,
-          0.7,
-          false,
-          false,
-          true,
-          false,
-          false,
-          0,
-          "Gustavosta/MagicPrompt-Stable-Diffusion",
-          ""
-        ]
-      },
-      "Extra options": {
-        "args": []
-      },
-      "Hotshot-XL": {
-        "args": [
-          null
-        ]
-      },
-      "Hypertile": {
-        "args": []
-      },
-      "Kohya Hires.fix": {
-        "args": [
-          false,
-          true,
-          3,
-          4,
-          0.15,
-          0.3,
-          "bicubic",
-          0.5,
-          2,
-          true,
-          false
-        ]
-      },
-      "Refiner": {
-        "args": [
-          false,
-          "",
-          0.8
-        ]
-      },
-      "Seed": {
-        "args": [
-          -1,
-          false,
-          -1,
-          0,
-          0,
-          0
-        ]
-      },
-      "Txt/Img to 3D Model": {
-        "args": []
-      }
-    },
-    "batch_size": 1,
-    "cfg_scale": 1,
-    "comments": {},
-    "denoising_strength": 0.74,
-    "disable_extra_networks": false,
-    "do_not_save_grid": false,
-    "do_not_save_samples": false,
-    "height": 1024,
-    "image_cfg_scale": 1.5,
-    "init_images": [
-      "base64image placeholder"
-    ],
-    "initial_noise_multiplier": 1,
-    "inpaint_full_res": 0,
-    "inpaint_full_res_padding": 32,
-    "inpainting_fill": 1,
-    "inpainting_mask_invert": 0,
-    "mask_blur": 4,
-    "mask_blur_x": 4,
-    "mask_blur_y": 4,
-    "n_iter": 1,
-    "negative_prompt": "",
-    "override_settings": {},
-    "override_settings_restore_afterwards": true,
-    "prompt": "",
-    "resize_mode": 0,
-    "restore_faces": false,
-    "s_churn": 0,
-    "s_min_uncond": 0,
-    "s_noise": 1,
-    "s_tmax": null,
-    "s_tmin": 0,
-    "sampler_name": "DPM++ SDE",
-    "script_args": [],
-    "script_name": null,
-    "seed": 1930619812,
-    "seed_enable_extras": true,
-    "seed_resize_from_h": -1,
-    "seed_resize_from_w": -1,
-    "steps": 4,
-    "styles": [],
-    "subseed": 3903236052,
-    "subseed_strength": 0,
-    "tiling": false,
-    "width": 1024
-  },
-  a1111txt2img: {
-      "alwayson_scripts": {
-        "ControlNet": {
-          "args": [
-            {
-              "advanced_weighting": null,
-              "batch_images": "",
-              "control_mode": "Balanced",
-              "enabled": false,
-              "guidance_end": 1,
-              "guidance_start": 0,
-              "hr_option": "Both",
-              "image": null,
-              "inpaint_crop_input_image": false,
-              "input_mode": "simple",
-              "is_ui": true,
-              "loopback": false,
-              "low_vram": false,
-              "model": "None",
-              "module": "none",
-              "output_dir": "",
-              "pixel_perfect": false,
-              "processor_res": -1,
-              "resize_mode": "Crop and Resize",
-              "save_detected_map": true,
-              "threshold_a": -1,
-              "threshold_b": -1,
-              "weight": 1
-            }
-          ]
-        }
-      },
-      "batch_size": 1,
-      "cfg_scale": 7,
-      "comments": {},
-      "disable_extra_networks": false,
-      "do_not_save_grid": false,
-      "do_not_save_samples": false,
-      "enable_hr": false,
-      "height": 1024,
-      "hr_negative_prompt": "",
-      "hr_prompt": "",
-      "hr_resize_x": 0,
-      "hr_resize_y": 0,
-      "hr_scale": 2,
-      "hr_second_pass_steps": 0,
-      "hr_upscaler": "Latent",
-      "n_iter": 1,
-      "negative_prompt": "",
-      "override_settings": {},
-      "override_settings_restore_afterwards": true,
-      "prompt": "a spaceship with a warpdrive on a trading card, straight and centered in the screen, vertical orientation",
-      "restore_faces": false,
-      "s_churn": 0,
-      "s_min_uncond": 0,
-      "s_noise": 1,
-      "s_tmax": null,
-      "s_tmin": 0,
-      "sampler_name": "DPM++ 3M SDE Exponential",
-      "script_args": [],
-      "script_name": null,
-      "seed": 3718586839,
-      "seed_enable_extras": true,
-      "seed_resize_from_h": -1,
-      "seed_resize_from_w": -1,
-      "steps": 50,
-      "styles": [],
-      "subseed": 4087077444,
-      "subseed_strength": 0,
-      "tiling": false,
-      "width": 1024
-    },
-  a1111txt2img_original: {
-      "alwayson_scripts": {
-        "API payload": {
-          "args": []
-        },
-        "Agent Attention": {
-          "args": [
-            false,
-            false,
-            20,
-            4,
-            4,
-            0.4,
-            0.95,
-            2,
-            2,
-            0.4,
-            0.5,
-            false,
-            1,
-            false
-          ]
-        },
-        "AnimateDiff": {
-          "args": [
-            {
-              "batch_size": 8,
-              "closed_loop": "R-P",
-              "enable": false,
-              "format": [
-                "GIF",
-                "PNG"
-              ],
-              "fps": 8,
-              "interp": "Off",
-              "interp_x": 10,
-              "last_frame": null,
-              "latent_power": 1,
-              "latent_power_last": 1,
-              "latent_scale": 32,
-              "latent_scale_last": 32,
-              "loop_number": 0,
-              "model": "mm_sd_v14.ckpt",
-              "overlap": -1,
-              "request_id": "",
-              "stride": 1,
-              "video_length": 16,
-              "video_path": "",
-              "video_source": null
-            }
-          ]
-        },
-        "CADS": {
-          "args": [
-            true, //probably active/inactive
-            0.6,
-            0.9,
-            0.25,
-            1,
-            true,
-            false
-          ]
-        },
-        "Characteristic Guidance": {
-          "args": [
-            1,
-            1,
-            50,
-            0,
-            1,
-            -4,
-            1,
-            0.4,
-            0.5,
-            2,
-            false,
-            "[How to set parameters? Check our github!](https://github.com/scraed/CharacteristicGuidanceWebUI/tree/main)",
-            "More ControlNet",
-            0,
-            1
-          ]
-        },
-        "ControlNet": {
-          "args": [
-            {
-              "advanced_weighting": null,
-              "batch_images": "",
-              "control_mode": "Balanced",
-              "enabled": false,
-              "guidance_end": 1,
-              "guidance_start": 0,
-              "hr_option": "Both",
-              "image": null,
-              "inpaint_crop_input_image": false,
-              "input_mode": "simple",
-              "is_ui": true,
-              "loopback": false,
-              "low_vram": false,
-              "model": "None",
-              "module": "none",
-              "output_dir": "",
-              "pixel_perfect": false,
-              "processor_res": -1,
-              "resize_mode": "Crop and Resize",
-              "save_detected_map": true,
-              "threshold_a": -1,
-              "threshold_b": -1,
-              "weight": 1
-            },
-            {
-              "advanced_weighting": null,
-              "batch_images": "",
-              "control_mode": "Balanced",
-              "enabled": false,
-              "guidance_end": 1,
-              "guidance_start": 0,
-              "hr_option": "Both",
-              "image": null,
-              "inpaint_crop_input_image": false,
-              "input_mode": "simple",
-              "is_ui": true,
-              "loopback": false,
-              "low_vram": false,
-              "model": "None",
-              "module": "none",
-              "output_dir": "",
-              "pixel_perfect": false,
-              "processor_res": -1,
-              "resize_mode": "Crop and Resize",
-              "save_detected_map": true,
-              "threshold_a": -1,
-              "threshold_b": -1,
-              "weight": 1
-            },
-            {
-              "advanced_weighting": null,
-              "batch_images": "",
-              "control_mode": "Balanced",
-              "enabled": false,
-              "guidance_end": 1,
-              "guidance_start": 0,
-              "hr_option": "Both",
-              "image": null,
-              "inpaint_crop_input_image": false,
-              "input_mode": "simple",
-              "is_ui": true,
-              "loopback": false,
-              "low_vram": false,
-              "model": "None",
-              "module": "none",
-              "output_dir": "",
-              "pixel_perfect": false,
-              "processor_res": -1,
-              "resize_mode": "Crop and Resize",
-              "save_detected_map": true,
-              "threshold_a": -1,
-              "threshold_b": -1,
-              "weight": 1
-            }
-          ]
-        },
-        "Dynamic Prompts v2.17.1": {
-          "args": [
-            true,
-            false,
-            1,
-            false,
-            false,
-            false,
-            1.1,
-            1.5,
-            100,
-            0.7,
-            false,
-            false,
-            true,
-            false,
-            false,
-            0,
-            "Gustavosta/MagicPrompt-Stable-Diffusion",
-            ""
-          ]
-        },
-        "Extra options": {
-          "args": []
-        },
-        "Hotshot-XL": {
-          "args": [
-            {
-              "batch_size": 8,
-              "enable": false,
-              "format": [
-                "GIF"
-              ],
-              "fps": 8,
-              "loop_number": 0,
-              "model": "hsxl_temporal_layers.f16.safetensors",
-              "negative_original_size_height": 1080,
-              "negative_original_size_width": 1920,
-              "negative_target_size_height": 512,
-              "negative_target_size_width": 512,
-              "original_size_height": 1080,
-              "original_size_width": 1920,
-              "overlap": -1,
-              "reverse": [],
-              "stride": 1,
-              "target_size_height": 512,
-              "target_size_width": 512,
-              "video_length": 8
-            }
-          ]
-        },
-        "Hypertile": {
-          "args": []
-        },
-        "Kohya Hires.fix": {
-          "args": [
-            false,
-            true,
-            3,
-            4,
-            0.15,
-            0.3,
-            "bicubic",
-            0.5,
-            2,
-            true,
-            false
-          ]
-        },
-        "Refiner": {
-          "args": [
-            false,
-            "",
-            0.8
-          ]
-        },
-        "Seed": {
-          "args": [
-            -1,
-            false,
-            -1,
-            0,
-            0,
-            0
-          ]
-        },
-        "Txt/Img to 3D Model": {
-          "args": []
-        }
-      },
-      "batch_size": 1,
-      "cfg_scale": 7,
-      "comments": {},
-      "disable_extra_networks": false,
-      "do_not_save_grid": false,
-      "do_not_save_samples": false,
-      "enable_hr": false,
-      "height": 1024,
-      "hr_negative_prompt": "",
-      "hr_prompt": "",
-      "hr_resize_x": 0,
-      "hr_resize_y": 0,
-      "hr_scale": 2,
-      "hr_second_pass_steps": 0,
-      "hr_upscaler": "Latent",
-      "n_iter": 1,
-      "negative_prompt": "",
-      "override_settings": {},
-      "override_settings_restore_afterwards": true,
-      "prompt": "a spaceship with a warpdrive on a trading card, straight and centered in the screen, vertical orientation",
-      "restore_faces": false,
-      "s_churn": 0,
-      "s_min_uncond": 0,
-      "s_noise": 1,
-      "s_tmax": null,
-      "s_tmin": 0,
-      "sampler_name": "DPM++ 3M SDE Exponential",
-      "script_args": [],
-      "script_name": null,
-      "seed": 3718586839,
-      "seed_enable_extras": true,
-      "seed_resize_from_h": -1,
-      "seed_resize_from_w": -1,
-      "steps": 50,
-      "styles": [],
-      "subseed": 4087077444,
-      "subseed_strength": 0,
-      "tiling": false,
-      "width": 1024
-    },
-  comfyLCM:{
-      "60": {
-        "inputs": {
-          "seed": 760882005325423,
-          "steps": 4,
-          "cfg": 1.5,
-          "sampler_name": "lcm",
-          "scheduler": "simple",
-          "denoise": 1,
-          "model": [
-            "65",
-            0
-          ],
-          "positive": [
-            "62",
-            0
-          ],
-          "negative": [
-            "63",
-            0
-          ],
-          "latent_image": [
-            "64",
-            0
-          ]
-        },
-        "class_type": "KSampler",
-        "_meta": {
-          "title": "KSampler"
-        }
-      },
-      "61": {
-        "inputs": {
-          "ckpt_name": "SDXL-ProteusV0.3.safetensors"
-        },
-        "class_type": "CheckpointLoaderSimple",
-        "_meta": {
-          "title": "Load Checkpoint"
-        }
-      },
-      "62": {
-        "inputs": {
-          "text": "A kitten writing with a pen on a digital art tablet.",
-          "clip": [
-            "65",
-            1
-          ]
-        },
-        "class_type": "CLIPTextEncode",
-        "_meta": {
-          "title": "CLIP Text Encode (Prompt)"
-        }
-      },
-      "63": {
-        "inputs": {
-          "text": "",
-          "clip": [
-            "65",
-            1
-          ]
-        },
-        "class_type": "CLIPTextEncode",
-        "_meta": {
-          "title": "CLIP Text Encode (Prompt)"
-        }
-      },
-      "64": {
-        "inputs": {
-          "width": 1024,
-          "height": 1024,
-          "batch_size": 1
-        },
-        "class_type": "EmptyLatentImage",
-        "_meta": {
-          "title": "Empty Latent Image"
-        }
-      },
-      "65": {
-        "inputs": {
-          "lora_name": {
-            "content": "lcm-lora-sdxl.safetensors",
-            "image": null
-          },
-          "strength_model": 1,
-          "strength_clip": 1,
-          "example": "[none]",
-          "model": [
-            "61",
-            0
-          ],
-          "clip": [
-            "61",
-            1
-          ]
-        },
-        "class_type": "LoraLoader|pysssss",
-        "_meta": {
-          "title": "Lora Loader 🐍"
-        }
-      },
-      "66": {
-        "inputs": {
-          "samples": [
-            "60",
-            0
-          ],
-          "vae": [
-            "61",
-            2
-          ]
-        },
-        "class_type": "VAEDecode",
-        "_meta": {
-          "title": "VAE Decode"
-        }
-      },
-      "68": {
-        "inputs": {
-          "filename_prefix": "ComfyUIAPI",
-          "images": [
-            "66",
-            0
-          ]
-        },
-        "class_type": "SaveImage",
-        "_meta": {
-          "title": "Save Image"
-        }
-      }
-    }
-}
-
-async function process( data, apiTag, port=7860 ) {
-return new Promise( returnImage => {
-  const req = new XMLHttpRequest();
-  req.addEventListener( "load", e => {
-    const rsp = JSON.parse( req.response );//?.choices?.[0]?.text;
-    returnImage( rsp );
-  } );
-      if( data ) {
-          const reqData = {
-              method: "POST",
-              url: "http://127.0.0.1:"+port + apiTag,
-              path: apiTag,//path: "/sdapi/v1/txt2img",
-              host: '127.0.0.1',
-              port: port, //port: '7860',
-              apiData: data
-          }
-          req.open( "POST", "/api" );
-          req.send(new Blob([JSON.stringify(reqData)],{"Content-Type":"application/json"}));
-      } else {
-          throw console.error( "Reflective-GET unimplemented." );
-          req.open("GET", "http://127.0.0.1:"+port+"/" + apiTag );
-          req.send();
-      }
-} );
-}
-
-async function demoApiCall() {
-  const result = await executeAPICall(
-    "A1111 Lightning Demo",
-    {
-      "prompt": "desktop cat wearing a fedora",
-      "seed": 123456789,
-      //the others should hopefully be auto-populated... or be already set because I defined them that way...
-    }
-  );
-  console.log( result );
-} */
 
 const wait = delay => new Promise( land => setTimeout( land, delay ) );
 
 const apiExecutionQueue = [];
 
-const verboseAPICall = true;
+const verboseAPICall = false;
 async function executeAPICall( name, controlValues ) {
 
   console.error( "Executing API call: ", name );

@@ -24,6 +24,9 @@ if( ! ipAddress ) {
     console.log( "Local network IP address not found. App will only be accessible on this device." );
 }
 
+let displayAddress = ipAddress;
+ipAddress = "0.0.0.0";
+
 const http = require( 'http' );
 const fs = require( 'fs/promises' );
 const fss = require( "fs" );
@@ -359,6 +362,6 @@ const server = http.createServer(
 
 server.listen( { host , port },
     () => {
-        console.log( `Server listening on http://${host}:${port}/` );
+        console.log( `Server listening on http://${displayAddress}:${port}/` );
     }
 );
