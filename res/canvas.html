@@ -239,28 +239,36 @@ body {
     box-sizing: border-box;
 }
 
+#asset-browser-container {
+    --asset-list-height: 100vh;
+    --asset-list-width: 50vw;
+    --asset-preview-width: 50vw;
+    --asset-search-height: 3rem;
+    --asset-layout-gap: 1rem;
+    --asset-close-button-height: 3rem;
+}
 #asset-browser-container .overlay-close-button:hover {
     border: 1px solid var(--white);
 }
 #asset-browser-container .overlay-close-button {
     position:absolute;
-    left:10vw;
-    top: calc( 2.5vh - 1.5rem );
-    width: 3rem;
-    height: 3rem;
+    left: var(--asset-layout-gap);
+    top: var(--asset-layout-gap);
+    width: var(--asset-close-button-height);
+    height: var(--asset-close-button-height);
     border-radius: 1rem;
     background-image: url('icon/x.png');
-    background-size:1.5rem;
+    background-size:2rem;
     background-position:center;
     background-repeat:no-repeat;
     border: 1px solid transparent;
 }
 #asset-browser-search-bar {
     position:absolute;
-    width: calc( 50vw - 1rem );
-    height: 3rem;
-    left: 10vw;
-    top: 5vh;
+    width: calc( var(--asset-list-width) - ( var(--asset-layout-gap) * 1.5 ) );
+    height: var(--asset-search-height);
+    left: var(--asset-layout-gap);
+    top: calc( ( var( --asset-layout-gap ) + var(--asset-close-button-height) ) + var(--asset-layout-gap) );
     background-color: var(--dark);
     border-radius: 1.5rem;
     border:1px solid var(--low-mid);
@@ -350,10 +358,11 @@ body {
 }
 #asset-browser-list {
     position:absolute;
-    width: calc( 50vw - 1rem );
-    height: calc( 40vh - 7rem );
-    left: 10vw;
-    top: calc( 5vh + 7rem );
+    width: calc( ( var(--asset-list-width) - var(--asset-layout-gap) ) - ( var(--asset-layout-gap) / 2.0 ) );
+    --space-above: calc( (var(--asset-layout-gap) * 3) + ( var(--asset-search-height) + var(--asset-close-button-height) ) );
+    height: calc( var(--asset-list-height) - ( var(--space-above) + var(--asset-layout-gap) ) );
+    left: var(--asset-layout-gap);
+    top: var(--space-above);
     background-color: var(--dark);
     border-radius: 1rem;
     border:1px solid var(--low-mid);
@@ -387,10 +396,11 @@ body {
 }
 #asset-browser-preview {
     position:absolute;
-    width: 30vw;
-    height: calc( 40vh - 4rem );
-    left: calc( 60vw );
-    top: 5vh;
+    --space-below: calc( (var(--asset-layout-gap) * 2) + var(--asset-close-button-height) );
+    width: calc( ( var(--asset-list-width) - var(--asset-layout-gap) ) - ( var(--asset-layout-gap) / 2.0 ) );
+    height: calc( (var(--asset-list-height) - var(--space-below )) - var(--asset-layout-gap) );
+    right: var(--asset-layout-gap);
+    top: var(--asset-layout-gap);
     padding:1rem;
     background-color: var(--dark);
     border-radius: 1rem;
@@ -410,10 +420,10 @@ body {
 }
 #asset-browser-apply-button {
     position:absolute;
-    left:calc( 90vw - 6rem );
-    top: calc( 45vh - 3rem );
-    width: 6rem;
-    height: 3rem;
+    right: var(--asset-layout-gap);
+    bottom: var(--asset-layout-gap);
+    width: calc( var(--asset-close-button-height) * 2.0 );
+    height: var(--asset-close-button-height);
     border-radius: 1rem;
     background-color: var(--high);
     background-image: url('icon/check-black.png');

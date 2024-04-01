@@ -2,11 +2,34 @@
 /* 
 
   This needs so much debugging tho... :-|
-  - layer controls (duplicate, delete) failed to reappear on selecting a layer, despite its border changing to white
-  - layer button disappeared while dragging (reappeared on drop)
-  - mask controls failed to appear (fixed)
-  - brush spacing is out of control pointilism
-  
+  - blending pointilism gaps why??? :-(
+  (fixed) - painting & blending on a transparent layer is sampling black on the brush's edge pixels
+  (fixed) - layer controls (duplicate, delete) failed to reappear on selecting a layer, despite its border changing to white
+  (fixed) - layer button disappears while dragging (reappeared on drop)
+  (fixed) - mask controls failed to appear
+  (fixed) - gen controls on open sometimes show .99999999999999999 etc instead of int
+  (fixed) - paint operation failed to persist to layer (no update, maybe rect problem) (maybe fixed w/ NaN x||ing)
+  (fixed) - blending has edges even on fully opaque layer
+  (fixed) - clicking up/down arrows on slider often fails; tune sensitivity
+  - need to save size per brush so I can easily switch between e.g. line brush & fill brush (copies of same base)
+  - there are no filters (hue/saturation/contrast)
+  - there's no select/cut area. Have to paint instead of outlining to erase area.
+  - no way to set layers to exact positions / rotations
+  - lineart looks blocky / pixely when zoomed out. (Not doing subsampling.)
+  - cascade doesn't have img2img
+  - there's no lora browser
+  - have to input settings again when switching from txt2img to img2img
+  - have to input settings + choose api every time I start a new file
+  - there's no batches generate and no gen history
+  - accidentally hit back button deletes drawing with no way to recover!
+  - flood fill with padding is really slow. tablet freezes for a second.
+  - can't keep painting while waiting for generate, or writing prompt.
+  - can't queue up multiple gens
+  - can't interrupt current gen on mistake notice
+  - brushes don't have texture
+  (fixed chrome) - pen tablet input doesn't work on Windows or Linux. Should at least == mouse.
+  (fixed) - asset browser is just 1 line tall on phone landscape mode
+  - gen controls covered up on phone portrait mode
 
 */
 const VERSION = 3;
@@ -581,6 +604,8 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
               }
               uiContainer.appendChild( layerButton );
               layerButton.style.position = "absolute";
+              layerButton.classList.add( "dragging-layer-button" );
+              layerButton.classList.remove( "layer-in-group" );
             }
             layerButton.style.left = `calc( ${current.x}px - 1.5rem )`;
             layerButton.style.top = `calc( ${current.y}px - 3.5rem )`;
@@ -671,6 +696,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                 }
               }
               layerButton.style = "";
+              layerButton.classList.remove( "dragging-layer-button" );
               reorganizeLayerButtons();
             }
           },
@@ -1201,8 +1227,24 @@ function reorganizeLayerButtons() {
   // layerDepth: this bumps the layer leftward and shrinks it, while also adding a white bar to the right.
   // for layerDepth > 1, the bump distance and # of bars grows. :-|
 
+  let draggingButton = null;
+  const draggingButtons = [ ...document.querySelectorAll( ".dragging-layer-button" ) ];
+  if( draggingButtons.length > 1 ) {
+    draggingButtons.forEach( db => {
+      db.classList.remove( "dragging-layer-button" );
+      db.style = "";
+    } );
+  }
+  else if( draggingButtons.length === 1)
+    draggingButton = draggingButtons[ 0 ];
+
   //pop all the buttons
-  document.querySelectorAll( ".layer-button" ).forEach( lb => lb.parentElement.removeChild( lb ) );
+  document.querySelectorAll( ".layer-button" ).forEach(
+    lb => {
+      if( lb === draggingButton ) return;
+      lb.parentElement.removeChild( lb )
+    }
+  );
 
   const layersColumn = document.querySelector( "#layers-column" );
 
@@ -1210,6 +1252,10 @@ function reorganizeLayerButtons() {
   for( let i=layersStack.layers.length-1; i>=0; i-- ) {
     const layer = layersStack.layers[ i ];
     if( layer.layerType === "paint-preview" ) continue;
+    if( layer.layerButton.classList.contains( "dragging-layer-button" ) ) {
+      uiContainer.appendChild( layer.layerButton );
+      continue;
+    }
     if( checkLayerInsideClosedGroup( layer ) ) continue;
     if( layer.layerType === "group" && layer === selectedLayer ) {
       updateLayerGroupCoordinates( layer );
@@ -4430,7 +4476,7 @@ function setupUI() {
               selectedLayer.generativeSettings.apiFlowName = asset.name;
               setupUIGenerativeControls( asset.name );
             }
-            openAssetBrowser( assets, callback );
+            openAssetBrowser( assets, callback, "APIFlows" );
           }
         },
         { tooltip: [ "Select APIFlow", "below", "to-right-of-center" ], zIndex:10000, },
@@ -5486,7 +5532,7 @@ function setupUI() {
     }
 
     //tags bar
-    {
+    if( false ){
       const assetBrowserTagsBar = document.createElement( "div" );
       assetBrowserTagsBar.id = "asset-browser-tags-bar";
       assetBrowserContainer.appendChild( assetBrowserTagsBar );
@@ -5497,7 +5543,7 @@ function setupUI() {
     }
     
     //search tags bar
-    {
+    if( false ){
       const assetBrowserSearchTagsBar = document.createElement( "div" );
       assetBrowserSearchTagsBar.id = "asset-browser-search-tags-bar";
       assetBrowserContainer.appendChild( assetBrowserSearchTagsBar );
@@ -5543,31 +5589,36 @@ function setupUI() {
 
 }
 
-function openAssetBrowser( assets, callback ) {
+function openAssetBrowser( assets, callback, assetName ) {
 
   const assetBrowserContainer = document.querySelector( "#asset-browser-container" );
-  const assetBrowserPreview = document.querySelector( "#asset-browser-preview" );
+  //const assetBrowserPreview = document.querySelector( "#asset-browser-preview" );
 
   //clear the assets list
   const list = document.querySelector( "#asset-browser-list" );
   list.innerHTML = "";
   
+  //get our interpreter
+  let assetInterpreterName = "simple-name";
+  if( assetInterpreters.hasOwnProperty( assetName ) )
+    assetInterpreterName = assetName;
+
   //add the assets
   let activeAsset = null;
   for( const asset of assets ) {
-    const assetElement = document.createElement( "div" );
-    assetElement.textContent = asset.name;
-    assetElement.classList.add( "asset-element" );
+    const assetElement = assetInterpreters[ "simple-name" ].makeElement( asset );
     assetElement.onclick = () => {
-      document.querySelectorAll( ".asset-element" ).forEach( e => e.classList.remove( "active" ) );
+      document.querySelectorAll( ".asset-element" ).forEach(
+        e => e.classList.remove( "active" )
+      );
       assetElement.classList.add( "active" );
-      assetBrowserPreview.textContent = asset.name;
+      assetInterpreters[ "simple-name" ].showPreview( asset )
       activeAsset = asset;
     }
     list.appendChild( assetElement );
   }
 
-  assetBrowserPreview.textContent = "";
+  assetInterpreters.clearPreview();
 
   //activate the apply button
   const applyButton = document.querySelector( "#asset-browser-apply-button" );
@@ -5722,7 +5773,7 @@ function setupUIGenerativeControls( apiFlowName ) {
                 }
               }
             }
-            openAssetBrowser( assetsLibrary[ controlScheme.assetName ] || [], callback );
+            openAssetBrowser( assetsLibrary[ controlScheme.assetName ] || [], callback, controlScheme.assetName );
           }
         },
         { tooltip: [ "Select " + controlScheme.assetName, "below", "to-right-of-center" ], zIndex:10000, },
@@ -6445,7 +6496,7 @@ const UI = {
 
       const numberPreview = sliderElement.appendChild( document.createElement( "div" ) );
       numberPreview.classList.add( "number-slider-number-preview" );
-      numberPreview.textContent = value;
+      //numberPreview.textContent = value;
       numberPreview.showValue = ()=> {
         let number = value + "";
         if( number.indexOf( "." ) !== -1 )  {
@@ -6459,6 +6510,7 @@ const UI = {
       }
       let trimLength;
       numberPreview.updateTrimLength();
+      numberPreview.showValue();
 
       const rightArrow = sliderElement.appendChild( document.createElement( "div" ) );
       rightArrow.classList.add( "number-slider-right-arrow" );
@@ -6496,15 +6548,16 @@ const UI = {
               if( slideMode === "contain-step" ) adjustmentScale = step / 3; //1 step per every 3 pixels
             }
 
-            const adjustment = dx * adjustmentScale;
-            let number = startingNumber + adjustment;
-            number = Math.max( min, Math.min( max, number ) );
-            number = parseInt( number / step ) * step;
-            value = number;
-
-            numberPreview.showValue();
-
             if( isClick === false ) sliderElement.onupdate( value );
+
+            if( isClick === false ) {
+              const adjustment = dx * adjustmentScale;
+              let number = startingNumber + adjustment;
+              number = Math.max( min, Math.min( max, number ) );
+              number = parseInt( number / step ) * step;
+              value = number;
+              numberPreview.showValue();
+            }
             
             if( ending ) {
               sliderElement.querySelector( ".tooltip" ).style = "";
@@ -6536,6 +6589,13 @@ const UI = {
                   })
                 }
               } else {
+                const adjustment = dx * adjustmentScale;
+                let number = startingNumber + adjustment;
+                number = Math.max( min, Math.min( max, number ) );
+                number = parseInt( number / step ) * step;
+                value = number;
+                numberPreview.showValue();
+    
                 sliderElement.onend( value );
               }
             }
@@ -7513,10 +7573,15 @@ function setupPaintGPU() {
     void main() {
 
       vec4 brushTipLookup = texture( brushTip, brushTipUV );
-      vec4 blendSourceLookup = texture( blendSource, ( blendUV + 1.0 ) / 2.0 );
-      vec4 blendCompositeLookup = texture( blendComposite, ( blendUV + 1.0 ) / 2.0 );
+      vec4 originalBlendSourceLookup = texture( blendSource, ( blendUV + 1.0 ) / 2.0 );
+      vec4 originalBlendCompositeLookup = texture( blendComposite, ( blendUV + 1.0 ) / 2.0 );
 
       if( brushTipLookup.a == 0.0 ) { discard; }
+
+      //we want to completely ignore the RGB component of a 0-alpha blendsource
+      //does this mean our paint color will leak in while 100% blending?
+      vec4 blendSourceLookup = vec4( mix( paintColor.rgb, originalBlendSourceLookup.rgb, originalBlendSourceLookup.a ), originalBlendSourceLookup.a );
+      vec4 blendCompositeLookup = vec4( mix( paintColor.rgb, originalBlendCompositeLookup.rgb, originalBlendCompositeLookup.a ), originalBlendCompositeLookup.a );
 
       //let's mix the paint and the blend composite
       vec4 mixedMedia = vec4(
@@ -8000,10 +8065,10 @@ function beginPaintGPU( layer ) {
     btx.filter = "blur(" + blur + "px)";
     btx.translate( w/2 - iw/2, h/2 - ih/2 )
     for( let i=0, j=blur; i<=j; i++ )
-      btx.drawImage( brushTipImage, i, i, iw-2*i, ih-2*i );
+      btx.drawImage( brushTipImage, i+Math.random()*3-1.5, i+Math.random()*3-1.5, iw-2*i, ih-2*i );
     btx.restore();
     document.body.appendChild( brushTipCanvas );
-    brushTipCanvas.style = "position:absolute; left:20px; width:100px; border:1px solid red; background-color:white;";
+    //brushTipCanvas.style = "position:absolute; left:20px; width:100px; border:1px solid red; background-color:white;";
   }
   gl.bindTexture( gl.TEXTURE_2D, paintGPUResources.brushTipTexture );
   {
@@ -8237,12 +8302,8 @@ function paintGPU( points, layer ) {
         }
       }
 
-      //we're either adding or subtracting our current view angle
-      //get the current view angle
+      //we're adding our current view angle
       azimuthAngle += Math.atan2( viewMatrices.current[ 1 ], viewMatrices.current[ 0 ] );
-      //azimuthAngle -= Math.atan2( viewMatrices.current[ 1 ], viewMatrices.current[ 0 ] );
-      //azimuthAngle += Math.atan2( viewMatrices.current[ 3 ], viewMatrices.current[ 0 ] );
-      //azimuthAngle -= Math.atan2( viewMatrices.current[ 3 ], viewMatrices.current[ 0 ] );
     
       //Is this wrong?
       let unTiltClippedAltitudeAngle = Math.min( brushTiltMinAngle, normalizedAltitudeAngle ),
@@ -8262,8 +8323,12 @@ function paintGPU( points, layer ) {
         scaledTipImageHeight = scaledBrushSize * tipImageHeight / tipImageWidth;
 
       //if the pen is very vertical, we want to center the brush
-      //TEMPORARY: ignoring
-      const xOffset = ( scaledTipImageWidth/2 ) * ( normalizedUnTiltClippedAltitudeAngle ) * ( 1 - brushBlur/2 );
+      //as it leaves verticaliy, we want to offset it
+
+      //let xOffset = ( scaledTipImageWidth/2 ) * ( normalizedUnTiltClippedAltitudeAngle ) * ( 1 - brushBlur/2 );
+
+      //but only if this brush is expecting such an offset???
+      let xOffset = ( scaledTipImageWidth/2 ) * ( normalizedUnTiltClippedAltitudeAngle ) * ( 1 - brushBlur/2 ) * brushTiltScale;
 
       //compute our verts
       {
@@ -8602,15 +8667,21 @@ function finalizePaintGPU( layer ) {
 
   const { modRect } = paintGPUResources;
   //discretize our modrect
-  modRect.x = Math.max( 0, parseInt( modRect.x ) );
-  modRect.y = Math.max( 0, parseInt( modRect.y ) );
-  modRect.x2 = Math.min( layer.w, parseInt( modRect.x2 ) + 1 );
-  modRect.y2 = Math.min( layer.h, parseInt( modRect.y2 ) + 1 );
+  modRect.x = Math.max( 0, parseInt( modRect.x || 0 ) ) || 0;
+  modRect.y = Math.max( 0, parseInt( modRect.y || 0 ) ) || 0;
+  modRect.x2 = Math.min( layer.w, parseInt( modRect.x2 || layer.w ) + 1 ) || layer.w;
+  modRect.y2 = Math.min( layer.h, parseInt( modRect.y2 || layer.h ) + 1 ) || layer.h;
   //get our modrect width and height
-  modRect.w = Math.max( 0, Math.min( layer.w, modRect.x2 - modRect.x ) );
-  modRect.h = Math.max( 0, Math.min( layer.h, modRect.y2 - modRect.y ) );
+  modRect.w = Math.max( 0, Math.min( layer.w, (modRect.x2 - modRect.x) || layer.w ) );
+  modRect.h = Math.max( 0, Math.min( layer.h, (modRect.y2 - modRect.y) || layer.h ) );
 
+  //hopefully replaced NaNs with full-layer blit op
   if( isNaN( modRect.x ) || isNaN( modRect.y ) || isNaN( modRect.x2 ) || isNaN( modRect.y2 ) || isNaN( modRect.w ) || isNaN( modRect.h ) || modRect.w === 0 || modRect.h === 0 ) {
+    //nothing to update
+    console.error( "NaN rect.", modRect );
+    return;
+  }
+  if( modRect.w === 0 || modRect.h === 0 ) {
     //nothing to update
     return;
   }
@@ -9797,7 +9868,7 @@ const apiExecutionQueue = [];
 const verboseAPICall = false;
 async function executeAPICall( name, controlValues ) {
 
-  console.error( "Executing API call: ", name );
+  if( verboseAPICall ) console.log( "Executing API call: ", name );
 
   const selfQueue = [name, controlValues];
   apiExecutionQueue.push( selfQueue );
@@ -9865,7 +9936,7 @@ async function executeAPICall( name, controlValues ) {
           }
 
           try {
-            console.log( "Parsing response as JSON" );
+            if( verboseAPICall ) console.log( "Parsing response as JSON" );
             jsonResponse = JSON.parse( xhr.response );
           }
           catch ( e ) {
@@ -10108,6 +10179,25 @@ async function executeAPICall( name, controlValues ) {
   return outputs;
 }
 
+const assetInterpreters = {
+  clearPreview: () => {
+    const assetBrowserPreview = document.querySelector( "#asset-browser-preview" );
+    assetBrowserPreview.innerHTML = "";
+  },
+  "simple-name": {
+    makeElement: asset => {
+      const assetElement = document.createElement( "div" );
+      assetElement.textContent = asset.name;
+      assetElement.classList.add( "asset-element" );
+      return assetElement;
+    },
+    showPreview: asset => {
+      const assetBrowserPreview = document.querySelector( "#asset-browser-preview" );
+      assetBrowserPreview.textContent = asset.name;
+    },
+  }
+}
+
 const assetsLibrary = {}
 
 //a 3w*2h image with random colors and a solid alpha channel
@@ -10145,7 +10235,7 @@ function loadDefaultAPIFlows() {
         if( response.ok ) {
           const apiFlow = await response.json();
           apiFlows.push( apiFlow );
-          console.log( "Loaded apiflow ", defaultAPIFlowName );
+          //console.log( "Loaded apiflow ", defaultAPIFlowName );
         } else {
           console.error( "Failed to load default apiflow: ", defaultAPIFlowName );
         }
