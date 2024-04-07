@@ -54,16 +54,6 @@
       ]
     },
     {
-      "controlName": "sampler",
-      "controlType": "static",
-      "controlValue": "DPM++ SDE",
-      "controlPath": [
-        "t2i",
-        "api",
-        "sampler_name"
-      ]
-    },
-    {
       "controlName": "steps",
       "controlType": "number",
       "min": 1,
@@ -130,7 +120,7 @@
       "controlName": "Sampler",
       "controlType": "asset",
       "assetName": "A1111 Samplers",
-      "controlValue": "DPM++ 3M SDE Exponential",
+      "controlValue": "DPM++ SDE",
       "controlPath": [
         "t2i",
         "api",
@@ -186,7 +176,7 @@
         "s_noise": 1,
         "s_tmax": null,
         "s_tmin": 0,
-        "sampler_name": "DPM++ 3M SDE Exponential",
+        "sampler_name": "DPM++ SDE",
         "script_name": null,
         "seed": 3718586839,
         "steps": 50,

@@ -1,5 +1,5 @@
 {
-  "apiFlowName": "Comfy StableCascade txt2img",
+  "apiFlowName": "Comfy StableCascade img2img + ControlNet",
   "apiFlowType": "generative",
   "outputs": [
     {
@@ -12,6 +12,54 @@
     }
   ],
   "controls": [
+    {
+      "controlName": "img2img",
+      "controlHint": "i2i",
+      "controlType": "image",
+      "controlValue": "",
+      "controlLayer": null,
+      "controlPath": [
+        "upload-img2img-image",
+        "api",
+        "image"
+      ]
+    },
+    {
+      "controlName": "i2i-image-filename",
+      "controlType": "api-result",
+      "resultPath": [
+        "upload-img2img-image",
+        "image-filename"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite with uploadname"
+    },
+    {
+      "controlName": "controlnet",
+      "controlHint": "cn",
+      "controlType": "image",
+      "controlValue": "",
+      "controlLayer": null,
+      "controlPath": [
+        "upload-controlnet-image",
+        "api",
+        "image"
+      ]
+    },
+    {
+      "controlName": "controlnet-image-filename",
+      "controlType": "api-result",
+      "resultPath": [
+        "upload-controlnet-image",
+        "image-filename"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite with uploadname"
+    },
     {
       "controlName": "Prompt",
       "controlType": "text",
@@ -38,6 +86,7 @@
         "text"
       ]
     },
+
     {
       "controlName": "Compression",
       "controlType": "number",
@@ -52,6 +101,22 @@
         "34",
         "inputs",
         "compression"
+      ]
+    },
+    {
+      "controlName": "Denoise",
+      "controlType": "number",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "controlValue": 0.5,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "3",
+        "inputs",
+        "denoise"
       ]
     },
     {
@@ -201,6 +266,54 @@
       ]
     },
     {
+      "controlName": "Strength",
+      "controlType": "number",
+      "min": 0,
+      "max": 2,
+      "step": 0.01,
+      "controlValue": 1.0,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "64",
+        "inputs",
+        "strength"
+      ]
+    },
+    {
+      "controlName": "Start",
+      "controlType": "number",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "controlValue": 0.0,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "64",
+        "inputs",
+        "start_percent"
+      ]
+    },
+    {
+      "controlName": "End",
+      "controlType": "number",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "controlValue": 1.0,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "64",
+        "inputs",
+        "end_percent"
+      ]
+    },
+    {
       "controlName": "seed",
       "controlType": "randomInt",
       "min": 0,
@@ -245,6 +358,59 @@
         "34",
         "inputs",
         "height"
+      ]
+    },
+    {
+      "controlName": "Effnet Encoder",
+      "controlType": "asset",
+      "assetName": "Comfy VAEs",
+      "controlValue": "effnet_encoder.safetensors",
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "62",
+        "inputs",
+        "vae_name"
+      ]
+    },
+
+    {
+      "controlName": "prompt-i2i-filename",
+      "controlType": "string-compose",
+      "composePaths": [
+        "",
+        [
+          "i2i-image-filename",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "61",
+        "inputs",
+        "image"
+      ]
+    },
+    {
+      "controlName": "prompt-cn-filename",
+      "controlType": "string-compose",
+      "composePaths": [
+        "",
+        [
+          "controlnet-image-filename",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "63",
+        "inputs",
+        "image"
       ]
     },
     {
@@ -358,6 +524,48 @@
   ],
   "apiCalls": [
     {
+      "apiCallName": "upload-img2img-image",
+      "results": [
+        {
+          "resultName": "image-filename",
+          "resultType": "string",
+          "resultPath": [
+            "name"
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "apiPath": "/upload/image",
+      "method": "POST",
+      "dataFormat": "FORM",
+      "convertDataImages": true,
+      "api": {
+        "image": ""
+      }
+    },
+    {
+      "apiCallName": "upload-controlnet-image",
+      "results": [
+        {
+          "resultName": "image-filename",
+          "resultType": "string",
+          "resultPath": [
+            "name"
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "apiPath": "/upload/image",
+      "method": "POST",
+      "dataFormat": "FORM",
+      "convertDataImages": true,
+      "api": {
+        "image": ""
+      }
+    },
+    {
       "apiCallName": "sc-prompt",
       "results": [
         {
@@ -378,26 +586,26 @@
         "prompt": {
           "3": {
             "inputs": {
-              "seed": 750887496150267,
-              "steps": 4,
-              "cfg": 1.5,
+              "seed": 147886130258246,
+              "steps": 11,
+              "cfg": 5.9,
               "sampler_name": "ddpm",
               "scheduler": "simple",
-              "denoise": 1,
+              "denoise": 0.64,
               "model": [
                 "59",
                 0
               ],
               "positive": [
-                "6",
+                "64",
                 0
               ],
               "negative": [
-                "7",
-                0
+                "64",
+                1
               ],
               "latent_image": [
-                "34",
+                "60",
                 0
               ]
             },
@@ -408,7 +616,7 @@
           },
           "6": {
             "inputs": {
-              "text": "desktop cat",
+              "text": "desktop cat green glasses",
               "clip": [
                 "37",
                 0
@@ -490,8 +698,8 @@
           },
           "33": {
             "inputs": {
-              "seed": 750887496150267,
-              "steps": 2,
+              "seed": 147886130258246,
+              "steps": 3,
               "cfg": 1,
               "sampler_name": "ddpm",
               "scheduler": "simple",
@@ -505,7 +713,7 @@
                 0
               ],
               "negative": [
-                "40",
+                "7",
                 0
               ],
               "latent_image": [
@@ -579,6 +787,87 @@
             "class_type": "ModelSamplingStableCascade",
             "_meta": {
               "title": "ModelSamplingStableCascade"
+            }
+          },
+          "60": {
+            "inputs": {
+              "pixels": [
+                "61",
+                0
+              ],
+              "vae": [
+                "62",
+                0
+              ]
+            },
+            "class_type": "VAEEncode",
+            "_meta": {
+              "title": "VAE Encode"
+            }
+          },
+          "61": {
+            "inputs": {
+              "image": "Untitled AI Paint App POC - export - 1712404673461 (2).png",
+              "upload": "image"
+            },
+            "class_type": "LoadImage",
+            "_meta": {
+              "title": "Load Image"
+            }
+          },
+          "62": {
+            "inputs": {
+              "vae_name": "effnet_encoder.safetensors"
+            },
+            "class_type": "VAELoader",
+            "_meta": {
+              "title": "Load VAE"
+            }
+          },
+          "63": {
+            "inputs": {
+              "image": "00002-2340928781 (1).png",
+              "upload": "image"
+            },
+            "class_type": "LoadImage",
+            "_meta": {
+              "title": "Load Image"
+            }
+          },
+          "64": {
+            "inputs": {
+              "strength": 1,
+              "start_percent": 0,
+              "end_percent": 1,
+              "positive": [
+                "6",
+                0
+              ],
+              "negative": [
+                "7",
+                0
+              ],
+              "control_net": [
+                "65",
+                0
+              ],
+              "image": [
+                "63",
+                0
+              ]
+            },
+            "class_type": "ControlNetApplyAdvanced",
+            "_meta": {
+              "title": "Apply ControlNet (Advanced)"
+            }
+          },
+          "65": {
+            "inputs": {
+              "control_net_name": "SDXL-diffusers_xl_depth_full.safetensors"
+            },
+            "class_type": "ControlNetLoader",
+            "_meta": {
+              "title": "Load ControlNet Model"
             }
           }
         }

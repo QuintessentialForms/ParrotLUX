@@ -1,0 +1,110 @@
+{
+  "apiFlowName": "Local Brushes Loader",
+  "assetLibraries": [
+    "Brushes"
+  ],
+  "apiFlowType": "asset",
+  "outputs": [
+    {
+      "outputName": "brushes-list",
+      "outputLibraryName": "Brushes",
+      "outputType": "assets",
+      "mergeBehavior": "extend",
+      "assetMap": [
+        {
+          "key": "uniqueId",
+          "path": [ "name" ]
+        },
+        {
+          "key": "name",
+          "path": [ "name" ]
+        },
+        {
+          "key": "brushTips",
+          "path": [ "brushTips" ]
+        },
+        {
+          "key": "brushTiltScale",
+          "path": [ "brushTiltScale" ]
+        },
+        {
+          "key": "brushTiltMinAngle",
+          "path": [ "brushTiltMinAngle" ]
+        },
+        {
+          "key": "brushSize",
+          "path": [ "brushSize" ]
+        },
+        {
+          "key": "minBrushSize",
+          "path": [ "minBrushSize" ]
+        },
+        {
+          "key": "maxBrushSize",
+          "path": [ "maxBrushSize" ]
+        },
+        {
+          "key": "brushOpacity",
+          "path": [ "brushOpacity" ]
+        },
+        {
+          "key": "brushBlur",
+          "path": [ "brushBlur" ]
+        },
+        {
+          "key": "minBrushBlur",
+          "path": [ "minBrushBlur" ]
+        },
+        {
+          "key": "maxBrushBlur",
+          "path": [ "maxBrushBlur" ]
+        },
+        {
+          "key": "brushSpacing",
+          "path": [ "brushSpacing" ]
+        },
+        {
+          "key": "pressureOpacityCurvePoints",
+          "path": [ "pressureOpacityCurvePoints" ]
+        },
+        {
+          "key": "pressureScaleCurvePoints",
+          "path": [ "pressureScaleCurvePoints" ]
+        }
+      ],
+      "outputResultPath": [
+        "get-brushes-array",
+        "brushes-array"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "appPort",
+      "controlType": "appPort",
+      "controlValue": 6789,
+      "controlPath": [
+        "get-brushes-array",
+        "port"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "get-brushes-array",
+      "results": [
+        {
+          "resultName": "brushes-array",
+          "resultType": "array-object",
+          "resultPath": []
+        }
+      ],
+      "host": "device",
+      "port": 6789,
+      "method": "GET",
+      "dataFormat": null,
+      "convertDataImages": false,
+      "apiPath": "/brushes"
+    }
+  ]
+}

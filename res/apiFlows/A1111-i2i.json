@@ -54,16 +54,6 @@
       ]
     },
     {
-      "controlName": "sampler",
-      "controlType": "static",
-      "controlValue": "DPM++ SDE",
-      "controlPath": [
-        "i2i",
-        "api",
-        "sampler_name"
-      ]
-    },
-    {
       "controlName": "denoise",
       "controlType": "number",
       "min": 0,
@@ -143,9 +133,9 @@
       "controlName": "Sampler",
       "controlType": "asset",
       "assetName": "A1111 Samplers",
-      "controlValue": "DPM++ 3M SDE Exponential",
+      "controlValue": "DPM++ SDE",
       "controlPath": [
-        "t2i",
+        "i2i",
         "api",
         "sampler_name"
       ]

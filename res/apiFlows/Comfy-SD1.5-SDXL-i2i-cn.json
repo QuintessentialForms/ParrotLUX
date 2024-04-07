@@ -1,5 +1,5 @@
 {
-  "apiFlowName": "Comfy StableCascade txt2img",
+  "apiFlowName": "Comfy SD1.5/SDXL img2img + ControlNet",
   "apiFlowType": "generative",
   "outputs": [
     {
@@ -13,14 +13,62 @@
   ],
   "controls": [
     {
+      "controlName": "controlnet-image",
+      "controlHint": "cn",
+      "controlType": "image",
+      "controlValue": "",
+      "controlLayer": null,
+      "controlPath": [
+        "upload-controlnet-image",
+        "api",
+        "image"
+      ]
+    },
+    {
+      "controlName": "cni-image-filename",
+      "controlType": "api-result",
+      "resultPath": [
+        "upload-controlnet-image",
+        "image-filename"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite with uploadname"
+    },
+    {
+      "controlName": "img2img-image",
+      "controlHint": "i2i",
+      "controlType": "image",
+      "controlValue": "",
+      "controlLayer": null,
+      "controlPath": [
+        "upload-img2img-image",
+        "api",
+        "image"
+      ]
+    },
+    {
+      "controlName": "i2i-image-filename",
+      "controlType": "api-result",
+      "resultPath": [
+        "upload-img2img-image",
+        "image-filename"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite with uploadname"
+    },
+    {
       "controlName": "Prompt",
       "controlType": "text",
       "controlValue": "desktop cat",
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "6",
+        "3",
         "inputs",
         "text"
       ]
@@ -30,72 +78,86 @@
       "controlType": "text",
       "controlValue": "",
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "7",
+        "4",
         "inputs",
         "text"
       ]
     },
     {
-      "controlName": "Compression",
-      "controlType": "number",
-      "min": 1,
-      "max": 128,
-      "step": 1,
-      "controlValue": 42,
-      "controlPath": [
-        "sc-prompt",
-        "api",
-        "prompt",
-        "34",
-        "inputs",
-        "compression"
-      ]
-    },
-    {
-      "controlName": "C Steps",
+      "controlName": "Steps",
       "controlType": "number",
       "min": 1,
       "max": 100,
       "step": 1,
       "controlValue": 4,
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "3",
+        "1",
         "inputs",
         "steps"
       ]
     },
     {
-      "controlName": "C CFG",
+      "controlName": "CFG",
       "controlType": "number",
       "min": 1,
       "max": 50,
-      "step": 0.1,
+      "step": 0.25,
       "controlValue": 1.5,
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "3",
+        "1",
         "inputs",
         "cfg"
+      ]
+    },
+    {
+      "controlName": "Denoise",
+      "controlType": "number",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "controlValue": 0.5,
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "1",
+        "inputs",
+        "denoise"
+      ]
+    },
+    {
+      "controlName": "Model",
+      "controlType": "asset",
+      "assetName": "Comfy Models",
+      "controlValue": "--no model--",
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "2",
+        "inputs",
+        "ckpt_name"
       ]
     },
     {
       "controlName": "Sampler",
       "controlType": "asset",
       "assetName": "Comfy Samplers",
-      "controlValue": "ddpm",
+      "controlValue": "euler_ancestral",
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "3",
+        "1",
         "inputs",
         "sampler_name"
       ]
@@ -106,98 +168,74 @@
       "assetName": "Comfy Schedulers",
       "controlValue": "simple",
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "3",
+        "1",
         "inputs",
         "scheduler"
       ]
     },
     {
-      "controlName": "B Steps",
+      "controlName": "ControlNet",
+      "controlType": "asset",
+      "assetName": "Comfy ControlNets",
+      "controlValue": "--none--",
+      "controlPath": [
+        "sd-prompt",
+        "api",
+        "prompt",
+        "13",
+        "inputs",
+        "control_net_name"
+      ]
+    },
+    {
+      "controlName": "Strength",
       "controlType": "number",
-      "min": 1,
-      "max": 100,
-      "step": 1,
-      "controlValue": 2,
+      "min": 0,
+      "max": 2,
+      "step": 0.01,
+      "controlValue": 1.0,
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "33",
+        "12",
         "inputs",
-        "steps"
+        "strength"
       ]
     },
     {
-      "controlName": "B-Sampler",
-      "controlType": "duplicate",
-      "controlSourceName": "Sampler",
-      "controlValue": "ddpm",
+      "controlName": "Start",
+      "controlType": "number",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "controlValue": 0.0,
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "33",
+        "12",
         "inputs",
-        "sampler_name"
+        "start_percent"
       ]
     },
     {
-      "controlName": "B-Scheduler",
-      "controlType": "duplicate",
-      "controlSourceName": "Scheduler",
-      "controlValue": "simple",
+      "controlName": "End",
+      "controlType": "number",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "controlValue": 1.0,
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "33",
+        "12",
         "inputs",
-        "scheduler"
-      ]
-    },
-    {
-      "controlName": "C Model",
-      "controlType": "asset",
-      "assetName": "Comfy UNETs",
-      "controlValue": "cascade_stage_c_bf16.safetensors",
-      "controlPath": [
-        "sc-prompt",
-        "api",
-        "prompt",
-        "30",
-        "inputs",
-        "unet_name"
-      ]
-    },
-    {
-      "controlName": "B Model",
-      "controlType": "asset",
-      "assetName": "Comfy UNETs",
-      "controlValue": "cascade_stage_b_lite_bf16.safetensors",
-      "controlPath": [
-        "sc-prompt",
-        "api",
-        "prompt",
-        "32",
-        "inputs",
-        "unet_name"
-      ]
-    },
-    {
-      "controlName": "VAE",
-      "controlType": "asset",
-      "assetName": "Comfy VAEs",
-      "controlValue": "cascade_stage_a.safetensors",
-      "controlPath": [
-        "sc-prompt",
-        "api",
-        "prompt",
-        "29",
-        "inputs",
-        "vae_name"
+        "end_percent"
       ]
     },
     {
@@ -207,51 +245,57 @@
       "max": 999999999,
       "step": 1,
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "3",
+        "1",
         "inputs",
         "seed"
       ]
     },
     {
-      "controlName": "width",
-      "controlType": "layer-input",
-      "layerPath": [
-        "w"
+      "controlName": "prompt-cni-filename",
+      "controlType": "string-compose",
+      "composePaths": [
+        "",
+        [
+          "cni-image-filename",
+          "controlValue"
+        ]
       ],
-      "controlValue": 1024,
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "34",
+        "10",
         "inputs",
-        "width"
+        "image"
       ]
     },
     {
-      "controlName": "height",
-      "controlType": "layer-input",
-      "layerPath": [
-        "h"
+      "controlName": "prompt-i2i-filename",
+      "controlType": "string-compose",
+      "composePaths": [
+        "",
+        [
+          "i2i-image-filename",
+          "controlValue"
+        ]
       ],
-      "controlValue": 1024,
       "controlPath": [
-        "sc-prompt",
+        "sd-prompt",
         "api",
         "prompt",
-        "34",
+        "15",
         "inputs",
-        "height"
+        "image"
       ]
     },
     {
       "controlName": "UID",
       "controlType": "api-result",
       "resultPath": [
-        "sc-prompt",
+        "sd-prompt",
         "prompt_id"
       ],
       "controlPath": [
@@ -323,18 +367,6 @@
       "controlValue": "to overwrite with filename"
     },
     {
-      "controlName": "filefolder",
-      "controlType": "api-result",
-      "resultPath": [
-        "get-filename",
-        "image-subfolder"
-      ],
-      "controlPath": [
-        "controlValue"
-      ],
-      "controlValue": "to overwrite with filefolder"
-    },
-    {
       "controlName": "view-filename",
       "controlType": "string-compose",
       "composePaths": [
@@ -343,12 +375,7 @@
           "filename",
           "controlValue"
         ],
-        "&subfolder=",
-        [
-          "filefolder",
-          "controlValue"
-        ],
-        "&type=output&rand=0.0923485734985"
+        "&subfolder=&type=output&rand=0.0923485734985"
       ],
       "controlPath": [
         "view",
@@ -358,7 +385,49 @@
   ],
   "apiCalls": [
     {
-      "apiCallName": "sc-prompt",
+      "apiCallName": "upload-controlnet-image",
+      "results": [
+        {
+          "resultName": "image-filename",
+          "resultType": "string",
+          "resultPath": [
+            "name"
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "apiPath": "/upload/image",
+      "method": "POST",
+      "dataFormat": "FORM",
+      "convertDataImages": true,
+      "api": {
+        "image": ""
+      }
+    },
+    {
+      "apiCallName": "upload-img2img-image",
+      "results": [
+        {
+          "resultName": "image-filename",
+          "resultType": "string",
+          "resultPath": [
+            "name"
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "apiPath": "/upload/image",
+      "method": "POST",
+      "dataFormat": "FORM",
+      "convertDataImages": true,
+      "api": {
+        "image": ""
+      }
+    },
+    {
+      "apiCallName": "sd-prompt",
       "results": [
         {
           "resultName": "prompt_id",
@@ -376,28 +445,28 @@
       "convertDataImages": false,
       "api": {
         "prompt": {
-          "3": {
+          "1": {
             "inputs": {
-              "seed": 750887496150267,
-              "steps": 4,
-              "cfg": 1.5,
-              "sampler_name": "ddpm",
-              "scheduler": "simple",
+              "seed": 936733664684863,
+              "steps": 35,
+              "cfg": 2.5,
+              "sampler_name": "euler_ancestral",
+              "scheduler": "normal",
               "denoise": 1,
               "model": [
-                "59",
+                "2",
                 0
               ],
               "positive": [
-                "6",
+                "12",
                 0
               ],
               "negative": [
-                "7",
-                0
+                "12",
+                1
               ],
               "latent_image": [
-                "34",
+                "14",
                 0
               ]
             },
@@ -406,12 +475,21 @@
               "title": "KSampler"
             }
           },
-          "6": {
+          "2": {
             "inputs": {
-              "text": "desktop cat",
+              "ckpt_name": "realisticVisionV20_v20.safetensors"
+            },
+            "class_type": "CheckpointLoaderSimple",
+            "_meta": {
+              "title": "Load Checkpoint"
+            }
+          },
+          "3": {
+            "inputs": {
+              "text": "apples",
               "clip": [
-                "37",
-                0
+                "2",
+                1
               ]
             },
             "class_type": "CLIPTextEncode",
@@ -419,12 +497,12 @@
               "title": "CLIP Text Encode (Prompt)"
             }
           },
-          "7": {
+          "4": {
             "inputs": {
               "text": "",
               "clip": [
-                "37",
-                0
+                "2",
+                1
               ]
             },
             "class_type": "CLIPTextEncode",
@@ -432,15 +510,15 @@
               "title": "CLIP Text Encode (Prompt)"
             }
           },
-          "8": {
+          "5": {
             "inputs": {
               "samples": [
-                "33",
+                "1",
                 0
               ],
               "vae": [
-                "29",
-                0
+                "2",
+                2
               ]
             },
             "class_type": "VAEDecode",
@@ -448,11 +526,11 @@
               "title": "VAE Decode"
             }
           },
-          "9": {
+          "6": {
             "inputs": {
-              "filename_prefix": "wuer/ComfyUI",
+              "filename_prefix": "ComfyUI",
               "images": [
-                "8",
+                "5",
                 0
               ]
             },
@@ -461,124 +539,80 @@
               "title": "Save Image"
             }
           },
-          "29": {
+          "10": {
             "inputs": {
-              "vae_name": "cascade_stage_a.safetensors"
+              "image": "00004-1266148771.png",
+              "upload": "image"
             },
-            "class_type": "VAELoader",
+            "class_type": "LoadImage",
             "_meta": {
-              "title": "Load VAE"
+              "title": "Load Image"
             }
           },
-          "30": {
+          "12": {
             "inputs": {
-              "unet_name": "cascade_stage_c_bf16.safetensors"
-            },
-            "class_type": "UNETLoader",
-            "_meta": {
-              "title": "UNETLoader"
-            }
-          },
-          "32": {
-            "inputs": {
-              "unet_name": "cascade_stage_b_lite_bf16.safetensors"
-            },
-            "class_type": "UNETLoader",
-            "_meta": {
-              "title": "UNETLoader"
-            }
-          },
-          "33": {
-            "inputs": {
-              "seed": 750887496150267,
-              "steps": 2,
-              "cfg": 1,
-              "sampler_name": "ddpm",
-              "scheduler": "simple",
-              "denoise": 1,
-              "model": [
-                "32",
-                0
-              ],
+              "strength": 1,
+              "start_percent": 0,
+              "end_percent": 1,
               "positive": [
-                "36",
+                "3",
                 0
               ],
               "negative": [
-                "40",
+                "4",
                 0
               ],
-              "latent_image": [
-                "34",
-                1
-              ]
-            },
-            "class_type": "KSampler",
-            "_meta": {
-              "title": "KSampler"
-            }
-          },
-          "34": {
-            "inputs": {
-              "width": 1024,
-              "height": 1024,
-              "compression": 42,
-              "batch_size": 1
-            },
-            "class_type": "StableCascade_EmptyLatentImage",
-            "_meta": {
-              "title": "StableCascade_EmptyLatentImage"
-            }
-          },
-          "36": {
-            "inputs": {
-              "conditioning": [
-                "40",
+              "control_net": [
+                "13",
                 0
               ],
-              "stage_c": [
-                "3",
+              "image": [
+                "10",
                 0
               ]
             },
-            "class_type": "StableCascade_StageB_Conditioning",
+            "class_type": "ControlNetApplyAdvanced",
             "_meta": {
-              "title": "StableCascade_StageB_Conditioning"
+              "title": "Apply ControlNet (Advanced)"
             }
           },
-          "37": {
+          "13": {
             "inputs": {
-              "clip_name": "cascade_clip.safetensors",
-              "type": "stable_cascade"
-            },
-            "class_type": "CLIPLoader",
-            "_meta": {
-              "title": "Load CLIP"
-            }
-          },
-          "40": {
-            "inputs": {
-              "conditioning": [
-                "6",
-                0
-              ]
-            },
-            "class_type": "ConditioningZeroOut",
-            "_meta": {
-              "title": "ConditioningZeroOut"
-            }
-          },
-          "59": {
-            "inputs": {
-              "shift": 2,
+              "control_net_name": "control_v11f1e_sd15_tile_fp16.safetensors",
               "model": [
-                "30",
+                "2",
                 0
               ]
             },
-            "class_type": "ModelSamplingStableCascade",
+            "class_type": "DiffControlNetLoader",
             "_meta": {
-              "title": "ModelSamplingStableCascade"
+              "title": "Load ControlNet Model (diff)"
+            }
+          },
+          "14": {
+            "inputs": {
+              "pixels": [
+                "15",
+                0
+              ],
+              "vae": [
+                "2",
+                2
+              ]
+            },
+            "class_type": "VAEEncode",
+            "_meta": {
+              "title": "VAE Encode"
+            }
+          },
+          "15": {
+            "inputs": {
+              "image": "00002-2340928781 (1).png",
+              "upload": "image"
+            },
+            "class_type": "LoadImage",
+            "_meta": {
+              "title": "Load Image"
             }
           }
         }
@@ -594,7 +628,7 @@
           "resultPath": [
             "{UID for filename}",
             "outputs",
-            9,
+            6,
             "images",
             0,
             "filename"
@@ -606,7 +640,7 @@
           "resultPath": [
             "{UID for subfolder}",
             "outputs",
-            9,
+            6,
             "images",
             0,
             "subfolder"

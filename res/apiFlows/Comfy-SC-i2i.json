@@ -1,5 +1,5 @@
 {
-  "apiFlowName": "Comfy StableCascade txt2img",
+  "apiFlowName": "Comfy StableCascade img2img",
   "apiFlowType": "generative",
   "outputs": [
     {
@@ -12,6 +12,30 @@
     }
   ],
   "controls": [
+    {
+      "controlName": "img2img",
+      "controlHint": "i2i",
+      "controlType": "image",
+      "controlValue": "",
+      "controlLayer": null,
+      "controlPath": [
+        "upload-image",
+        "api",
+        "image"
+      ]
+    },
+    {
+      "controlName": "i2i-image-filename",
+      "controlType": "api-result",
+      "resultPath": [
+        "upload-image",
+        "image-filename"
+      ],
+      "controlPath": [
+        "controlValue"
+      ],
+      "controlValue": "to overwrite with uploadname"
+    },
     {
       "controlName": "Prompt",
       "controlType": "text",
@@ -38,6 +62,7 @@
         "text"
       ]
     },
+
     {
       "controlName": "Compression",
       "controlType": "number",
@@ -52,6 +77,22 @@
         "34",
         "inputs",
         "compression"
+      ]
+    },
+    {
+      "controlName": "Denoise",
+      "controlType": "number",
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "controlValue": 0.5,
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "3",
+        "inputs",
+        "denoise"
       ]
     },
     {
@@ -248,6 +289,40 @@
       ]
     },
     {
+      "controlName": "Effnet Encoder",
+      "controlType": "asset",
+      "assetName": "Comfy VAEs",
+      "controlValue": "effnet_encoder.safetensors",
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "62",
+        "inputs",
+        "vae_name"
+      ]
+    },
+
+    {
+      "controlName": "prompt-i2i-filename",
+      "controlType": "string-compose",
+      "composePaths": [
+        "",
+        [
+          "i2i-image-filename",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "sc-prompt",
+        "api",
+        "prompt",
+        "61",
+        "inputs",
+        "image"
+      ]
+    },
+    {
       "controlName": "UID",
       "controlType": "api-result",
       "resultPath": [
@@ -358,6 +433,27 @@
   ],
   "apiCalls": [
     {
+      "apiCallName": "upload-image",
+      "results": [
+        {
+          "resultName": "image-filename",
+          "resultType": "string",
+          "resultPath": [
+            "name"
+          ]
+        }
+      ],
+      "host": "device",
+      "port": 8188,
+      "apiPath": "/upload/image",
+      "method": "POST",
+      "dataFormat": "FORM",
+      "convertDataImages": true,
+      "api": {
+        "image": ""
+      }
+    },
+    {
       "apiCallName": "sc-prompt",
       "results": [
         {
@@ -378,12 +474,12 @@
         "prompt": {
           "3": {
             "inputs": {
-              "seed": 750887496150267,
-              "steps": 4,
-              "cfg": 1.5,
+              "seed": 147886130258246,
+              "steps": 11,
+              "cfg": 5.9,
               "sampler_name": "ddpm",
               "scheduler": "simple",
-              "denoise": 1,
+              "denoise": 0.64,
               "model": [
                 "59",
                 0
@@ -397,7 +493,7 @@
                 0
               ],
               "latent_image": [
-                "34",
+                "60",
                 0
               ]
             },
@@ -490,8 +586,8 @@
           },
           "33": {
             "inputs": {
-              "seed": 750887496150267,
-              "steps": 2,
+              "seed": 147886130258246,
+              "steps": 3,
               "cfg": 1,
               "sampler_name": "ddpm",
               "scheduler": "simple",
@@ -579,6 +675,41 @@
             "class_type": "ModelSamplingStableCascade",
             "_meta": {
               "title": "ModelSamplingStableCascade"
+            }
+          },
+          "60": {
+            "inputs": {
+              "pixels": [
+                "61",
+                0
+              ],
+              "vae": [
+                "62",
+                0
+              ]
+            },
+            "class_type": "VAEEncode",
+            "_meta": {
+              "title": "VAE Encode"
+            }
+          },
+          "61": {
+            "inputs": {
+              "image": "Untitled AI Paint App POC - export - 1712404673461 (2).png",
+              "upload": "image"
+            },
+            "class_type": "LoadImage",
+            "_meta": {
+              "title": "Load Image"
+            }
+          },
+          "62": {
+            "inputs": {
+              "vae_name": "effnet_encoder.safetensors"
+            },
+            "class_type": "VAELoader",
+            "_meta": {
+              "title": "Load VAE"
             }
           }
         }
