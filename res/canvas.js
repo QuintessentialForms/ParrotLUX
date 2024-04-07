@@ -48,7 +48,7 @@ overlayContainer.id = "overlay";
 cnv.id = "cnv"; */
 
 const gnv = document.createElement( "canvas" ),
-gl = gnv.getContext( "webgl2", {premultipliedAlpha: false} );
+gl = gnv.getContext( "webgl2", { premultipliedAlpha: false, alpha: true } );
 gnv.id = "gnv";
 
 let W = 0, H = 0;
@@ -291,6 +291,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     {
       const mipLevel = 0,
         internalFormat = gl.RGBA,
+        //internalFormat = gl.RGBA16F,
         srcFormat = gl.RGBA,
         srcType = gl.UNSIGNED_BYTE;
       gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, newLayer.canvas );
@@ -309,6 +310,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     {
       const mipLevel = 0,
         internalFormat = gl.RGBA,
+        //internalFormat = gl.RGBA16F,
         srcFormat = gl.RGBA,
         srcType = gl.UNSIGNED_BYTE;
       gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, newLayer.maskCanvas );
@@ -585,7 +587,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
           ondrag: ({ rect, start, current, ending, starting, element }) => {
             if( starting ) {
               //remove any visible links
-              document.querySelectorAll( ".layer-node-tail" ).forEach( n => nodeLinkSource.removeChild( n ) );
+              document.querySelectorAll( ".layer-node-tail" ).forEach( n => n.parentElement.removeChild( n ) );
               //they'll all be remade on update context (hopefully...)
               //now... remove all the layer buttons in this group if this is a group :-|
               if( newLayer.layerType === "group" ) {
@@ -2237,10 +2239,9 @@ function Loop( t ) {
     const framesPerSecond = 1 / secondsPerFrame;
     fps = ( fps * 0.95 ) + framesPerSecond * 0.05;
 
-    if( false )
+    if( uiSettings.showDebugInfo === true )
     document.querySelector("#console" ).textContent = 
-`20-frame FPS:  + ${fps.toString().substring(0,5)}
-Info: ${info}`;
+      `${parseInt(fps).toString()} FPS`;
 
     if( looping ) window.requestAnimationFrame( Loop );
     else return requestAnimationFrame( Loop );
@@ -2260,39 +2261,19 @@ Info: ${info}`;
       // if the layer has changed, reupload its canvas
       // draw the layer with a draw call (don't optimize, iterate)
       
-      gl.useProgram( glState.program );
-      gl.bindFramebuffer( gl.FRAMEBUFFER, null );
-      gl.viewport( 0, 0, gnv.width, gnv.height );
-      gl.clearColor(0.26,0.26,0.26,1); //slight color to see clear effect
-      gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
-      gl.disable(gl.DEPTH_TEST);
-      
-      gl.enable( gl.BLEND );
-      gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
-    
-      gl.bindVertexArray(glState.vao);
-
       //TODO: Here we need to collect all transforming layers, if any
       const visibleLayers = [],
         selectedGroupLayers = [];
-      let paintPreviewLayer = null;
-
-      let TESTINGLAYER = null;
 
       for( const layer of layersStack.layers ) {
-
-        if( layersStack.layers[1] === layer ) { TESTINGLAYER = layer; continue; }
-
-        if( layer.layerType === "paint-preview" && paintPreviewLayer === null ) {
-          paintPreviewLayer = layer;
+        if( layer.layerType === "paint-preview" )
           continue;
-        }
         if( layer.layerType === "group" ) {
           if(  layer !== selectedLayer ) {
             continue;
           }
           else if( layer === selectedLayer ) {
-            //grab layers within selected layer group to show their borders. :-)
+            //grab layers within selected layer group to show their borders.
             selectedGroupLayers.push( ...collectGroupedLayersAsFlatList( layer.layerId ) );
           }
         }
@@ -2300,166 +2281,14 @@ Info: ${info}`;
           visibleLayers.push( layer );
         }
       }
-      
-      if( selectedLayer && painter.active && painter.queue.length > 1 ) {
-        visibleLayers.splice( visibleLayers.indexOf( selectedLayer )+1, 0, paintPreviewLayer );
-      } else {
-        visibleLayers.push( paintPreviewLayer );
-      }
-
-      visibleLayers.push( TESTINGLAYER );
 
       getTransform();
 
-      continueLayers:
-      for( const layer of visibleLayers ) {
-
-        //eraser preview requires real layer undrawn
-        if( layer === selectedLayer &&
-            ( uiSettings.activeTool === "paint" || uiSettings.activeTool === "mask" ) &&
-            ( uiSettings.toolsSettings.paint.mode === "erase" || uiSettings.toolsSettings.paint.mode === "blend" ) && 
-            !( uiSettings.activeTool === "mask" && uiSettings.toolsSettings.paint.mode === "erase" ) &&
-              painter.active && painter.queue.length > 1 ) {
-              //if we're erasing or blending, we do opacity at the brush-level. :-/
-              //That means you can "paint into the fog", a fundamentally different brush experience. Oh well.
-              //Might have to change it for painting too to be consistent...
-              console.log( "Skipping" );
-              continue continueLayers;
-            }
-
-        if( layer === paintPreviewLayer ) {
-          if( uiSettings.activeTool === "paint" ) {
-            layer.opacity = uiSettings.toolsSettings.paint.modeSettings.all.brushOpacity;
-            //If we're erasing, we draw this at full opacity, and draw the under-layer at 1-brushOpacity
-            if( ( uiSettings.toolsSettings.paint.mode === "erase" || uiSettings.toolsSettings.paint.mode === "blend" ) &&
-                painter.active && painter.queue.length > 1 ) {
-              layer.opacity = selectedLayer.opacity;
-            }
-          }
-          if( uiSettings.activeTool === "mask" ) {
-            layer.opacity = 0.5;
-          }
-        } 
-
-        let [x,y] = transformPoint( layer.topLeft ),
-          [x2,y2] = transformPoint( layer.topRight ),
-          [x3,y3] = transformPoint( layer.bottomLeft ),
-          [x4,y4] = transformPoint( layer.bottomRight );
-        //this unpacking and repacking is because of array re-use
-        let xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
-
-
-        //TODO: This transform actually needs to happen for all layers that are transforming (if we're transforming a group)
-        //transform the layer if we're mid-transform
-        if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && uiSettings.toolsSettings.transform.transformingLayers.includes( layer ) && ( cursor.mode !== "none" || pointers.count === 2 ) ) {
-          getLayerTransform();
-          let [x,y] = transformLayerPoint( xy ),
-            [x2,y2] = transformLayerPoint( xy2 ),
-            [x3,y3] = transformLayerPoint( xy3 ),
-            [x4,y4] = transformLayerPoint( xy4 );
-          xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
-          layer.transform.transformingPoints.topLeft = [...xy];
-          layer.transform.transformingPoints.topRight = [...xy2];
-          layer.transform.transformingPoints.bottomLeft = [...xy3];
-          layer.transform.transformingPoints.bottomRight = [...xy4];
-        }
-
-        //get the layer's physical size on-display
-        let layerSizePixels;
-        {
-          const dx = xy2[0] - xy[0], dy = xy2[1] - xy[1];
-          layerSizePixels = Math.sqrt( dx**2 + dy**2 );
-        }
-
-        //convert that screenspace to GL space
-        const glOriginX = W/2, glOriginY = H/2;
-        for( const p of [xy,xy2,xy3,xy4] ) {
-          p[0] -= glOriginX; p[1] -= glOriginY;
-          //We're flipping the y coordinate! OpenGL NDC space defines the bottom of the screen as -1 y, and the top as +1 y (center 0).
-          p[0] /= glOriginX; p[1] /= -glOriginY;
-        }
-
-        //update the vertex data
-        //top-left triangle
-        glState.vertices[0] = xy[0]; glState.vertices[1] = xy[1];
-        glState.vertices[4] = xy2[0]; glState.vertices[5] = xy2[1];
-        glState.vertices[8] = xy3[0]; glState.vertices[9] = xy3[1];
-        //bottom-right triangle
-        glState.vertices[12] = xy2[0]; glState.vertices[13] = xy2[1];
-        glState.vertices[16] = xy4[0]; glState.vertices[17] = xy4[1];
-        glState.vertices[20] = xy3[0]; glState.vertices[21] = xy3[1];
-        //push the updated vertex data to the GPU
-        gl.bindBuffer( gl.ARRAY_BUFFER, glState.vertexBuffer );
-        gl.bufferData( gl.ARRAY_BUFFER, glState.vertices, gl.STREAM_DRAW );
-
-        //do I need to re-enable the vertex array??? Let's assume so, then try coding this out later
-        gl.enableVertexAttribArray( glState.xyuvInputIndex );
-        {
-          const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
-          gl.vertexAttribPointer( glState.xyuvInputIndex, size, dType, normalize, stride, offset );
-        }
-
-        //let's bind the layer's texture
-        gl.activeTexture( gl.TEXTURE0 + 0 );
-        gl.bindTexture( gl.TEXTURE_2D, layer.glTexture );
-        if( layer.layerType !== "group" && layer.textureChanged ) {
-          //let's re-upload the layer's texture when it's changed
-          const mipLevel = 0,
-          internalFormat = gl.RGBA,
-          srcFormat = gl.RGBA,
-          srcType = gl.UNSIGNED_BYTE;
-          gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.canvas );
-          layer.textureChanged = false;
-        }
-
-        //bind the layer's mask
-        gl.activeTexture( gl.TEXTURE0 + 1 );
-        gl.bindTexture( gl.TEXTURE_2D, layer.glMask );
-        if( layer.layerType !== "group" && layer.maskChanged ) {
-          //re-upload the layer's mask when it's changed
-          const mipLevel = 0,
-          internalFormat = gl.RGBA,
-          srcFormat = gl.RGBA,
-          srcType = gl.UNSIGNED_BYTE;
-          gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.maskCanvas );
-          layer.maskChanged = false;
-        }
-
-        //set the layer's alpha
-        gl.uniform1f( glState.alphaInputIndex, getLayerOpacity( layer ) );
-        let maskVisibility = 0.0;
-        if( layer === selectedLayer && uiSettings.activeTool === "mask" && layer.maskInitialized )
-          maskVisibility = 0.5;
-        gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
-        gl.uniform1f( glState.timeIndex, floatTime );
-
-        let borderIsVisible = layer === selectedLayer;
-
-        //disable border while transform group to avoid recalculating coordinates every cycle (and visuals are confusing anyway)
-        if( layer.layerType === "group" && uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && ( cursor.mode !== "none" || pointers.count === 2 ) )
-          borderIsVisible = false;
-
-        if( borderIsVisible === false && selectedLayer?.layerType === "group" && selectedGroupLayers.includes( layer ) )
-          borderIsVisible = true;
-
-        gl.uniform1f( glState.borderVisibilityIndex, borderIsVisible ? 0.33 : 0.0 ); //for now, all visible
-        gl.uniform1f( glState.borderWidthIndex, 2.0 / layerSizePixels ); //2 pixel border width
-
-        //set the uniform to point at texture zero
-        gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
-        //set the uniform to point at texture one
-        gl.uniform1i( gl.getUniformLocation( glState.program, "imgMask" ), 1 );
-        {
-          //and draw our triangles
-          const primitiveType = gl.TRIANGLES,
-            structStartOffset = 0,
-            structCount = 6;
-          gl.drawArrays( primitiveType, structStartOffset, structCount );
-        }
-      }
+      renderLayers( visibleLayers, selectedGroupLayers, floatTime );
 
       //get the eyedropper color
       if( airInput.active ) {
+        gl.bindFramebuffer( gl.READ_FRAMEBUFFER, null );
         airInput.updateEyedropper();
       }
 
@@ -2467,6 +2296,491 @@ Info: ${info}`;
 
 }
 
+function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
+
+  if( ! renderLayers.framebuffer ) {
+    renderLayers.readPixelsDest = new Uint8ClampedArray( 4 );
+    renderLayers.midFramebuffer = gl.createFramebuffer();
+    renderLayers.framebuffer = gl.createFramebuffer();
+    renderLayers.width = gnv.width;
+    renderLayers.height = gnv.height;
+    {
+      renderLayers.blankTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.blankTexture );
+      //const blankData = new Uint8ClampedArray([ 1,0,0,0.5, 1,0,0,0.5, 1,0,0,0.5, 1,0,0,0.5 ]);
+      //const blankData = new Uint8ClampedArray([ 0,0,0,255, 0,0,0,255, 0,0,0,255, 0,0,0,255 ]);
+      const blankData = new Uint8ClampedArray( 4 * 4 );
+      blankData.fill( 255 );
+      gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, blankData );
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+    {
+      renderLayers.backTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+     
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      // attach the texture as the first color attachment
+      //const attachmentPoint = gl.COLOR_ATTACHMENT0;
+      //gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
+  
+    }
+
+    //renderLayers.depthTexture = gl.createTexture();
+    
+    {
+      renderLayers.midTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+     
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+  }
+
+  gl.useProgram( glState.program );
+
+  //resize the back texture
+  if( renderLayers.width !== gnv.width || renderLayers.height !== gnv.height ) {
+    renderLayers.width = gnv.width;
+    renderLayers.height = gnv.height;
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  }
+
+  
+  //No depth bound! :-O
+  //gl.bindTexture( gl.TEXTURE_2D, renderLayers.depthTexture );
+  //gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, renderLayers.depthTexture, level);
+
+  //clear both buffers
+  {
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+    // attach the back texture as the first color attachment
+    gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
+    const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
+    gl.viewport( 0, 0, gnv.width, gnv.height );
+    gl.clearColor(0.25,0.25,0.25,1);
+    gl.clear( gl.COLOR_BUFFER_BIT );
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable( gl.BLEND );
+  }
+  {
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+    // attach the back texture as the first color attachment
+    gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.midFramebuffer );
+    const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.midTexture, level);
+    gl.viewport( 0, 0, gnv.width, gnv.height );
+    gl.clearColor(0.25,0.25,0.25,1);
+    gl.clear( gl.COLOR_BUFFER_BIT );
+  }
+  
+  //gl.enable( gl.BLEND );
+  //gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+
+  gl.disable(gl.DEPTH_TEST);
+  gl.disable( gl.BLEND );
+
+  gl.bindVertexArray(glState.vao);
+
+  let drewToMidTexture = false;
+  for( const layer of visibleLayers ) {
+    //gl.finish(); //just does a flush anyway?
+
+    drewToMidTexture = !drewToMidTexture;
+
+    if( drewToMidTexture === false ) {
+      const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+      // attach the back texture as the first color attachment
+      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
+      gl.viewport( 0, 0, gnv.width, gnv.height );
+      //gl.disable(gl.DEPTH_TEST);
+      //gl.disable( gl.BLEND );
+    }
+    if( drewToMidTexture === true ) {
+      const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+      // attach the back texture as the first color attachment
+      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.midFramebuffer );
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.midTexture, level);
+      gl.viewport( 0, 0, gnv.width, gnv.height );
+      //gl.disable(gl.DEPTH_TEST);
+      //gl.disable( gl.BLEND );
+    }
+  
+
+    let [x,y] = transformPoint( layer.topLeft ),
+      [x2,y2] = transformPoint( layer.topRight ),
+      [x3,y3] = transformPoint( layer.bottomLeft ),
+      [x4,y4] = transformPoint( layer.bottomRight );
+    //this unpacking and repacking is because of array re-use
+    let xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
+
+
+    //transform the layer if we're mid-transform
+    if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && uiSettings.toolsSettings.transform.transformingLayers.includes( layer ) && ( cursor.mode !== "none" || pointers.count === 2 ) ) {
+      getLayerTransform();
+      let [x,y] = transformLayerPoint( xy ),
+        [x2,y2] = transformLayerPoint( xy2 ),
+        [x3,y3] = transformLayerPoint( xy3 ),
+        [x4,y4] = transformLayerPoint( xy4 );
+      xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
+      layer.transform.transformingPoints.topLeft = [...xy];
+      layer.transform.transformingPoints.topRight = [...xy2];
+      layer.transform.transformingPoints.bottomLeft = [...xy3];
+      layer.transform.transformingPoints.bottomRight = [...xy4];
+    }
+
+    //get the layer's physical size on-display
+    let layerSizePixels;
+    {
+      const dx = xy2[0] - xy[0], dy = xy2[1] - xy[1];
+      layerSizePixels = Math.sqrt( dx**2 + dy**2 );
+    }
+
+    //convert that screenspace to GL space
+    const glOriginX = W/2, glOriginY = H/2;
+    for( const p of [xy,xy2,xy3,xy4] ) {
+      p[0] -= glOriginX; p[1] -= glOriginY;
+      //We're flipping the y coordinate! OpenGL NDC space defines the bottom of the screen as -1 y, and the top as +1 y (center 0).
+      p[0] /= glOriginX; p[1] /= -glOriginY;
+    }
+
+    //update the vertex data
+    //top-left triangle
+    glState.vertices[0] = xy[0]; glState.vertices[1] = xy[1];
+    glState.vertices[4] = xy2[0]; glState.vertices[5] = xy2[1];
+    glState.vertices[8] = xy3[0]; glState.vertices[9] = xy3[1];
+    //bottom-right triangle
+    glState.vertices[12] = xy2[0]; glState.vertices[13] = xy2[1];
+    glState.vertices[16] = xy4[0]; glState.vertices[17] = xy4[1];
+    glState.vertices[20] = xy3[0]; glState.vertices[21] = xy3[1];
+    //push the updated vertex data to the GPU
+    gl.bindBuffer( gl.ARRAY_BUFFER, glState.vertexBuffer );
+    gl.bufferData( gl.ARRAY_BUFFER, glState.vertices, gl.STREAM_DRAW );
+
+    //do I need to re-enable the vertex array??? Let's assume so, then try coding this out later
+    gl.enableVertexAttribArray( glState.xyuvInputIndex );
+    {
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( glState.xyuvInputIndex, size, dType, normalize, stride, offset );
+    }
+
+    //let's bind the layer's texture
+    gl.activeTexture( gl.TEXTURE0 + 0 );
+    gl.bindTexture( gl.TEXTURE_2D, layer.glTexture );
+    if( layer.layerType !== "group" && layer.textureChanged ) {
+      //let's re-upload the layer's texture when it's changed
+      const mipLevel = 0,
+      internalFormat = gl.RGBA,
+      //internalFormat = gl.RGBA16F,
+      srcFormat = gl.RGBA,
+      srcType = gl.UNSIGNED_BYTE;
+      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.canvas );
+      layer.textureChanged = false;
+    }
+    //point the layer's source image at texture 0
+    gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
+
+    //bind the layer's mask
+    gl.activeTexture( gl.TEXTURE0 + 1 );
+    gl.bindTexture( gl.TEXTURE_2D, layer.glMask );
+    if( layer.layerType !== "group" && layer.maskChanged ) {
+      //re-upload the layer's mask when it's changed
+      const mipLevel = 0,
+      internalFormat = gl.RGBA,
+      //internalFormat = gl.RGBA16F,
+      srcFormat = gl.RGBA,
+      srcType = gl.UNSIGNED_BYTE;
+      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.maskCanvas );
+      layer.maskChanged = false;
+    }
+    //point the mask at texture 1
+    gl.uniform1i( gl.getUniformLocation( glState.program, "imgMask" ), 1 );
+
+    //bind the previous render result as the canvas
+    gl.activeTexture( gl.TEXTURE0 + 2 );
+    if( drewToMidTexture === false ) { gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture ); }
+    if( drewToMidTexture === true ) { gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture ); }
+    //point canvas at texture 2
+    gl.uniform1i( gl.getUniformLocation( glState.program, "canvas" ), 2 );
+
+
+    //set the layer's alpha
+    gl.uniform1f( glState.alphaInputIndex, getLayerOpacity( layer ) );
+    let maskVisibility = 0.0;
+    if( layer === selectedLayer && uiSettings.activeTool === "mask" && layer.maskInitialized )
+      maskVisibility = 0.5;
+    gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
+    gl.uniform1f( glState.timeIndex, floatTime );
+
+    let borderIsVisible = layer === selectedLayer;
+
+    //disable border while transform group to avoid recalculating coordinates every cycle (and visuals are confusing anyway)
+    if( layer.layerType === "group" && uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && ( cursor.mode !== "none" || pointers.count === 2 ) )
+      borderIsVisible = false;
+
+    if( borderIsVisible === false && selectedLayer?.layerType === "group" && layersWithVisibleBorders.includes( layer ) )
+      borderIsVisible = true;
+
+    gl.uniform1f( glState.borderVisibilityIndex, borderIsVisible ? 0.33 : 0.0 );
+    gl.uniform1f( glState.borderWidthIndex, 2.0 / layerSizePixels ); //2 pixel border width
+
+    {
+      //and draw our triangles
+      const primitiveType = gl.TRIANGLES,
+        structStartOffset = 0,
+        structCount = 6;
+      gl.drawArrays( primitiveType, structStartOffset, structCount );
+    }
+    
+    //blit from the current framebuffer to whichever texture we're not using
+    if( drewToMidTexture === false ) {
+      gl.bindFramebuffer( gl.READ_FRAMEBUFFER, renderLayers.framebuffer );
+      gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, renderLayers.midFramebuffer );
+      gl.blitFramebuffer( 0,0,gnv.width,gnv.height, 0,0,gnv.width,gnv.height, gl.COLOR_BUFFER_BIT, gl.NEAREST );
+    }
+    if( drewToMidTexture === true ) {
+      gl.bindFramebuffer( gl.READ_FRAMEBUFFER, renderLayers.midFramebuffer );
+      gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, renderLayers.framebuffer );
+      gl.blitFramebuffer( 0,0,gnv.width,gnv.height, 0,0,gnv.width,gnv.height, gl.COLOR_BUFFER_BIT, gl.NEAREST );
+    }
+
+  }
+
+
+  //draw the backtexture to the screen as if it was a layer
+  {
+    gl.bindFramebuffer( gl.FRAMEBUFFER, null );
+    gl.viewport( 0, 0, gnv.width, gnv.height );
+    gl.clearColor(0.26,0.26,0.26,1); //never seen tho
+    gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable( gl.BLEND );
+  
+    //update the vertex data
+    //top-left triangle
+    glState.vertices[0] = -1; glState.vertices[1] = -1;
+    glState.vertices[4] = 1; glState.vertices[5] = -1;
+    glState.vertices[8] = -1; glState.vertices[9] = 1;
+    //bottom-right triangle
+    glState.vertices[12] = 1; glState.vertices[13] = -1;
+    glState.vertices[16] = 1; glState.vertices[17] = 1;
+    glState.vertices[20] = -1; glState.vertices[21] = 1;
+    //push the updated vertex data to the GPU
+    gl.bindBuffer( gl.ARRAY_BUFFER, glState.vertexBuffer );
+    gl.bufferData( gl.ARRAY_BUFFER, glState.vertices, gl.STREAM_DRAW );
+
+    gl.enableVertexAttribArray( glState.xyuvInputIndex );
+    {
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( glState.xyuvInputIndex, size, dType, normalize, stride, offset );
+    }
+
+    //bind the backtexture as the layer's source
+    gl.activeTexture( gl.TEXTURE0 + 0 );
+    if( drewToMidTexture === false ) gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+    if( drewToMidTexture === true ) gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+    //point the layer's source image at texture 0
+    gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
+
+    //blank the mask (solid alpha)
+    gl.activeTexture( gl.TEXTURE0 + 1 );
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.blankTexture );
+    gl.uniform1i( gl.getUniformLocation( glState.program, "imgMask" ), 1 );
+
+    //blank the undercanvas (this is the base-mix color???)
+    gl.activeTexture( gl.TEXTURE0 + 2 );
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.blankTexture );
+    gl.uniform1i( gl.getUniformLocation( glState.program, "canvas" ), 2 );
+
+    //set the layer's alpha
+    gl.uniform1f( glState.alphaInputIndex, 1.0 );
+    gl.uniform1f( glState.alphaMaskIndex, 0.0 );
+    gl.uniform1f( glState.timeIndex, 0.0 );
+    gl.uniform1f( glState.borderVisibilityIndex, 0.0 );
+    gl.uniform1f( glState.borderWidthIndex, 2.0 / gnv.width ); //2 pixel border width (avoid div by zero can change IDK)
+
+    {
+      //and draw our screen-triangle
+      const primitiveType = gl.TRIANGLES, structStartOffset = 0, structCount = 6;
+      gl.drawArrays( primitiveType, structStartOffset, structCount );
+    }
+
+  }
+
+}
+
+function old_renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
+
+  gl.useProgram( glState.program );
+  gl.bindFramebuffer( gl.FRAMEBUFFER, null );
+  gl.viewport( 0, 0, gnv.width, gnv.height );
+  gl.clearColor(0.26,0.26,0.26,1); //slight color to see clear effect
+  gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+  gl.disable(gl.DEPTH_TEST);
+  
+  //gl.enable( gl.BLEND );
+  //gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+  gl.disable( gl.BLEND );
+
+  gl.bindVertexArray(glState.vao);
+
+  const midTexture = renderLayers.midTexture || gl.createTexture();
+
+  for( const layer of visibleLayers ) {
+
+    let [x,y] = transformPoint( layer.topLeft ),
+      [x2,y2] = transformPoint( layer.topRight ),
+      [x3,y3] = transformPoint( layer.bottomLeft ),
+      [x4,y4] = transformPoint( layer.bottomRight );
+    //this unpacking and repacking is because of array re-use
+    let xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
+
+
+    //TODO: This transform actually needs to happen for all layers that are transforming (if we're transforming a group)
+    //transform the layer if we're mid-transform
+    if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && uiSettings.toolsSettings.transform.transformingLayers.includes( layer ) && ( cursor.mode !== "none" || pointers.count === 2 ) ) {
+      getLayerTransform();
+      let [x,y] = transformLayerPoint( xy ),
+        [x2,y2] = transformLayerPoint( xy2 ),
+        [x3,y3] = transformLayerPoint( xy3 ),
+        [x4,y4] = transformLayerPoint( xy4 );
+      xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
+      layer.transform.transformingPoints.topLeft = [...xy];
+      layer.transform.transformingPoints.topRight = [...xy2];
+      layer.transform.transformingPoints.bottomLeft = [...xy3];
+      layer.transform.transformingPoints.bottomRight = [...xy4];
+    }
+
+    //get the layer's physical size on-display
+    let layerSizePixels;
+    {
+      const dx = xy2[0] - xy[0], dy = xy2[1] - xy[1];
+      layerSizePixels = Math.sqrt( dx**2 + dy**2 );
+    }
+
+    //convert that screenspace to GL space
+    const glOriginX = W/2, glOriginY = H/2;
+    for( const p of [xy,xy2,xy3,xy4] ) {
+      p[0] -= glOriginX; p[1] -= glOriginY;
+      //We're flipping the y coordinate! OpenGL NDC space defines the bottom of the screen as -1 y, and the top as +1 y (center 0).
+      p[0] /= glOriginX; p[1] /= -glOriginY;
+    }
+
+    //update the vertex data
+    //top-left triangle
+    glState.vertices[0] = xy[0]; glState.vertices[1] = xy[1];
+    glState.vertices[4] = xy2[0]; glState.vertices[5] = xy2[1];
+    glState.vertices[8] = xy3[0]; glState.vertices[9] = xy3[1];
+    //bottom-right triangle
+    glState.vertices[12] = xy2[0]; glState.vertices[13] = xy2[1];
+    glState.vertices[16] = xy4[0]; glState.vertices[17] = xy4[1];
+    glState.vertices[20] = xy3[0]; glState.vertices[21] = xy3[1];
+    //push the updated vertex data to the GPU
+    gl.bindBuffer( gl.ARRAY_BUFFER, glState.vertexBuffer );
+    gl.bufferData( gl.ARRAY_BUFFER, glState.vertices, gl.STREAM_DRAW );
+
+    //do I need to re-enable the vertex array??? Let's assume so, then try coding this out later
+    gl.enableVertexAttribArray( glState.xyuvInputIndex );
+    {
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( glState.xyuvInputIndex, size, dType, normalize, stride, offset );
+    }
+
+    //let's bind the layer's texture
+    gl.activeTexture( gl.TEXTURE0 + 0 );
+    gl.bindTexture( gl.TEXTURE_2D, layer.glTexture );
+    if( layer.layerType !== "group" && layer.textureChanged ) {
+      //let's re-upload the layer's texture when it's changed
+      const mipLevel = 0,
+      internalFormat = gl.RGBA,
+      //internalFormat = gl.RGBA16F,
+      srcFormat = gl.RGBA,
+      srcType = gl.UNSIGNED_BYTE;
+      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.canvas );
+      layer.textureChanged = false;
+    }
+    //point the layer's source image at texture 0
+    gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
+
+    //bind the layer's mask
+    gl.activeTexture( gl.TEXTURE0 + 1 );
+    gl.bindTexture( gl.TEXTURE_2D, layer.glMask );
+    if( layer.layerType !== "group" && layer.maskChanged ) {
+      //re-upload the layer's mask when it's changed
+      const mipLevel = 0,
+      internalFormat = gl.RGBA,
+      //internalFormat = gl.RGBA16F,
+      srcFormat = gl.RGBA,
+      srcType = gl.UNSIGNED_BYTE;
+      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.maskCanvas );
+      layer.maskChanged = false;
+    }
+    //point the mask at texture 1
+    gl.uniform1i( gl.getUniformLocation( glState.program, "imgMask" ), 1 );
+
+    //and finally bind the current render canvas
+    gl.activeTexture( gl.TEXTURE0 + 2 );
+    gl.bindTexture( gl.TEXTURE_2D, midTexture );
+    //point canvas at texture 2
+    gl.uniform1i( gl.getUniformLocation( glState.program, "canvas" ), 2 );
+
+
+    //set the layer's alpha
+    gl.uniform1f( glState.alphaInputIndex, getLayerOpacity( layer ) );
+    let maskVisibility = 0.0;
+    if( layer === selectedLayer && uiSettings.activeTool === "mask" && layer.maskInitialized )
+      maskVisibility = 0.5;
+    gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
+    gl.uniform1f( glState.timeIndex, floatTime );
+
+    let borderIsVisible = layer === selectedLayer;
+
+    //disable border while transform group to avoid recalculating coordinates every cycle (and visuals are confusing anyway)
+    if( layer.layerType === "group" && uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && ( cursor.mode !== "none" || pointers.count === 2 ) )
+      borderIsVisible = false;
+
+    if( borderIsVisible === false && selectedLayer?.layerType === "group" && layersWithVisibleBorders.includes( layer ) )
+      borderIsVisible = true;
+
+    gl.uniform1f( glState.borderVisibilityIndex, borderIsVisible ? 0.33 : 0.0 );
+    gl.uniform1f( glState.borderWidthIndex, 2.0 / layerSizePixels ); //2 pixel border width
+
+    {
+      //and draw our triangles
+      const primitiveType = gl.TRIANGLES,
+        structStartOffset = 0,
+        structCount = 6;
+      gl.drawArrays( primitiveType, structStartOffset, structCount );
+    }
+
+    //let's see how this affects our time
+    gl.finish();
+    gl.bindTexture( gl.TEXTURE_2D, midTexture );
+    gl.copyTexImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, W, H, 0 );
+    gl.finish();
+
+  }
+
+}
 
 function setup() {
 
@@ -2476,6 +2790,31 @@ function setup() {
     uiContainer.appendChild( underlayContainer );
     main.appendChild( uiContainer );
     main.appendChild( overlayContainer );
+
+    apiFlowsLoadAwaiter.then(
+      () => {
+        //console.log( "APIFlows length: ", apiFlows.length );
+        executeAPICall( "Local Brushes Loader" ).then( result => {
+          if( typeof result === "object" && Array.isArray( result[ "brushes-list" ] ) ) {
+            //console.log( "Got brushes result: ", result );
+            let loadedBrush = false;
+            if( uiSettings.lastUsedAssets.hasOwnProperty( "Brushes" ) ) {
+              const lastUsedBrushId = uiSettings.lastUsedAssets.Brushes;
+              const brushAsset = assetsLibrary.Brushes.find( ({uniqueId}) => uniqueId === lastUsedBrushId );
+              if( brushAsset ) {
+                loadBrush( brushAsset );
+                loadedBrush = true;
+              }
+            }
+            else if( assetsLibrary.Brushes.length > 0 ) {
+              loadBrush( assetsLibrary.Brushes[ 0 ])
+            }
+          } else {
+            console.error( "Failed to load default brushes? Result: ", result );
+          }
+        } );
+      }
+    );
 
     const img = new Image();
     img.src = "paper.png";
@@ -2556,7 +2895,7 @@ function setupGL( testImageTexture ) {
   gl.enable( gl.BLEND );
   gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
 
-  gl.clearColor(0,0,0,1);
+  gl.clearColor(0.5,0.5,0.5,1);
   gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
 
   const supported = gl.getSupportedExtensions();
@@ -2574,9 +2913,11 @@ function setupGL( testImageTexture ) {
   const vertexShaderSource = `#version 300 es
     in vec4 xyuv;
 
+    out vec2 xy;
     out vec2 uv;
     
     void main() {
+      xy = xyuv.xy;
       uv = xyuv.zw;
       gl_Position = vec4(xyuv.xy,0.5,1);
     }`;
@@ -2585,15 +2926,21 @@ function setupGL( testImageTexture ) {
     
     uniform sampler2D img;
     uniform sampler2D imgMask;
+    uniform sampler2D canvas;
+
     uniform float alpha;
     uniform float mask;
     uniform float time;
     uniform float borderVisibility;
     uniform float borderWidth;
+    in vec2 xy;
     in vec2 uv;
     out vec4 outColor;
     
     void main() {
+
+      vec4 canvasLookup = texture( canvas, ( xy + 1.0 ) * 0.5 );
+
       vec4 lookup = texture( img, uv );
       vec4 maskLookup = texture( imgMask, uv );
       lookup.a *= alpha * maskLookup.a;
@@ -2606,8 +2953,30 @@ function setupGL( testImageTexture ) {
       vec4 maskColor = vec4( mix( vec3( 1.0 ), vec3( borderShade ), 0.5 ), mask * maskLookup.a );
 
       //draw the mask under our mainColor, and with the mask 50% opacity, still see the layer beneath
-      outColor = vec4( mix( mix( maskColor.rgb, mainColor.rgb, ( 1.0 - maskColor.a ) ), mainColor.rgb, mainColor.a ), clamp( mainColor.a + maskColor.a, 0.0, 1.0 ) );
-      //outColor = vec4( maskColor.rgb, maskColor.a * ( 1.0 - mainColor.a ) ) + mainColor
+      vec4 compositeColor = vec4( mix( mix( maskColor.rgb, mainColor.rgb, ( 1.0 - maskColor.a ) ), mainColor.rgb, mainColor.a ), clamp( mainColor.a + maskColor.a, 0.0, 1.0 ) );
+
+      if( compositeColor.a == 0.0 ) discard;
+
+      //float totalAlpha = clamp( compositeColor.a + canvasLookup.a, 0.0, 1.0 );
+      float compositeWeight = compositeColor.a;
+      float canvasWeight = 1.0 - compositeColor.a;
+
+      outColor = vec4(
+        sqrt( ( compositeWeight * pow( compositeColor.r, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.r, 2.0 ) ) ),
+        sqrt( ( compositeWeight * pow( compositeColor.g, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.g, 2.0 ) ) ),
+        sqrt( ( compositeWeight * pow( compositeColor.b, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.b, 2.0 ) ) ),
+        1.0
+      );
+
+      //totalAlpha = clamp( mainColor.a + canvasLookup.a, 0.0, 1.0 );
+      /* compositeWeight = 0.0;
+      canvasWeight = 1.0 - mainColor.a;
+      outColor = vec4(
+        sqrt( ( compositeWeight * pow( mainColor.r, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.r, 2.0 ) ) ),
+        sqrt( ( compositeWeight * pow( mainColor.g, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.g, 2.0 ) ) ),
+        sqrt( ( compositeWeight * pow( mainColor.b, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.b, 2.0 ) ) ),
+        1.0
+      ); */
 
     }`;
 
@@ -2699,6 +3068,7 @@ const airInput = {
     let { x, y } = airInput.current;
     x *= devicePixelRatio;
     y *= devicePixelRatio;
+    gl.bindFramebuffer( gl.FRAMEBUFFER, null );
     gl.readPixels( parseInt( x ), parseInt( gnv.height - y ), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, airInput.color );
     airInput.colorRing.style.display = "block";
     airInput.colorRing.style.borderColor = `rgb(${airInput.color[0]},${airInput.color[1]},${airInput.color[2]})`;
@@ -2750,6 +3120,7 @@ const nonSavedSettingsPaths = [
 let uiSettings = {
 
   gpuPaint: 2,
+  showDebugInfo: false,
 
   maxUndoSteps: 20,
   defaultLayerWidth: 1024,
@@ -2761,8 +3132,11 @@ let uiSettings = {
   defaultFilterName: "basic",
   retryAPIDelay: 2000,
   backendPort: 7860,
+  appPort: 6789,
 
   clickTimeMS: 350,
+
+  lastUsedAssets: {},
 
   nodeSnappingDistance: Math.min( innerWidth, innerHeight ) * 0.04, //~50px on a 1080p screen
 
@@ -2782,20 +3156,50 @@ let uiSettings = {
       mode: "brush", //brush | erase | blend
       modeSettings: {
         "all": {
-          brushTips: ["res/img/brushes/tip-round01.png"],
+          "brushTips": ["res/img/brushes/tip-round01.png"],
+          //"brushTextures": [""],
+          "brushTiltScale": 0,
+          "brushTiltMinAngle": 0.25,
+          "brushSize": 3.7,
+          "minBrushSize": 2,
+          "maxBrushSize": 50,
+          "brushOpacity": 1,
+          "brushBlur": 0,
+          "minBrushBlur": 0,
+          "maxBrushBlur": 1,
+          "brushSpacing": 0.1,
+          "pressureOpacityCurvePoints": [[0,1],[1,1]],
+          "pressureScaleCurvePoints": [[0,0.33],[0.33,0.33],[1,1]],
+
           brushTipsImages: [],
-          brushTiltScale: 0,
-          brushTiltMinAngle: 0.25, //~23 degrees
-          brushSize: 3.7,
-          minBrushSize: 2,
-          maxBrushSize: 50,
-          brushOpacity: 1,
-          brushBlur: 0,
-          minBrushBlur: 0,
-          maxBrushBlur: 1,
-          brushSpacing: 0.1,
-          pressureOpacityCurve: pressure => 1,
-          pressureScaleCurve: pressure => Math.max( 0.33, pressure ),
+          //pressureOpacityCurve: pressure => 1,
+          pressureOpacityCurve: pressure => {
+            return uiSettings.toolsSettings.paint.modeSettings.all.pointCurve(
+              pressure,
+              uiSettings.toolsSettings.paint.modeSettings.all.pressureOpacityCurvePoints
+            )
+          },
+          pointCurve: ( input, points ) => {
+            let i = 0;
+            let pointBefore = points[ i ], pointAfter = points[ i+1 ];
+            while( pointAfter[0] < input && (i+1) < points.length ) {
+              i += 1;
+              pointBefore = points[ i ];
+              pointAfter = points[ i+1 ];
+            }
+            const dp = ( pointAfter[0] - input ) / ( pointAfter[0] - pointBefore[0] );
+            const dpi = 1.0 - dp;
+            const output = pointBefore[1]*dp + pointAfter[1]*dpi;
+            return output;
+          },
+          //pressureScaleCurve: pressure => Math.max( 0.33, pressure ),
+          pressureScaleCurve: pressure => {
+            return uiSettings.toolsSettings.paint.modeSettings.all.pointCurve(
+              pressure,
+              uiSettings.toolsSettings.paint.modeSettings.all.pressureScaleCurvePoints
+            )
+          },
+
           /* brushTips: ["res/img/brushes/tip-pencil01.png"],
           brushTipsImages: [],
           brushTiltScale: 4,
@@ -2838,8 +3242,7 @@ let uiSettings = {
           reblendSpacing: 0.05,
           reblendAlpha: 0.1, */
 
-          blendPull: 0.95,
-          blendSkip: 2,
+          blendPull: 30,
           blendAlpha: 0, //blendAlpha is a mix ratio. 0=pure pigment, 1=pure blend
         },
         "erase": {
@@ -3148,6 +3551,26 @@ function loadBrushTipsImages() {
 }
 
 loadBrushTipsImages();
+
+function loadBrush( brush ) {
+  //I need to overwrite brush settings
+  //I'll remap here
+  const { all, blend } = uiSettings.toolsSettings.paint.modeSettings;
+  const brushKeysAll = [
+    "brushTips", "brushTiltScale", "brushTiltMinAngle", "brushSize", "minBrushSize",
+    "maxBrushSize", "brushOpacity", "brushBlur", "minBrushBlur", "maxBrushBlur", "brushSpacing",
+    "pressureOpacityCurvePoints", "pressureScaleCurvePoints" ],
+    brushKeysBlend = [
+      "blendPull", "blendAlpha"
+    ];
+  for( const allKey of brushKeysAll )
+    if( brush.hasOwnProperty( allKey ) )
+      all[ allKey ] = brush[ allKey ];
+  for( const blendKey of brushKeysBlend )
+    if( brush.hasOwnProperty( blendKey ) )
+      blend[ blendKey ] = brush[ blendKey ];
+  loadBrushTipsImages();
+}
 
 function setupUI() {
   
@@ -3567,8 +3990,10 @@ function setupUI() {
       brushSelectBrowseButton.classList.add( "asset-button", "round-toggle", "on", "unimplemented" );
       UI.registerElement(
         brushSelectBrowseButton,
-        { onclick: () => console.log( "Open brush asset browser" ) },
-        { tooltip: [ "!unimplemented! Select Brush", "below", "to-right-of-center" ], zIndex:10000, }
+        { onclick: () => {
+          openAssetBrowser( assetsLibrary.Brushes, brush => loadBrush( brush ), "Brushes" );
+        } },
+        { tooltip: [ "Select Brush", "below", "to-right-of-center" ], zIndex:10000, }
       );
       paintToolsOptionsRow.appendChild( brushSelectBrowseButton );
     }
@@ -3584,9 +4009,12 @@ function setupUI() {
           ondrag: () => {
             uiSettings.toolsSettings.paint.setMode( "brush" );
             uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 0;
+            uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha = 0;
           },
           updateContext: () => {
-            if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 0 ) paintModeButton.classList.add( "on" );
+            if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 0 && 
+                uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha === 0 )
+              paintModeButton.classList.add( "on" );
             else paintModeButton.classList.remove( "on" );
           }
         },
@@ -3595,23 +4023,30 @@ function setupUI() {
       paintToolsOptionsRow.appendChild( paintModeButton );
     }
     //the blend button
-    /* {
+    {
       const blendMode = document.createElement( "div" );
       //brushSelectBrowseButton.classList.add( "asset-browser-button" );
       blendMode.classList.add( "paint-tools-options-blend-mode", "round-toggle", "on" );
       UI.registerElement(
         blendMode,
         {
-          ondrag: () => uiSettings.toolsSettings.paint.setMode( "blend" ),
+          ondrag: () => {
+            //uiSettings.toolsSettings.paint.setMode( "blend" );
+            uiSettings.toolsSettings.paint.setMode( "brush" );
+            uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 0;
+            uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha = 1;
+          },
           updateContext: () => {
-            if( uiSettings.toolsSettings.paint.mode === "blend" ) blendMode.classList.add( "on" );
+            if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 0 && 
+                uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha === 1 )
+              blendMode.classList.add( "on" );
             else blendMode.classList.remove( "on" );
           }
         },
         { tooltip: [ "Blend Mode", "below", "to-right-of-center" ], zIndex:10000, }
       );
       paintToolsOptionsRow.appendChild( blendMode );
-    } */
+    }
     //the erase button
     {
       const eraseMode = document.createElement( "div" );
@@ -3624,9 +4059,12 @@ function setupUI() {
             //uiSettings.toolsSettings.paint.setMode( "erase" );
             uiSettings.toolsSettings.paint.setMode( "brush" );
             uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 1;
+            uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha = 0;
           },
           updateContext: () => {
-            if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 1 ) eraseMode.classList.add( "on" );
+            if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 1 && 
+                uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha === 0 )
+              eraseMode.classList.add( "on" );
             else eraseMode.classList.remove( "on" );
           }
         },
@@ -3803,7 +4241,7 @@ function setupUI() {
     }
 
     //the retractable blend amount slider
-    {
+    if( false ){
       const retractableBlendnessSlider = document.createElement( "div" );
       retractableBlendnessSlider.classList.add( "paint-tools-options-retractable-slider", "paint-tools-options-retractable-blendness-slider", "animated" );
       /* const previewCore = retractableBlendnessSlider.appendChild( document.createElement( "div" ) );
@@ -4524,8 +4962,9 @@ function setupUI() {
             for( const apiFlow of apiFlows ) {
               if( apiFlow.isDemo ) continue;
               if( apiFlow.apiFlowType === "asset" ) continue;
-              const asset = { name: apiFlow.apiFlowName }
-              assets.push( asset );
+              apiFlow.name = apiFlow.apiFlowName;
+              //const asset = { name: apiFlow.apiFlowName }
+              assets.push( apiFlow );
             }
             const callback = asset => {
               selectedLayer.generativeSettings.apiFlowName = asset.name;
@@ -5046,8 +5485,8 @@ function setupUI() {
 
 
   //the console
-  /* const consoleElement = uiContainer.appendChild( document.createElement( "div" ) );
-  consoleElement.id = "console"; */
+  const debugInfoElement = uiContainer.appendChild( document.createElement( "div" ) );
+  debugInfoElement.id = "console";
 
   //undo/redo
   {
@@ -5655,19 +6094,27 @@ function openAssetBrowser( assets, callback, assetName ) {
   
   //get our interpreter
   let assetInterpreterName = "simple-name";
-  if( assetInterpreters.hasOwnProperty( assetName ) )
+  if( assetInterpreters.hasOwnProperty( assetName ) ) {
     assetInterpreterName = assetName;
+  }
+
+  const assetInterpreter = assetInterpreters[ assetInterpreterName ];
+
+  if( assetInterpreter.defaultSort ) {
+    assets.sort( assetInterpreter.defaultSort );
+    console.log( "Sorted." );
+  }
 
   //add the assets
   let activeAsset = null;
   for( const asset of assets ) {
-    const assetElement = assetInterpreters[ "simple-name" ].makeElement( asset );
+    const assetElement = assetInterpreter.makeElement( asset );
     assetElement.onclick = () => {
       document.querySelectorAll( ".asset-element" ).forEach(
         e => e.classList.remove( "active" )
       );
       assetElement.classList.add( "active" );
-      assetInterpreters[ "simple-name" ].showPreview( asset )
+      assetInterpreter.showPreview( asset )
       activeAsset = asset;
     }
     list.appendChild( assetElement );
@@ -5690,6 +6137,7 @@ function openAssetBrowser( assets, callback, assetName ) {
     setTimeout( ()=>applyButton.classList.remove("pushed"), UI.animationMS );
     enableKeyTrapping();
     assetBrowserContainer.classList.add( "hidden" );
+    uiSettings.lastUsedAssets[ assetName ] = activeAsset.uniqueId;
     callback( activeAsset );
   }
 
@@ -6152,7 +6600,7 @@ function exportPNG() {
   const imgURL = layersStack.layers[0].canvas.toDataURL();
   
   const a = document.createElement( "a" );
-  a.download = "Untitled AI Paint App POC - export - " + Date.now() + ".png";
+  a.download = "ParrotLUX - export - " + Date.now() + ".png";
   a.href = imgURL;
   document.body.appendChild( a );
   a.click();
@@ -6248,7 +6696,7 @@ function saveJSON() {
   const saveFileString = JSON.stringify( saveFile );
 
   const a = document.createElement( "a" );
-  a.download = "Untitled AI Paint App POC - save - " + Date.now() + ".json";
+  a.download = "ParrotLUX - save - " + Date.now() + ".json";
   const b = new Blob( [saveFileString], { type: "application/json" } );
   a.href = URL.createObjectURL( b );
   document.body.appendChild( a );
@@ -7615,6 +8063,150 @@ function setupPaintGPU2() {
   //gl_FragColor: Represents the color of the fragment and is used to change the fragment's color
   
   const fragmentShaderSource = `#version 300 es
+  precision highp float;
+  
+  uniform sampler2D brushTip;
+  uniform sampler2D blendSource;
+  uniform sampler2D blendOrigins;
+  uniform sampler2D blendHLegs;
+  uniform sampler2D blendVLegs;
+  
+  uniform float blendAlpha; //blendAlpha is a mixture ratio. 0=pure pigment; 1=pure blend
+  uniform float eraseAmount;
+  uniform int blendPull;
+  
+  flat in int pointBlendIndex;
+  in vec2 brushTipUV;
+  in vec2 blendUV;
+  in vec4 paintColor; //meanwhile, paint alpha (brush opacity) controls how much we change our base canvas
+  
+  out vec4 outColor;
+  
+  vec4 blendLookup( vec2 uv ) {
+  
+    //accumulate into a vector
+    vec4 blendColor = vec4(0.0);
+  
+    //start at pointBlendIndex
+    //count down from pointBlendIndex to limit or zero
+    float count = 0.0, totalCount = 0.0;
+    for( int i = max( 0, ( pointBlendIndex - blendPull ) ), j = pointBlendIndex; i < j; i++ ) {
+      //get our origin and legs 
+      highp vec4 origin = texelFetch( blendOrigins, ivec2(i,0), 0 );
+      highp vec4 hLeg = texelFetch( blendHLegs, ivec2(i,0), 0 );
+      highp vec4 vLeg = texelFetch( blendVLegs, ivec2(i,0), 0 );
+      //get our coordinate along the trail
+      vec2 blendTrailUV = ( ( origin.xy + (hLeg.xy * uv.x) + (vLeg.xy * uv.y) ) + 1.0 ) / 2.0;
+      vec4 blendTrailLookup = texture( blendSource, blendTrailUV );
+      if( blendTrailLookup.a == 0.0 ) continue;
+      count += 1.0;
+      totalCount += count;
+      blendColor += blendTrailLookup * count;
+    }
+  
+    blendColor /= max( 1.0, totalCount );
+  
+    if( totalCount < 1.0 )
+      blendColor.a = -1.0;
+  
+    return blendColor;
+  
+  }
+  
+  
+  void main() {
+  
+    vec4 brushTipLookup = texture( brushTip, brushTipUV );
+    vec4 paint = vec4( paintColor.rgb, paintColor.a * brushTipLookup.a );
+  
+    //A 16 scenarios:
+    if( paint.a == 0.0 ) discard;
+  
+    vec4 destLookup = texture( blendSource, ( blendUV + 1.0 ) / 2.0 );
+  
+    //B 8 scenarios:
+    if( eraseAmount == 1.0 ) {
+      outColor = vec4(
+          destLookup.rgb,
+          destLookup.a * ( 1.0 - paint.a )
+      );
+      gl_FragDepth = paint.a;
+      return;
+    }
+  
+    //C 2 scenarios
+    if( blendAlpha == 0.0 && destLookup.a == 0.0 ) {
+      outColor = paint;
+      gl_FragDepth = paint.a;
+      return;
+    }
+  
+    //D 2 scenarios:
+    if( blendAlpha == 0.0 && destLookup.a > 0.0 ) {
+      float totalOpacity = destLookup.a + paint.a;
+      float paintWeight = paint.a;
+      float destWeight = 1.0 - paintWeight;
+      outColor = vec4(
+          sqrt( ( paintWeight * pow( paint.r, 2.0 ) ) + ( destWeight * pow( destLookup.r, 2.0 ) ) ),
+          sqrt( ( paintWeight * pow( paint.g, 2.0 ) ) + ( destWeight * pow( destLookup.g, 2.0 ) ) ),
+          sqrt( ( paintWeight * pow( paint.b, 2.0 ) ) + ( destWeight * pow( destLookup.b, 2.0 ) ) ),
+          totalOpacity
+      );
+      gl_FragDepth = paint.a;
+      return;
+    }
+  
+    vec4 blendLookup = blendLookup( brushTipUV.xy );
+    float blendLookupA = blendLookup.a * paint.a;
+    
+    //I 1 scenario:
+    if( blendAlpha == 1.0 && blendLookupA < 0.0 ) discard;
+  
+    //H 1 scenario:
+    if( blendAlpha == 1.0 && destLookup.a == 0.0 && blendLookup.a == 0.0 ) discard;
+  
+    //E 1 scenario:
+    if( blendAlpha == 1.0 && destLookup.a == 0.0 && blendLookupA > 0.0 ) {
+      outColor = vec4(
+          blendLookup.rgb,
+          blendLookupA
+      );
+      gl_FragDepth = blendLookupA;
+      return;
+    }
+  
+    //F 1 scenario:
+    if( blendAlpha == 1.0 && destLookup.a > 0.0 && blendLookupA > 0.0 ) {
+      //float totalOpacity = clamp( destLookup.a + blendLookupA, 0.0, 1.0 );
+      float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a ); //new code, untested
+      float blendWeight = blendLookupA;
+      float destWeight = 1.0 - blendWeight;
+      outColor = vec4(
+          sqrt( ( blendWeight * pow( blendLookup.r, 2.0 ) ) + ( destWeight * pow( destLookup.r, 2.0 ) ) ),
+          sqrt( ( blendWeight * pow( blendLookup.g, 2.0 ) ) + ( destWeight * pow( destLookup.g, 2.0 ) ) ),
+          sqrt( ( blendWeight * pow( blendLookup.b, 2.0 ) ) + ( destWeight * pow( destLookup.b, 2.0 ) ) ),
+          mixedOpacity
+      );
+      gl_FragDepth = blendLookupA;
+      return;
+    }
+  
+    //G 1 scenario:
+    if( blendAlpha == 1.0 && destLookup.a > 0.0 && blendLookupA == 0.0 ) {
+      float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a ); //new code, untested
+      outColor = vec4(
+          destLookup.rgb,
+          mixedOpacity
+      );
+      gl_FragDepth = paint.a;
+      return;
+    }
+  
+    discard;
+  
+  }`;
+
+  const old_fragmentShaderSource = `#version 300 es
     precision highp float;
 
     uniform sampler2D brushTip;
@@ -7625,6 +8217,7 @@ function setupPaintGPU2() {
 
     uniform float blendAlpha; //blendAlpha is a mixture ratio. 0=pure pigment; 1=pure blend
     uniform float eraseAmount;
+    uniform int blendPull;
 
     flat in int pointBlendIndex;
     in vec2 brushTipUV;
@@ -7634,22 +8227,46 @@ function setupPaintGPU2() {
     out vec4 outColor;
 
     vec4 blendLookup( vec2 uv ) {
-      //hmm.
-      //start with a for loop.
-      //we'll keep it at 10 for now (or max)
-      
+
       //accumulate into a vector
       vec4 blendColor = vec4(0.0);
 
       //start at pointBlendIndex
-      //count down to pointBlendIndex - 10 or zero
-      int c = 0;
-      for( int i = pointBlendIndex, j = max( 1, ( pointBlendIndex-30 ) ); i >= j; i-- ) {
+      //count down from pointBlendIndex to limit or zero
+      float count = 0.0, totalCount = 0.0;
+      for( int i = max( 0, ( pointBlendIndex - blendPull ) ), j = pointBlendIndex; i < j; i++ ) {
         //get our origin and legs 
         highp vec4 origin = texelFetch( blendOrigins, ivec2(i,0), 0 );
         highp vec4 hLeg = texelFetch( blendHLegs, ivec2(i,0), 0 );
         highp vec4 vLeg = texelFetch( blendVLegs, ivec2(i,0), 0 );
-        //ge
+        //get our coordinate along the trail
+        vec2 blendTrailUV = ( ( origin.xy + (hLeg.xy * uv.x) + (vLeg.xy * uv.y) ) + 1.0 ) / 2.0;
+        vec4 blendTrailLookup = texture( blendSource, blendTrailUV );
+        if( blendTrailLookup.a == 0.0 ) continue;
+        count += 1.0;
+        totalCount += count;
+        blendColor += blendTrailLookup * count;
+      }
+
+      blendColor /= max( 1.0, totalCount );
+
+      return blendColor;
+
+    }
+    
+    vec4 oldblendLookup( vec2 uv ) {
+      //accumulate into a vector
+      vec4 blendColor = vec4(0.0);
+
+      //start at pointBlendIndex
+      //count down from pointBlendIndex to limit or zero
+      int c = 0;
+      for( int i = pointBlendIndex, j = max( 1, ( pointBlendIndex - blendPull ) ); i >= j; i-- ) {
+        //get our origin and legs 
+        highp vec4 origin = texelFetch( blendOrigins, ivec2(i,0), 0 );
+        highp vec4 hLeg = texelFetch( blendHLegs, ivec2(i,0), 0 );
+        highp vec4 vLeg = texelFetch( blendVLegs, ivec2(i,0), 0 );
+        //get our coordinate along the trail
         vec2 blendTrailUV = ( ( origin.xy + (hLeg.xy * uv.x) + (vLeg.xy * uv.y) ) + 1.0 ) / 2.0;
         vec4 blendTrailLookup = texture( blendSource, blendTrailUV );
         if( blendTrailLookup.a == 0.0 ) continue;
@@ -7669,13 +8286,13 @@ function setupPaintGPU2() {
 
       if( brushTipLookup.a == 0.0 ) { discard; }
 
-      vec4 originalBlendSourceLookup = texture( blendSource, ( blendUV + 1.0 ) / 2.0 );
+      vec4 destLookup = texture( blendSource, ( blendUV + 1.0 ) / 2.0 );
 
       //we want to completely ignore the RGB component of a 0-alpha blendsource
       //and, when blendAlpha=1, we want to completely ignore the paint's rgb component
       vec4 blendSourceLookup = vec4(
-        mix( paintColor.rgb, originalBlendSourceLookup.rgb, clamp( originalBlendSourceLookup.a + blendAlpha, 0.0, 1.0 ) ),
-        originalBlendSourceLookup.a
+        mix( paintColor.rgb, destLookup.rgb, clamp( destLookup.a + blendAlpha, 0.0, 1.0 ) ),
+        destLookup.a
       );
       vec4 blendCompositeLookup = blendLookup( brushTipUV.xy );
 
@@ -7815,8 +8432,9 @@ function setupPaintGPU2() {
 
     paintGPUResources2.brushTipIndex = gl.getUniformLocation( paintGPUResources2.program, "brushTip" );
     paintGPUResources2.blendSourceIndex = gl.getUniformLocation( paintGPUResources2.program, "blendSource" );
-    paintGPUResources2.blendAlphaIndex = gl.getUniformLocation( paintGPUResources2.program, "blendAlpha" );
     paintGPUResources2.eraseAmountIndex = gl.getUniformLocation( paintGPUResources2.program, "eraseAmount" );
+    paintGPUResources2.blendAlphaIndex = gl.getUniformLocation( paintGPUResources2.program, "blendAlpha" );
+    paintGPUResources2.blendPullIndex = gl.getUniformLocation( paintGPUResources2.program, "blendPull" );
     
     paintGPUResources2.brushTipTexture = gl.createTexture();
     paintGPUResources2.blendSourceTexture = gl.createTexture();
@@ -7936,10 +8554,12 @@ function beginPaintGPU2( layer ) {
 
     gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.blendSourceTexture );
     const level = 0;
+    //const internalFormat = gl.RGBA16F;
     const internalFormat = gl.RGBA;
     //const border = 0;
     const format = gl.RGBA;
     const type = gl.UNSIGNED_BYTE;
+    //const type = gl.FLOAT;
     //const data = null;
     let blendImageSource; //blend beneath the mask is fine
     if( uiSettings.activeTool === "paint" ) blendImageSource = layer.canvas;
@@ -8047,8 +8667,8 @@ function paintGPU2( points, layer ) {
   const settings = uiSettings.toolsSettings.paint.modeSettings;
   const { brushTipsImages, brushAspectRatio, brushTiltScale, brushTiltMinAngle, brushSize, brushOpacity, brushBlur, brushSpacing } = settings.all;
   const colorRGB = settings.brush.colorModes[ settings.brush.colorMode ].getRGBFloat();
-  const { blendBlur, reblendSpacing, reblendAlpha } = settings.blend;
-  const { blendPull, blendAlpha, blendSkip } = settings.blend;
+  //const { blendBlur, reblendSpacing, reblendAlpha } = settings.blend;
+  const { blendPull, blendAlpha } = settings.blend;
   const { eraseAmount } = settings.erase;
   const { modRect } = paintGPUResources2;
 
@@ -8063,11 +8683,11 @@ function paintGPU2( points, layer ) {
 
   if( toPressure === refPressure && refPressure === bPressure && bPressure === aPressure && aPressure === 0.5 ) {
     //iffy pressure not supported signature (hopefully this doesn't bug anything out...)
-    aAltitudeAngle = bAltitudeAngle = refAltitudeAngle = aAzimuthAngle = bAzimuthAngle = refAzimuthAngle = 0;
-    aPressure = bPressure = refPressure = 1;
+    aAzimuthAngle = bAzimuthAngle = refAzimuthAngle = Math.PI/4;
+    aPressure = bPressure = refPressure = aAltitudeAngle = bAltitudeAngle = refAltitudeAngle = 1;
   }
   
-  if( bPressure === 0 || toPressure === 0 ) return; //A stroke can't end on a zero-alpha. It'll clip the paint beneath. (I think I fixed this w/ zbuffer though.)
+  if( bPressure === 0 || toPressure === 0 ) return; //A stroke can't end on a zero.
 
   //transform our basis points  
   getTransform();
@@ -8118,7 +8738,8 @@ function paintGPU2( points, layer ) {
 
   const pixelSpacing = Math.max( 1, brushSpacing * scaledBrushSize );
   //this lineLength is no longer accurate because of our spline interpolation tho...
-  const lineLength = Math.max( 1, parseInt( Math.sqrt( (canvasTransformAx-canvasTransformBx)**2 + (canvasTransformAy-canvasTransformBy)**2 ) / pixelSpacing ) );
+  const lineSegmentCanvasPixelLength = Math.sqrt( (canvasTransformAx-canvasTransformBx)**2 + (canvasTransformAy-canvasTransformBy)**2 );
+  const lineLength = Math.max( 1, parseInt( lineSegmentCanvasPixelLength / pixelSpacing ) );
 
   const tangentLength = lineLength * 0.33;
 
@@ -8173,8 +8794,6 @@ function paintGPU2( points, layer ) {
   {
     const [ crf, cgf, cbf ] = currentRGBFloat;
 
-    let pointsWritten = 0;
-
     //but basically, pointStep should be decided based on pixelSpacing?
 
     for( let i = 0; i<lineLength; i+=0.5 ) {
@@ -8210,16 +8829,15 @@ function paintGPU2( points, layer ) {
         normalizedUnTiltClippedAltitudeAngle = unTiltClippedAltitudeAngle / brushTiltMinAngle,
         tiltClippedAltitudeAngle = Math.max( 0, normalizedAltitudeAngle - brushTiltMinAngle ),
         normalizedClippedAltitudeAngle = tiltClippedAltitudeAngle / ( 1 - brushTiltMinAngle ),
-        tiltScale = 1 + normalizedClippedAltitudeAngle * brushTiltScale;
+        tiltScale = normalizedClippedAltitudeAngle * brushTiltScale;
 
       let scaledBrushSize = brushSize * uiSettings.toolsSettings.paint.modeSettings.all.pressureScaleCurve( paintPressure ) * ( 1 + 1*brushBlur );
       let scaledOpacity = brushOpacity * uiSettings.toolsSettings.paint.modeSettings.all.pressureOpacityCurve( paintPressure );
-      tempOpacity = scaledOpacity;
   
       //our brush size in canvas pixels (this should probably be global pixels: scale again by layer canvas's scale)
       const tipImageWidth = paintGPUResources2.brushTipCanvas.width,
       tipImageHeight = paintGPUResources2.brushTipCanvas.height;
-      const scaledTipImageWidth = scaledBrushSize * tiltScale,
+      const scaledTipImageWidth = scaledBrushSize * ( 1 + tiltScale ),
         scaledTipImageHeight = scaledBrushSize * tipImageHeight / tipImageWidth;
 
       //if the pen is very vertical, we want to center the brush
@@ -8228,7 +8846,8 @@ function paintGPU2( points, layer ) {
       //let xOffset = ( scaledTipImageWidth/2 ) * ( normalizedUnTiltClippedAltitudeAngle ) * ( 1 - brushBlur/2 );
 
       //but only if this brush is expecting such an offset??? Will test when pencil tuning again
-      let xOffset = ( scaledTipImageWidth/2 ) * ( normalizedUnTiltClippedAltitudeAngle ) * ( 1 - brushBlur/2 ) * brushTiltScale;
+      //let xOffset = ( scaledTipImageWidth/2 ) * ( normalizedUnTiltClippedAltitudeAngle ) * ( 1 - brushBlur/2 ) * tiltScale;
+      let xOffset = ( scaledTipImageWidth/2 ) * ( normalizedClippedAltitudeAngle ) * ( 1 - brushBlur/2 ) * Math.sqrt(tiltScale);
 
       //compute our verts
       {
@@ -8345,13 +8964,13 @@ function paintGPU2( points, layer ) {
     
     //Let lower alpha be clipped by higher alpha paint.
     gl.enable( gl.DEPTH_TEST );
-    gl.depthFunc( gl.GEQUAL );
+    gl.depthFunc( gl.GREATER );
 
     if( paintGPUResources2.starting === true ) {
       //Not actually sure about this depth-clear. If we get rim-glitches spaced far apart, this is probably why.
       paintGPUResources2.starting = false;
-      gl.clearDepth( 0.0 );
-      gl.clear( gl.DEPTH_BUFFER_BIT );
+      //gl.clearDepth( 0.0 );
+      //gl.clear( gl.DEPTH_BUFFER_BIT );
     }
     
     //disable blend, will blend inside shader
@@ -8427,6 +9046,8 @@ function paintGPU2( points, layer ) {
     gl.uniform1f( paintGPUResources2.blendAlphaIndex, blendAlpha );
     //set our erase amount
     gl.uniform1f( paintGPUResources2.eraseAmountIndex, eraseAmount );
+    //set our blend pull (this is in points, as per spacing)
+    gl.uniform1i( paintGPUResources2.blendPullIndex, blendPull );
 
     //draw the triangles
     {
@@ -8523,7 +9144,7 @@ function finalizePaintGPU2( layer ) {
 
 }
 
-
+/* 
 const paintGPUResources = {
 
   brushTipTexture: null,
@@ -8615,14 +9236,14 @@ function setupPaintGPU() {
     void main() {
 
       vec4 brushTipLookup = texture( brushTip, brushTipUV );
-      vec4 originalBlendSourceLookup = texture( blendSource, ( blendUV + 1.0 ) / 2.0 );
+      vec4 destLookup = texture( blendSource, ( blendUV + 1.0 ) / 2.0 );
       vec4 originalBlendCompositeLookup = texture( blendComposite, ( blendUV + 1.0 ) / 2.0 );
 
       if( brushTipLookup.a == 0.0 ) { discard; }
 
       //we want to completely ignore the RGB component of a 0-alpha blendsource
       //does this mean our paint color will leak in while 100% blending?
-      vec4 blendSourceLookup = vec4( mix( paintColor.rgb, originalBlendSourceLookup.rgb, originalBlendSourceLookup.a ), originalBlendSourceLookup.a );
+      vec4 blendSourceLookup = vec4( mix( paintColor.rgb, destLookup.rgb, destLookup.a ), destLookup.a );
       vec4 blendCompositeLookup = vec4( mix( paintColor.rgb, originalBlendCompositeLookup.rgb, originalBlendCompositeLookup.a ), originalBlendCompositeLookup.a );
 
       //let's mix the paint and the blend composite
@@ -8971,7 +9592,9 @@ function setupPaintGPU() {
     }
 
 }
-function beginPaintGPU( layer ) {
+ */
+
+/* function beginPaintGPU( layer ) {
   //set up GL textures and zero our distances traveled
   //set up the framebuffer/renderbuffer's size to match our destination canvas
 
@@ -9289,20 +9912,6 @@ function paintGPU( points, layer ) {
     //Vector spline interpolation temporarily on hold. D-: Have to figure this out though or no smooth paint.
     //for( let i = 0; i<lineLength; i+=pixelSpacing ) {
 
-    /* 
-    
-    TODO--------------------------------------------------------------------------------------------------
-
-    Optimize the paint loop below!
-    - stop the long property lookups
-    - don't use arrays
-    - sweet mercy don't next for/for/while loops! That's the big fix.
-    - when breaking up arrays, unroll the UVs loop to statements.
-    - move blendPull to a separate loop. It's just looping over xyuvs generated this time around anyway. Track and use.
-
-    ------------------------------------------------------------------------------------------------------
-    
-    */
 
     const [ crf, cgf, cbf ] = currentRGBFloat;
 
@@ -9397,22 +10006,12 @@ function paintGPU( points, layer ) {
         hLegX /= 2; hLegY /= 2;
         vLegX /= 2; vLegY /= 2;
         //topLeft is minus hLeg, minus vLeg... and we might have to flip all our y coordinates??? Hmm.
-        /* const topLeft = [ paintX - hLegX - vLegX, paintY - hLegY - vLegY ],
-          topRight = [ paintX + hLegX - vLegX, paintY + hLegY - vLegY ],
-          bottomRight = [ paintX + hLegX + vLegX, paintY + hLegY + vLegY ],
-          bottomLeft = [ paintX - hLegX + vLegX, paintY - hLegY + vLegY ]; */
+
           
         //transform our canvas points to GL points
         let iw = 2 / layer.w,
         ih = 2 / layer.h;
-      /* for( let j=0; j<xyuvs.length; j+=4 ) {
-        //scale to range 0:2
-        xyuvs[ j+0 ] *= iw;
-        xyuvs[ j+1 ] *= ih;
-        //translate to range -1:1
-        xyuvs[ j+0 ] -= 1;
-        xyuvs[ j+1 ] -= 1;
-      } */
+
 
         const x1 = (paintX - hLegX - vLegX), x2 = (paintX + hLegX - vLegX), x3 = (paintX - hLegX + vLegX), x4 = (paintX + hLegX + vLegX),
         y1 = (paintY - hLegY - vLegY), y2 = (paintY + hLegY - vLegY), y3 = (paintY - hLegY + vLegY), y4 = (paintY + hLegY + vLegY);
@@ -9687,7 +10286,7 @@ function paintGPU( points, layer ) {
     }
   
   }
-  /* Update our mod rect from the point limits */
+
   {
     //console.error( "PaintGPU: Needs to update mod rect from point limits" );
   }
@@ -9788,7 +10387,7 @@ function finalizePaintGPU( layer ) {
     console.error( "PaintGPU Finalize: record undo history");
   }
 
-}
+} */
 
 const paintCanvases = {
   //tip: null,
@@ -11123,6 +11722,10 @@ async function executeAPICall( name, controlValues ) {
             controlScheme.controlValue = uiSettings.backendPort;
             target[ controlPath.shift() ] = uiSettings.backendPort;
           }
+          else if( controlScheme.controlType === "appPort") {
+            controlScheme.controlValue = uiSettings.appPort;
+            target[ controlPath.shift() ] = uiSettings.appPort;
+          }
           else if( controlScheme.controlType === "string-compose" ) {
             //check if this is an api-result from the current apicall, probably unnecessary given
             let composedString = "";
@@ -11251,6 +11854,19 @@ const assetInterpreters = {
       const assetBrowserPreview = document.querySelector( "#asset-browser-preview" );
       assetBrowserPreview.textContent = asset.name;
     },
+  },
+  "APIFlows": {
+    makeElement: asset => {
+      const assetElement = document.createElement( "div" );
+      assetElement.textContent = asset.apiFlowName;
+      assetElement.classList.add( "asset-element" );
+      return assetElement;
+    },
+    showPreview: asset => {
+      const assetBrowserPreview = document.querySelector( "#asset-browser-preview" );
+      assetBrowserPreview.textContent = asset.apiFlowName;
+    },
+    defaultSort: (a,b) => ( a.apiFlowName > b.apiFlowName ) ? 1 : (( a.apiFlowName === b.apiFlowName ) ? 0 : -1),
   }
 }
 
@@ -11259,1373 +11875,32 @@ const assetsLibrary = {}
 //a 3w*2h image with random colors and a solid alpha channel
 const testImageURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAI0lEQVQIW2P86qL8/+hjPoazEzYzME5ljf5/WzOWQf6GJgMAnNkKmdnTKGIAAAAASUVORK5CYII=";
 
-/* 
-
-Build a simple workflow to start, don't worry about styling the controls just make it work,
-and get a gen onscreen again finally
-
-asset browser has to fit above keyboard on tablet. small icons, large preview is the way to go.
-
-*/
-
-const defaultAPIFlowNames = [
-  "Comfy-SD1.5-SDXL-t2i",
-  "Comfy-SD1.5-SDXL-i2i",
-  "Comfy-SC",
-  "Comfy-Assets",
-  "A1111-Preprocessor",
-  "A1111-i2i",
-  "A1111-t2i",
-  "A1111-t2i-cn",
-  "A1111-Models",
-  "A1111-Samplers",
-  "A1111-VAEs",
-  "A1111-Controlnet-Preprocessors",
-  "A1111-Controlnets",
-];
-
-function loadDefaultAPIFlows() {
-  for( const defaultAPIFlowName of defaultAPIFlowNames ) {
-    fetch( "apiFlows/" + defaultAPIFlowName + ".json" ).then(
-      async response => {
-        if( response.ok ) {
-          const apiFlow = await response.json();
-          apiFlows.push( apiFlow );
-          //console.log( "Loaded apiflow ", defaultAPIFlowName );
-        } else {
-          console.error( "Failed to load default apiflow: ", defaultAPIFlowName );
+async function loadDefaultAPIFlows() {
+  const flowsResponse = await fetch( "/apiFlows" );
+  const apiFlowNames = await flowsResponse.json();
+  apiFlowNames.sort( (a,b) => a>b );
+  const apiLoadPromises = [];
+  for( const defaultAPIFlowName of apiFlowNames ) {
+    apiLoadPromises.push( 
+      fetch( "apiFlows/" + defaultAPIFlowName ).then(
+        async response => {
+          if( response.ok ) {
+            const apiFlow = await response.json();
+            apiFlows.push( apiFlow );
+            //console.log( "Loaded apiflow ", defaultAPIFlowName );
+          } else {
+            console.error( "Failed to load default apiflow: ", defaultAPIFlowName );
+          }
         }
-      }
+      )
     );
   }
+  return Promise.all( apiLoadPromises );
 }
 
-loadDefaultAPIFlows();
+let apiFlowsLoadAwaiter = loadDefaultAPIFlows();
+apiFlowsLoadAwaiter.then( () => apiFlows.sort( (a,b) => a.apiFlowName > b.apiFlowName ) )
 
-
-const apiFlows = [
-  {
-    isDemo: true,
-    apiFlowType: "asset", //or something
-    //IDK what else goes here
-  },
-  {
-    isDemo: true,
-    apiFlowName: "", //also eventually tags
-    apiFlowType: "generate-image",
-    controls: [
-      {
-        controlName: "",
-        controlType: "", //text | static | randomInt | number{min,max,step} | option(unimp) | asset(unimp) | image(unimp) | duplicate
-          //duplicate must be listed *after* source or updates will not propagate correctly!
-        controlValue: "",
-        controlPath: [], //host|port|apiPath|api -> "",...
-        //type can be asset input
-        //or can be input: text, numbers in ranges, image(layer)
-        //or can be link: apiCall.result -> apiCall.path
-        //or can be static (e.g. standin for later): constant -> apiCall.path
-      }
-    ],
-    apiCalls: [
-      //these are in order
-      {
-        apiCallName: "",
-        results: [],
-        apiPath: "",
-        api: {},
-      }
-    ]
-  },
-  {
-    isDemo: true,
-    apiFlowName: "Comfy Image Upload Test",
-    apiFlowType: "debug",
-    outputs: [],
-    controls: [
-      { controlName: "img2img", controlHint: "img", controlType: "image", controlValue: testImageURL, controlLayer: null, controlPath: [ "upload-image", "api", "image" ] },
-    ],
-    apiCalls: [
-      {
-        apiCallName: "upload-image",
-        results: [], //IDK yet
-        host: "device",
-        port: 8188,
-        apiPath: "/upload/image",
-        method: "POST",
-        dataFormat: "FORM",
-        convertDataImages: true,
-        api: {
-          image: testImageURL,
-        }
-      }
-    ]
-  },
-  {
-    isDemo: true,
-    apiFlowName: "A1111 Upscale Demo",
-    apiFlowType: "generative",
-    outputs: [
-      {
-        outputName: "generated-image",
-        outputType: "image", //could be images array maybe
-        outputResultPath: [ "upscale", "generated-image" ]
-      }
-    ],
-    controls: [
-      { controlName: "model", controlType: "static", controlValue:"4x-UltraSharp", controlPath: [ "upscale", "api", "upscaler_1" ], },
-      //{ controlName: "model", controlType: "asset", assetName: "A1111 Upscalers", controlPath: [ "upscale", "api", "upscaler_1" ], },
-      { controlName: "upscale", controlType: "number", min: 1, max: 8, step:0.125, controlValue:2, controlLayerControlName: "upscale image", controlPath: [ "upscale", "api", "upscaling_resize" ], },
-      { controlName: "upscale image", controlHint: "img", controlType: "image", controlValue:"", controlLayer:null, controlPath: [ "upscale", "api", "image" ], },
-    ],
-    apiCalls: [
-      {
-        apiCallName: "upscale",
-        results: [
-          {
-            resultName: "generated-image",
-            resultType: "base64-image", //could be images array maybe
-            resultPath: [ "image" ],
-          }
-        ],
-        host: "device",
-        port: 7860,
-        apiPath: "/sdapi/v1/extra-single-image",
-        method: "POST",
-        dataFormat: "JSON",
-        convertDataImages: false,
-        api: {
-          "resize_mode": 0, //0 - upscaling_resize, 1 - _w/_h
-          "show_extras_results": true,
-          "gfpgan_visibility": 0,
-          "codeformer_visibility": 0,
-          "codeformer_weight": 0,
-          "upscaling_resize": 2,
-          "upscaling_resize_w": 512,
-          "upscaling_resize_h": 512,
-          "upscaling_crop": true,
-          "upscaler_1": "4x-UltraSharp",
-          "upscaler_2": "None",
-          "extras_upscaler_2_visibility": 0,
-          "upscale_first": false,
-          "image": ""
-        }
-      }
-    ]
-  },
-  {
-    apiFlowName: "A1111 upscalers",
-    assetLibraries: [ "A1111 Upscalers" ],
-    apiFlowType: "asset",
-    outputs: [
-      {
-        outputName: "upscalers-list",
-        outputLibraryName: "A1111 Upscalers",
-        outputType: "assets",
-        assetMap: [
-          { key: "uniqueId", path: [ "name" ] },
-          { key: "name", path: [ "name" ] },
-          { key: "scale", path: [ "scale" ] },
-          //{ key: "modelName", path: [ "model_name" ] }, //this is the name of the base architecture this fine-tune was trained from
-          //{ key: "modelPath", path: [ "model_path" ] }, //path on the disk
-          //{ key: "modelURL", path: [ "model_url" ] }, //null IDK
-        ],
-        outputResultPath: [ "get-upscalers", "upscalers-array" ],
-      }
-    ],
-    controls: [],
-    apiCalls: [
-      {
-        apiCallName: "get-upscalers",
-        results: [
-          {
-            resultName: "upscalers-array",
-            resultType: "array-object",
-            resultPath: [],
-          },
-        ],
-        host: "device",
-        port: 7860,
-        method: "GET",
-        dataFormat: null,
-        convertDataImages: false,
-        apiPath: "/sdapi/v1/upscalers"
-      }
-    ],
-  },
-  /* 
-  {
-    apiFlowName: "Comfy Asset Loaders",
-    assetLibraries: [ "Comfy Models", "Comfy ControlNets", "Comfy Samplers", "Comfy Schedulers", "Comfy VAEs", "Comfy UNETs" ],
-    apiFlowType: "asset",
-    outputs: [
-      {
-        outputName: "comfy-models-list",
-        outputLibraryName: "Comfy Models",
-        outputType: "assets",
-        assetMap: [
-          { key: "uniqueId", path: [] },
-          { key: "name", path: [] },
-        ],
-        outputResultPath: [ "get-object-info", "models-array" ],
-      },
-      {
-        outputName: "comfy-controlnets-list",
-        outputLibraryName: "Comfy ControlNets",
-        outputType: "assets",
-        assetMap: [
-          { key: "uniqueId", path: [] },
-          { key: "name", path: [] },
-        ],
-        outputResultPath: [ "get-object-info", "controlnets-array" ],
-      },
-      {
-        outputName: "comfy-samplers",
-        outputLibraryName: "Comfy Samplers",
-        outputType: "assets",
-        assetMap: [
-          { key: "uniqueId", path: [] },
-          { key: "name", path: [] },
-        ],
-        outputResultPath: [ "get-object-info", "samplers-array" ],
-      },
-      {
-        outputName: "comfy-schedulers",
-        outputLibraryName: "Comfy Schedulers",
-        outputType: "assets",
-        assetMap: [
-          { key: "uniqueId", path: [] },
-          { key: "name", path: [] },
-        ],
-        outputResultPath: [ "get-object-info", "schedulers-array" ],
-      },
-      {
-        outputName: "comfy-schedulers",
-        outputLibraryName: "Comfy VAEs",
-        outputType: "assets",
-        assetMap: [
-          { key: "uniqueId", path: [] },
-          { key: "name", path: [] },
-        ],
-        outputResultPath: [ "get-object-info", "vaes-array" ],
-      },
-      {
-        outputName: "comfy-unets",
-        outputLibraryName: "Comfy UNETs",
-        outputType: "assets",
-        assetMap: [
-          { key: "uniqueId", path: [] },
-          { key: "name", path: [] },
-        ],
-        outputResultPath: [ "get-object-info", "unets-array" ],
-      },
-    ],
-    controls: [],
-    apiCalls: [
-      {
-        apiCallName: "get-object-info",
-        results: [
-          {
-            resultName: "models-array",
-            resultType: "array-string",
-            resultPath: [ "CheckpointLoaderSimple", "input", "required", "ckpt_name" ],
-          },
-          {
-            resultName: "controlnets-array",
-            resultType: "array-string",
-            resultPath: [ "ControlNetLoader", "input", "required", "control_net_name" ],
-          },
-          {
-            resultName: "samplers-array",
-            resultType: "array-string",
-            resultPath: [ "KSampler", "input", "required", "sampler_name" ],
-          },
-          {
-            resultName: "schedulers-array",
-            resultType: "array-string",
-            resultPath: [ "KSampler", "input", "required", "scheduler" ],
-          },
-          {
-            resultName: "vaes-array",
-            resultType: "array-string",
-            resultPath: [ "VAELoader", "input", "required", "vae_name" ],
-          },
-          {
-            resultName: "unets-array",
-            resultType: "array-string",
-            resultPath: [ "UNETLoader", "input", "required", "unet_name" ],
-          },
-        ],
-        host: "device",
-        port: 8188,
-        method: "GET",
-        dataFormat: null,
-        convertDataImages: false,
-        apiPath: "/object_info"
-      }
-    ],
-  },
- */
-
-
-  /*
-  {
-    apiFlowName: "Comfy SD1.5/SDXL txt2img",
-    apiFlowType: "generative",
-    outputs: [
-      {
-        outputName: "generated-image",
-        outputType: "image", //could be images array maybe
-        outputResultPath: [ "view", "generated-image" ]
-      }
-    ],
-    controls: [
-      { controlName: "Prompt", controlType: "text", controlValue: "desktop cat", controlPath: [ "sd-prompt", "api", "prompt", "62", "inputs", "text" ], },
-      { controlName: "Negative Prompt", controlType: "text", controlValue: "", controlPath: [ "sd-prompt", "api", "prompt", "63", "inputs", "text" ], },
-      { controlName: "Steps", controlType: "number", min:1, max:100, step:1, controlValue:4, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "steps" ], },
-      { controlName: "CFG", controlType: "number", min:1, max:50, step:0.25, controlValue:1.5, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "cfg" ], },
-
-      { controlName: "Model", controlType: "asset", assetName:"Comfy Models", controlValue:"--no model--", controlPath: [ "sd-prompt", "api", "prompt", "61", "inputs", "ckpt_name" ], },
-      //{ controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "29", "inputs", "vae_name" ], },
-
-      { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "seed" ], },
-      { controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlPath: [ "sd-prompt", "api", "prompt", "66", "inputs", "width" ], },
-      { controlName: "height", controlType: "layer-input", layerPath: ["h"], controlValue:1024, controlPath: [ "sd-prompt", "api", "prompt", "66", "inputs", "height" ], },
-
-      { controlName: "UID", controlType: "api-result", resultPath: [ "sd-prompt", "prompt_id" ], controlPath: [ "controlValue" ], controlValue: "to overwrite" },
-      //string-compose lets you compose controlValues and constants into a new string
-      { controlName: "history-path", controlType: "string-compose", composePaths: [ "/history/", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "apiPath" ] },
-      { controlName: "result-history-filename", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 0, "resultPath", 0 ] },
-      { controlName: "result-history-subfolder", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 1, "resultPath", 0 ] },
-      { controlName: "filename", controlType: "api-result", resultPath: [ "get-filename", "image-filename" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filename" },
-      //{ controlName: "filefolder", controlType: "api-result", resultPath: [ "get-filename", "image-subfolder" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filefolder" },
-      
-      { controlName: "view-filename", controlType: "string-compose", composePaths: [ "/view?filename=", [ "filename", "controlValue" ], "&subfolder=&type=output&rand=0.0923485734985" ], controlPath: [ "view", "apiPath" ] },
-    ],
-    apiCalls: [
-      {
-        apiCallName: "sd-prompt",
-        results: [
-          {
-            resultName: "prompt_id",
-            resultType: "string",
-            resultPath: ["prompt_id"],
-          },
-        ],
-        host: "device",
-        port: 8188,
-        apiPath: "/prompt",
-        method: "POST",
-        dataFormat: "JSON",
-        convertDataImages: false,
-        api: {
-          prompt: {
-            "60": {
-              "inputs": {
-                "seed": 249619404060710,
-                "steps": 4,
-                "cfg": 1.5,
-                "sampler_name": "dpmpp_sde",
-                "scheduler": "normal",
-                "denoise": 1,
-                "model": [
-                  "61",
-                  0
-                ],
-                "positive": [
-                  "62",
-                  0
-                ],
-                "negative": [
-                  "63",
-                  0
-                ],
-                "latent_image": [
-                  "66",
-                  0
-                ]
-              },
-              "class_type": "KSampler",
-              "_meta": {
-                "title": "KSampler"
-              }
-            },
-            "61": {
-              "inputs": {
-                "ckpt_name": "SDXL-Juggernaut-Lightning-4S.DPMppSDE.832x1216.CFG1-2.safetensors"
-              },
-              "class_type": "CheckpointLoaderSimple",
-              "_meta": {
-                "title": "Load Checkpoint"
-              }
-            },
-            "62": {
-              "inputs": {
-                "text": "test",
-                "clip": [
-                  "61",
-                  1
-                ]
-              },
-              "class_type": "CLIPTextEncode",
-              "_meta": {
-                "title": "CLIP Text Encode (Prompt)"
-              }
-            },
-            "63": {
-              "inputs": {
-                "text": "",
-                "clip": [
-                  "61",
-                  1
-                ]
-              },
-              "class_type": "CLIPTextEncode",
-              "_meta": {
-                "title": "CLIP Text Encode (Prompt)"
-              }
-            },
-            "64": {
-              "inputs": {
-                "samples": [
-                  "60",
-                  0
-                ],
-                "vae": [
-                  "61",
-                  2
-                ]
-              },
-              "class_type": "VAEDecode",
-              "_meta": {
-                "title": "VAE Decode"
-              }
-            },
-            "65": {
-              "inputs": {
-                "filename_prefix": "ComfyUI",
-                "images": [
-                  "64",
-                  0
-                ]
-              },
-              "class_type": "SaveImage",
-              "_meta": {
-                "title": "Save Image"
-              }
-            },
-            "66": {
-              "inputs": {
-                "width": 1024,
-                "height": 1024,
-                "batch_size": 1
-              },
-              "class_type": "EmptyLatentImage",
-              "_meta": {
-                "title": "Empty Latent Image"
-              }
-            }
-          }
-        },
-      },
-      {
-        retryOnEmpty: true,
-        apiCallName: "get-filename",
-        results: [
-          {
-            resultName: "image-filename",
-            resultType: "string",
-            resultPath: [ "{UID for filename}", "outputs", 65, "images", 0, "filename" ],
-          },
-          {
-            resultName: "image-subfolder",
-            resultType: "string",
-            resultPath: [ "{UID for subfolder}", "outputs", 65, "images", 0, "subfolder" ],
-          },
-        ],
-        host: "device",
-        port: 8188,
-        method: "GET",
-        dataFormat: null,
-        convertDataImages: false,
-        apiPath: "/history/{UID}"
-      },
-      {
-        apiCallName: "view",
-        results: [
-          {
-            resultName: "generated-image",
-            resultType: "file-image",
-            resultPath: "file"
-          }
-        ],
-        host: "device",
-        port: 8188,
-        method: "GET",
-        dataFormat: null,
-        convertDataImages: false,
-        apiPath: "/view?filename={FILENAME}"
-      }
-    ]
-  },
-  */
-
-/* 
-  {
-    apiFlowName: "Comfy SD1.5/SDXL img2img",
-    apiFlowType: "generative",
-    outputs: [
-      {
-        outputName: "generated-image",
-        outputType: "image", //could be images array maybe
-        outputResultPath: [ "view", "generated-image" ]
-      }
-    ],
-    controls: [
-      { controlName: "img2img", controlHint: "i2i", controlType: "image", controlValue: "", controlLayer: null, controlPath: [ "upload-image", "api", "image" ] },
-
-      { controlName: "i2i-image-filename", controlType: "api-result", resultPath: [ "upload-image", "image-filename" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with uploadname" },
-
-      { controlName: "Prompt", controlType: "text", controlValue: "desktop cat", controlPath: [ "sd-prompt", "api", "prompt", "62", "inputs", "text" ], },
-      { controlName: "Negative Prompt", controlType: "text", controlValue: "", controlPath: [ "sd-prompt", "api", "prompt", "63", "inputs", "text" ], },
-      { controlName: "Steps", controlType: "number", min:1, max:100, step:1, controlValue:4, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "steps" ], },
-      { controlName: "CFG", controlType: "number", min:1, max:50, step:0.25, controlValue:1.5, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "cfg" ], },
-      { controlName: "Denoise", controlType: "number", min:0, max:1, step:0.01, controlValue:0.5, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "denoise" ], },
-
-      { controlName: "Model", controlType: "asset", assetName:"Comfy Models", controlValue:"--no model--", controlPath: [ "sd-prompt", "api", "prompt", "61", "inputs", "ckpt_name" ], },
-      //{ controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sd-prompt", "api", "prompt", "29", "inputs", "vae_name" ], },
-
-      { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "sd-prompt", "api", "prompt", "60", "inputs", "seed" ], },
-      //{ controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlPath: [ "sd-prompt", "api", "prompt", "66", "inputs", "width" ], },
-      //{ controlName: "height", controlType: "layer-input", layerPath: ["h"], controlValue:1024, controlPath: [ "sd-prompt", "api", "prompt", "66", "inputs", "height" ], },
-      { controlName: "prompt-i2i-filename", controlType: "string-compose", composePaths: [ "", [ "i2i-image-filename", "controlValue" ] ], controlPath: [ "sd-prompt", "api", "prompt", "67", "inputs", "image" ], },
-
-      { controlName: "UID", controlType: "api-result", resultPath: [ "sd-prompt", "prompt_id" ], controlPath: [ "controlValue" ], controlValue: "to overwrite" },
-      //string-compose lets you compose controlValues and constants into a new string
-      { controlName: "history-path", controlType: "string-compose", composePaths: [ "/history/", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "apiPath" ] },
-      { controlName: "result-history-filename", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 0, "resultPath", 0 ] },
-      { controlName: "result-history-subfolder", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 1, "resultPath", 0 ] },
-      { controlName: "filename", controlType: "api-result", resultPath: [ "get-filename", "image-filename" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filename" },
-      //{ controlName: "filefolder", controlType: "api-result", resultPath: [ "get-filename", "image-subfolder" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filefolder" },
-      
-      { controlName: "view-filename", controlType: "string-compose", composePaths: [ "/view?filename=", [ "filename", "controlValue" ], "&subfolder=&type=output&rand=0.0923485734985" ], controlPath: [ "view", "apiPath" ] },
-    ],
-    apiCalls: [
-      {
-        apiCallName: "upload-image",
-        results: [
-          {
-            resultName: "image-filename",
-            resultType: "string",
-            resultPath: [ "name" ], //"subfolder","type"
-          }
-        ],
-        host: "device",
-        port: 8188,
-        apiPath: "/upload/image",
-        method: "POST",
-        dataFormat: "FORM",
-        convertDataImages: true,
-        api: {
-          image: "",
-        }
-      },
-      {
-        apiCallName: "sd-prompt",
-        results: [
-          {
-            resultName: "prompt_id",
-            resultType: "string",
-            resultPath: ["prompt_id"],
-          },
-        ],
-        host: "device",
-        port: 8188,
-        apiPath: "/prompt",
-        method: "POST",
-        dataFormat: "JSON",
-        convertDataImages: false,
-        api: {
-          prompt: {
-            "60": {
-              "inputs": {
-                "seed": 1037991131309544,
-                "steps": 4,
-                "cfg": 1.5,
-                "sampler_name": "dpmpp_sde",
-                "scheduler": "normal",
-                "denoise": 0.62,
-                "model": [
-                  "61",
-                  0
-                ],
-                "positive": [
-                  "62",
-                  0
-                ],
-                "negative": [
-                  "63",
-                  0
-                ],
-                "latent_image": [
-                  "68",
-                  0
-                ]
-              },
-              "class_type": "KSampler",
-              "_meta": {
-                "title": "KSampler"
-              }
-            },
-            "61": {
-              "inputs": {
-                "ckpt_name": "SDXL-Juggernaut-Lightning-4S.DPMppSDE.832x1216.CFG1-2.safetensors"
-              },
-              "class_type": "CheckpointLoaderSimple",
-              "_meta": {
-                "title": "Load Checkpoint"
-              }
-            },
-            "62": {
-              "inputs": {
-                "text": "test",
-                "clip": [
-                  "61",
-                  1
-                ]
-              },
-              "class_type": "CLIPTextEncode",
-              "_meta": {
-                "title": "CLIP Text Encode (Prompt)"
-              }
-            },
-            "63": {
-              "inputs": {
-                "text": "",
-                "clip": [
-                  "61",
-                  1
-                ]
-              },
-              "class_type": "CLIPTextEncode",
-              "_meta": {
-                "title": "CLIP Text Encode (Prompt)"
-              }
-            },
-            "64": {
-              "inputs": {
-                "samples": [
-                  "60",
-                  0
-                ],
-                "vae": [
-                  "61",
-                  2
-                ]
-              },
-              "class_type": "VAEDecode",
-              "_meta": {
-                "title": "VAE Decode"
-              }
-            },
-            "65": {
-              "inputs": {
-                "filename_prefix": "ComfyUI",
-                "images": [
-                  "64",
-                  0
-                ]
-              },
-              "class_type": "SaveImage",
-              "_meta": {
-                "title": "Save Image"
-              }
-            },
-            "67": {
-              "inputs": {
-                "image": "00008-3677720763.png",
-                "upload": "image"
-              },
-              "class_type": "LoadImage",
-              "_meta": {
-                "title": "Load Image"
-              }
-            },
-            "68": {
-              "inputs": {
-                "pixels": [
-                  "67",
-                  0
-                ],
-                "vae": [
-                  "61",
-                  2
-                ]
-              },
-              "class_type": "VAEEncode",
-              "_meta": {
-                "title": "VAE Encode"
-              }
-            }
-          }
-        },
-      },
-      {
-        retryOnEmpty: true,
-        apiCallName: "get-filename",
-        results: [
-          {
-            resultName: "image-filename",
-            resultType: "string",
-            resultPath: [ "{UID for filename}", "outputs", 65, "images", 0, "filename" ],
-          },
-          {
-            resultName: "image-subfolder",
-            resultType: "string",
-            resultPath: [ "{UID for subfolder}", "outputs", 65, "images", 0, "subfolder" ],
-          },
-        ],
-        host: "device",
-        port: 8188,
-        method: "GET",
-        dataFormat: null,
-        convertDataImages: false,
-        apiPath: "/history/{UID}"
-      },
-      {
-        apiCallName: "view",
-        results: [
-          {
-            resultName: "generated-image",
-            resultType: "file-image",
-            resultPath: "file"
-          }
-        ],
-        host: "device",
-        port: 8188,
-        method: "GET",
-        dataFormat: null,
-        convertDataImages: false,
-        apiPath: "/view?filename={FILENAME}"
-      }
-    ]
-  },
- */
-
-  /* 
-  {
-    apiFlowName: "Comfy SC Test",
-    apiFlowType: "generative",
-    outputs: [
-      {
-        outputName: "generated-image",
-        outputType: "image", //could be images array maybe
-        outputResultPath: [ "view", "generated-image" ]
-      }
-    ],
-    controls: [
-      { controlName: "Prompt", controlType: "text", controlValue: "desktop cat", controlPath: [ "sc-prompt", "api", "prompt", "6", "inputs", "text" ], },
-      { controlName: "Negative Prompt", controlType: "text", controlValue: "", controlPath: [ "sc-prompt", "api", "prompt", "7", "inputs", "text" ], },
-      { controlName: "C Steps", controlType: "number", min:1, max:100, step:1, controlValue:4, controlPath: [ "sc-prompt", "api", "prompt", "3", "inputs", "steps" ], },
-      { controlName: "C CFG", controlType: "number", min:1, max:50, step:0.25, controlValue:1.5, controlPath: [ "sc-prompt", "api", "prompt", "3", "inputs", "cfg" ], },
-      { controlName: "B Steps", controlType: "number", min:1, max:100, step:1, controlValue:2, controlPath: [ "sc-prompt", "api", "prompt", "33", "inputs", "steps" ], },
-
-      { controlName: "C Model", controlType: "asset", assetName:"Comfy UNETs", controlValue:"cascade_stage_c_bf16.safetensors", controlPath: [ "sc-prompt", "api", "prompt", "30", "inputs", "unet_name" ], },
-      { controlName: "B Model", controlType: "asset", assetName:"Comfy UNETs", controlValue:"cascade_stage_b_lite_bf16.safetensors", controlPath: [ "sc-prompt", "api", "prompt", "32", "inputs", "unet_name" ], },
-      { controlName: "VAE", controlType: "asset", assetName:"Comfy VAEs", controlValue:"cascade_stage_a.safetensors", controlPath: [ "sc-prompt", "api", "prompt", "29", "inputs", "vae_name" ], },
-
-      { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "sc-prompt", "api", "prompt", "3", "inputs", "seed" ], },
-      { controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlPath: [ "sc-prompt", "api", "prompt", "34", "inputs", "width" ], },
-      { controlName: "height", controlType: "layer-input", layerPath: ["h"], controlValue:1024, controlPath: [ "sc-prompt", "api", "prompt", "34", "inputs", "height" ], },
-
-      { controlName: "UID", controlType: "api-result", resultPath: [ "sc-prompt", "prompt_id" ], controlPath: [ "controlValue" ], controlValue: "to overwrite" },
-      //string-compose lets you compose controlValues and constants into a new string
-      { controlName: "history-path", controlType: "string-compose", composePaths: [ "/history/", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "apiPath" ] },
-      { controlName: "result-history-filename", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 0, "resultPath", 0 ] },
-      { controlName: "result-history-subfolder", controlType: "string-compose", composePaths: [ "", [ "UID", "controlValue" ] ], controlPath: [ "get-filename", "results", 1, "resultPath", 0 ] },
-      { controlName: "filename", controlType: "api-result", resultPath: [ "get-filename", "image-filename" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filename" },
-      { controlName: "filefolder", controlType: "api-result", resultPath: [ "get-filename", "image-subfolder" ], controlPath: [ "controlValue" ], controlValue: "to overwrite with filefolder" },
-      //&subfolder=wuer&type=output
-      { controlName: "view-filename", controlType: "string-compose", composePaths: [ "/view?filename=", [ "filename", "controlValue" ], "&subfolder=", [ "filefolder", "controlValue" ], "&type=output&rand=0.0923485734985" ], controlPath: [ "view", "apiPath" ] },
-      //{ controlName: "view-filename", controlType: "string-compose", composePaths: [ "/view?filename=", [ "filename", "controlValue" ], "&subfolder=&type=output&rand=0.0923485734985" ], controlPath: [ "view", "apiPath" ] },
-    ],
-    apiCalls: [
-      {
-        apiCallName: "sc-prompt",
-        results: [
-          {
-            resultName: "prompt_id",
-            resultType: "string",
-            resultPath: ["prompt_id"],
-          },
-        ],
-        host: "device",
-        port: 8188,
-        apiPath: "/prompt",
-        method: "POST",
-        dataFormat: "JSON",
-        convertDataImages: false,
-        api: { prompt: {
-          "3": {
-            "inputs": {
-              "seed": 750887496150267,
-              "steps": 4,
-              "cfg": 1.5,
-              "sampler_name": "ddpm",
-              "scheduler": "simple",
-              "denoise": 1,
-              "model": [
-                "59",
-                0
-              ],
-              "positive": [
-                "6",
-                0
-              ],
-              "negative": [
-                "7",
-                0
-              ],
-              "latent_image": [
-                "34",
-                0
-              ]
-            },
-            "class_type": "KSampler",
-            "_meta": {
-              "title": "KSampler"
-            }
-          },
-          "6": {
-            "inputs": {
-              "text": "desktop cat",
-              "clip": [
-                "37",
-                0
-              ]
-            },
-            "class_type": "CLIPTextEncode",
-            "_meta": {
-              "title": "CLIP Text Encode (Prompt)"
-            }
-          },
-          "7": {
-            "inputs": {
-              "text": "",
-              "clip": [
-                "37",
-                0
-              ]
-            },
-            "class_type": "CLIPTextEncode",
-            "_meta": {
-              "title": "CLIP Text Encode (Prompt)"
-            }
-          },
-          "8": {
-            "inputs": {
-              "samples": [
-                "33",
-                0
-              ],
-              "vae": [
-                "29",
-                0
-              ]
-            },
-            "class_type": "VAEDecode",
-            "_meta": {
-              "title": "VAE Decode"
-            }
-          },
-          "9": {
-            "inputs": {
-              "filename_prefix": "wuer/ComfyUI",
-              "images": [
-                "8",
-                0
-              ]
-            },
-            "class_type": "SaveImage",
-            "_meta": {
-              "title": "Save Image"
-            }
-          },
-          "29": {
-            "inputs": {
-              "vae_name": "cascade_stage_a.safetensors"
-            },
-            "class_type": "VAELoader",
-            "_meta": {
-              "title": "Load VAE"
-            }
-          },
-          "30": {
-            "inputs": {
-              "unet_name": "cascade_stage_c_bf16.safetensors"
-            },
-            "class_type": "UNETLoader",
-            "_meta": {
-              "title": "UNETLoader"
-            }
-          },
-          "32": {
-            "inputs": {
-              "unet_name": "cascade_stage_b_lite_bf16.safetensors"
-            },
-            "class_type": "UNETLoader",
-            "_meta": {
-              "title": "UNETLoader"
-            }
-          },
-          "33": {
-            "inputs": {
-              "seed": 750887496150267,
-              "steps": 2,
-              "cfg": 1,
-              "sampler_name": "ddpm",
-              "scheduler": "simple",
-              "denoise": 1,
-              "model": [
-                "32",
-                0
-              ],
-              "positive": [
-                "36",
-                0
-              ],
-              "negative": [
-                "40",
-                0
-              ],
-              "latent_image": [
-                "34",
-                1
-              ]
-            },
-            "class_type": "KSampler",
-            "_meta": {
-              "title": "KSampler"
-            }
-          },
-          "34": {
-            "inputs": {
-              "width": 1024,
-              "height": 1024,
-              "compression": 42,
-              "batch_size": 1
-            },
-            "class_type": "StableCascade_EmptyLatentImage",
-            "_meta": {
-              "title": "StableCascade_EmptyLatentImage"
-            }
-          },
-          "36": {
-            "inputs": {
-              "conditioning": [
-                "40",
-                0
-              ],
-              "stage_c": [
-                "3",
-                0
-              ]
-            },
-            "class_type": "StableCascade_StageB_Conditioning",
-            "_meta": {
-              "title": "StableCascade_StageB_Conditioning"
-            }
-          },
-          "37": {
-            "inputs": {
-              "clip_name": "cascade_clip.safetensors",
-              "type": "stable_cascade"
-            },
-            "class_type": "CLIPLoader",
-            "_meta": {
-              "title": "Load CLIP"
-            }
-          },
-          "40": {
-            "inputs": {
-              "conditioning": [
-                "6",
-                0
-              ]
-            },
-            "class_type": "ConditioningZeroOut",
-            "_meta": {
-              "title": "ConditioningZeroOut"
-            }
-          },
-          "59": {
-            "inputs": {
-              "shift": 2,
-              "model": [
-                "30",
-                0
-              ]
-            },
-            "class_type": "ModelSamplingStableCascade",
-            "_meta": {
-              "title": "ModelSamplingStableCascade"
-            }
-          }
-        }
-      } },
-      {
-        retryOnEmpty: true,
-        apiCallName: "get-filename",
-        results: [
-          {
-            resultName: "image-filename",
-            resultType: "string",
-            resultPath: [ "{UID for filename}", "outputs", 9, "images", 0, "filename" ],
-          },
-          {
-            resultName: "image-subfolder",
-            resultType: "string",
-            resultPath: [ "{UID for subfolder}", "outputs", 9, "images", 0, "subfolder" ],
-          },
-        ],
-        host: "device",
-        port: 8188,
-        method: "GET",
-        dataFormat: null,
-        convertDataImages: false,
-        apiPath: "/history/{UID}"
-      },
-      {
-        apiCallName: "view",
-        results: [
-          {
-            resultName: "generated-image",
-            resultType: "file-image",
-            resultPath: "file"
-          }
-        ],
-        host: "device",
-        port: 8188,
-        method: "GET",
-        dataFormat: null,
-        convertDataImages: false,
-        apiPath: "/view?filename={FILENAME}"
-      }
-    ]
-  },
- */
-
-  /* 
-  {
-    apiFlowName: "A1111 Layer to Lineart Demo",
-    apiFlowType: "generative",
-    outputs: [
-      {
-        outputName: "generated-image",
-        outputType: "image", //could be images array maybe
-        outputResultPath: [ "cn", "generated-image" ]
-      }
-    ],
-    controls: [
-      { controlName: "module", controlType: "static", controlValue:"lineart_anime_denoise", controlPath: [ "cn", "api", "controlnet_module" ], },
-      { controlName: "threshold a", controlType: "number", min:1, max:255, step:1, controlValue:64, controlPath: [ "cn", "api", "controlnet_threshold_a" ], },
-      { controlName: "threshold b", controlType: "number", min:1, max:255, step:1, controlValue:64, controlPath: [ "cn", "api", "controlnet_threshold_b" ], },
-      { controlName: "controlnet", controlHint: "CN", controlType: "image", controlValue:"", controlLayer:null, controlPath: [ "cn", "api", "controlnet_input_images", 0 ], },
-      { controlName: "resolution", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlLayerControlName: "controlnet", controlPath: [ "cn", "api", "controlnet_processor_res" ], },
-    ],
-    apiCalls: [
-      {
-        apiCallName: "cn",
-        results: [
-          {
-            resultName: "generated-image",
-            resultType: "base64-image", //could be images array maybe
-            resultPath: [ "images", 0 ],
-          }
-        ],
-        host: "device",
-        port: 7860,
-        apiPath: "/controlnet/detect",
-        method: "POST",
-        dataFormat: "JSON",
-        convertDataImages: false,
-        api: {
-          "controlnet_module": "none",
-          "controlnet_input_images": [ "" ],
-          "controlnet_processor_res": 512,
-          "controlnet_threshold_a": 64,
-          "controlnet_threshold_b": 64,
-          "low_vram": false
-        }
-      }
-    ]
-  },
- */
-
-  /* 
-  {
-    apiFlowName: "A1111 Lightning Demo img2img Mini",
-    apiFlowType: "generative",
-    outputs: [
-      {
-        outputName: "generated-image",
-        outputType: "image", //could be images array maybe
-        outputResultPath: [ "i2i", "generated-image" ]
-      }
-    ],
-    controls: [
-      { controlName: "prompt", controlType: "text", controlValue: "desktop cat", controlPath: [ "i2i", "api", "prompt" ], },
-      { controlName: "negative-prompt", controlType: "text", controlValue: "", controlPath: [ "i2i", "api", "negative_prompt" ], },
-
-      { controlName: "apiPath", controlType: "static", controlValue: "/sdapi/v1/img2img", controlPath: [ "i2i", "apiPath" ], },
-      { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "i2i", "api", "seed" ], },
-      { controlName: "sampler", controlType: "static", controlValue:"DPM++ SDE", controlPath: [ "i2i", "api", "sampler_name" ], },
-      { controlName: "denoise", controlType: "number", min:0, max:1, step:0.01, controlValue:0.75, controlPath: [ "i2i", "api", "denoising_strength" ], },
-      { controlName: "steps", controlType: "number", min:1, max:100, step:1, controlValue:4, controlPath: [ "i2i", "api", "steps" ], },
-      { controlName: "cfg", controlType: "number", controlValue:1.5, min:0, max: 20, step:0.5, controlPath: [ "i2i", "api", "cfg_scale" ], },
-      { controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlLayerControlName: "img2img", controlPath: [ "i2i", "api", "width" ], },
-      { controlName: "height", controlType: "layer-input", layerPath: ["h"], controlValue:1024, controlLayerControlName: "img2img", controlPath: [ "i2i", "api", "height" ], },
-
-      { controlName: "img2img", controlHint: "i2i", controlType: "image", controlValue:"", controlLayer:null, controlPath: [ "i2i", "api", "init_images", 0 ], },
-    ],
-    apiCalls: [
-      {
-        apiCallName: "i2i",
-        results: [
-          {
-            resultName: "generated-image",
-            resultType: "base64-image", //could be images array maybe
-            resultPath: [ "images", 0 ],
-          }
-        ],
-        host: "device",
-        port: 7860,
-        apiPath: "/sdapi/v1/img2img",
-        method: "POST",
-        dataFormat: "JSON",
-        convertDataImages: false,
-        api: {
-          "denoising_strength": 0.74,
-          "image_cfg_scale": 1.5,
-
-          "init_images": [ "" ],
-
-          "initial_noise_multiplier": 1,
-          "inpaint_full_res": 0,
-          "inpaint_full_res_padding": 32,
-          "inpainting_fill": 1,
-          "inpainting_mask_invert": 0,
-          "mask_blur": 4,
-          "mask_blur_x": 4,
-          "mask_blur_y": 4,
-
-          "batch_size": 1,
-          "cfg_scale": 1.5,
-          "disable_extra_networks": false,
-          "do_not_save_grid": false,
-          "do_not_save_samples": false,
-          "enable_hr": false,
-          "height": 1024,
-          "negative_prompt": "",
-          "prompt": "desktop cat",
-          "restore_faces": false,
-          
-          "sampler_name": "DPM++ SDE",
-          "script_name": null,
-          "seed": 3718586839,
-          "steps": 4,
-          "tiling": false,
-          "width": 1024,
-        }
-      }
-    ]
-  },
- */
-
-  /* 
-  {
-    apiFlowName: "A1111 Lightning Demo txt2img Mini",
-    apiFlowType: "generative",
-    outputs: [
-      {
-        outputName: "generated-image",
-        outputType: "image",
-        outputResultPath: [ "t2i", "generated-image" ]
-      }
-    ],
-    controls: [
-      { controlName: "prompt", controlType: "text", controlValue: "desktop cat", controlPath: [ "t2i", "api", "prompt" ], },
-      { controlName: "negative-prompt", controlType: "text", controlValue: "", controlPath: [ "i2i", "api", "negative_prompt" ], },
-
-      { controlName: "apiPath", controlType: "static", controlValue: "/sdapi/v1/txt2img", controlPath: [ "t2i", "apiPath" ], },
-      { controlName: "seed", controlType: "randomInt", min:0, max:999999999, step:1, controlPath: [ "t2i", "api", "seed" ], },
-      { controlName: "sampler", controlType: "static", controlValue:"DPM++ SDE", controlPath: [ "t2i", "api", "sampler_name" ], },
-      { controlName: "steps", controlType: "number", min:1, max:100, step:1, controlValue:4, controlPath: [ "t2i", "api", "steps" ], },
-      { controlName: "cfg", controlType: "number", controlValue:1.5, min:1, max: 20, step:0.5, controlPath: [ "t2i", "api", "cfg_scale" ], },
-      { controlName: "width", controlType: "layer-input", layerPath: ["w"], controlValue:1024, controlPath: [ "t2i", "api", "width" ], },
-      { controlName: "height", controlType: "layer-input", layerPath: ["h"], controlValue:1024, controlPath: [ "t2i", "api", "height" ], },
-    ],
-    apiCalls: [
-      {
-        apiCallName: "t2i",
-        results: [
-          {
-            resultName: "generated-image",
-            resultType: "base64-image",
-            resultPath: [ "images", 0 ],
-          }
-        ],
-        host: "device",
-        port: 7860,
-        apiPath: "/sdapi/v1/txt2img",
-        method: "POST",
-        dataFormat: "JSON",
-        convertDataImages: false,
-        api: {
-          "batch_size": 1,
-          "cfg_scale": 7,
-          "disable_extra_networks": false,
-          "do_not_save_grid": false,
-          "do_not_save_samples": false,
-          "enable_hr": false,
-          "height": 1024,
-          "negative_prompt": "",
-          "prompt": "desktop cat",
-          "restore_faces": false,
-          "s_churn": 0,
-          "s_min_uncond": 0,
-          "s_noise": 1,
-          "s_tmax": null,
-          "s_tmin": 0,
-          "sampler_name": "DPM++ 3M SDE Exponential",
-          "script_name": null,
-          "seed": 3718586839,
-          "steps": 50,
-          "tiling": false,
-          "width": 1024,
-        }
-      },
-    ]
-  },
- */
-
-  {
-    isDemo: true,
-    //just replicate t2i functionality: prompt -> lightning
-    apiFlowName: "A1111 Lightning Demo",
-    apiFlowType: "generative",
-    outputs: [
-      {
-        outputName: "generated-image",
-        outputType: "image", //could be images array maybe
-        outputResultPath: [ "t2i", "generated-image" ]
-      }
-    ],
-    controls: [
-      {
-        controlName: "prompt",
-        controlType: "text",
-        controlValue: "desktop cat",
-        controlPath: [ "t2i", "api", "prompt" ],
-      },
-      { controlName: "apiPath", controlType: "static", controlValue: "/sdapi/v1/txt2img", controlPath: [ "t2i", "apiPath" ], },
-      { controlName: "seed", controlType: "randomInt", controlPath: [ "t2i", "api", "seed" ], },
-      { controlName: "sampler", controlType: "static", controlValue:"DPM++ SDE", controlPath: [ "t2i", "api", "sampler_name" ], },
-      { controlName: "steps", controlType: "static", controlValue:4, controlPath: [ "t2i", "api", "steps" ], },
-      { controlName: "cfg", controlType: "static", controlValue:1.5, controlPath: [ "t2i", "api", "cfg_scale" ], },
-      { controlName: "width", controlType: "static", controlValue:1024, controlPath: [ "t2i", "api", "width" ], },
-      { controlName: "height", controlType: "static", controlValue:1024, controlPath: [ "t2i", "api", "height" ], },
-    ],
-    apiCalls: [
-      {
-        apiCallName: "t2i",
-        results: [
-          {
-            resultName: "generated-image",
-            resultType: "base64-image", //could be images array maybe
-            resultPath: [ "images", 0 ],
-          }
-        ],
-        host: "device",
-        port: 7860,
-        apiPath: "/sdapi/v1/txt2img",
-        method: "POST",
-        dataFormat: "JSON",
-        convertDataImages: false,
-        api: {
-          "alwayson_scripts": {
-            "ControlNet": {
-              "args": [
-                {
-                  "advanced_weighting": null,
-                  "batch_images": "",
-                  "control_mode": "Balanced",
-                  "enabled": false,
-                  "guidance_end": 1,
-                  "guidance_start": 0,
-                  "hr_option": "Both",
-                  "image": null,
-                  "inpaint_crop_input_image": false,
-                  "input_mode": "simple",
-                  "is_ui": true,
-                  "loopback": false,
-                  "low_vram": false,
-                  "model": "None",
-                  "module": "none",
-                  "output_dir": "",
-                  "pixel_perfect": false,
-                  "processor_res": -1,
-                  "resize_mode": "Crop and Resize",
-                  "save_detected_map": true,
-                  "threshold_a": -1,
-                  "threshold_b": -1,
-                  "weight": 1
-                }
-              ]
-            }
-          },
-          "batch_size": 1,
-          "cfg_scale": 7,
-          "comments": {},
-          "disable_extra_networks": false,
-          "do_not_save_grid": false,
-          "do_not_save_samples": false,
-          "enable_hr": false,
-          "height": 1024,
-          "hr_negative_prompt": "",
-          "hr_prompt": "",
-          "hr_resize_x": 0,
-          "hr_resize_y": 0,
-          "hr_scale": 2,
-          "hr_second_pass_steps": 0,
-          "hr_upscaler": "Latent",
-          "n_iter": 1,
-          "negative_prompt": "",
-          "override_settings": {},
-          "override_settings_restore_afterwards": true,
-          "prompt": "desktop cat",
-          "restore_faces": false,
-          "s_churn": 0,
-          "s_min_uncond": 0,
-          "s_noise": 1,
-          "s_tmax": null,
-          "s_tmin": 0,
-          "sampler_name": "DPM++ 3M SDE Exponential",
-          "script_args": [],
-          "script_name": null,
-          "seed": 3718586839,
-          "seed_enable_extras": true,
-          "seed_resize_from_h": -1,
-          "seed_resize_from_w": -1,
-          "steps": 50,
-          "styles": [],
-          "subseed": 4087077444,
-          "subseed_strength": 0,
-          "tiling": false,
-          "width": 1024,
-        }
-      },
-    ]
-  },
-]
+const apiFlows = []
 
 setup();

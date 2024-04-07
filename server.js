@@ -102,6 +102,34 @@ const server = http.createServer(
                     response.end( 'APIFlow filename not recognized.' );
                 }
             }
+            if( url === '/apiFlows' ) {
+                const apiFlowsFolder = "res/apiFlows";
+                const apiFileNames = [];
+                const directory = fss.readdirSync( apiFlowsFolder, { withFileTypes: true } );
+                console.log( "Got directory ", directory );
+                for( const fileEntry of directory ) {
+                    if( fileEntry.isFile() && ! fileEntry.isDirectory() ) {
+                        apiFileNames.push( `"${fileEntry.name}"` );
+                    }
+                }
+                response.writeHead( 200, { 'Content-Type': 'text/json' } );
+                response.write( "[" + apiFileNames.join(",") + "]" );
+                response.end();
+            }
+            if( url === '/brushes' ) {
+                const brushesFolder = "res/brushes";
+                const brushFiles = [];
+                const directory = fss.readdirSync( brushesFolder, { withFileTypes: true } );
+                console.log( "Got directory ", directory );
+                for( const fileEntry of directory ) {
+                    if( fileEntry.isFile() && ! fileEntry.isDirectory() ) {
+                        brushFiles.push( fss.readFileSync( "res/brushes/" + fileEntry.name ) );
+                    }
+                }
+                response.writeHead( 200, { 'Content-Type': 'text/json' } );
+                response.write( "[" + brushFiles.join(",") + "]" );
+                response.end();
+            }
 
             if( url.indexOf( '/paper.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
@@ -273,7 +301,7 @@ const server = http.createServer(
                                         responseData.push( chunk );
                                     } );
                                     forwardedResponse.on( 'end', () => {
-                                        console.log( "Responding with reflected POST: ", responseData );
+                                        //console.log( "Responding with reflected POST: ", responseData );
                                         const responseString = responseData.join( "" );
                                         //console.log( "Reflected response: ", responseString );
                                         response.writeHead( 200 , {
