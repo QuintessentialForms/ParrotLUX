@@ -3128,14 +3128,19 @@ let uiSettings = {
 
   //defaultAPIFlowName: "A1111 Lightning Demo txt2img Mini",
   //defaultAPIFlowName: "A1111 txt2img",
-  allowAlienHost: true,
   defaultAPIFlowName: null,
   generativeControls: {},
   apiFlowNamesUsed: [],
   defaultFilterName: "basic",
+
   retryAPIDelay: 2000,
+
   backendPort: 7860,
   appPort: 6789,
+
+  allowAlienHost: true,
+  alienHostAddress: "device",
+
 
   clickTimeMS: 350,
 
@@ -11623,8 +11628,12 @@ async function executeAPICall( name, controlValues ) {
   const apiResults = {};
   let retryCount = 0;
   for( let i=0; i<apiFlow.apiCalls.length; i ) {
-  //for( apiCall of apiFlow.apiCalls ) {
+
     const apiCall = apiFlow.apiCalls[ i ];
+
+    if( apiCall.port !== uiSettings.appPort && apiCall.host === "device" && uiSettings.allowAlienHost )
+      apiCall.host = uiSettings.alienHostAddress;
+
     if( verboseAPICall ) console.log( "On apicall ", apiCall.apiCallName )
 
     let resultSchemeExpectingRawFile = false;
