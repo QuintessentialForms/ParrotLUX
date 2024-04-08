@@ -13,7 +13,7 @@
   ],
   "controls": [
     {
-      "controlName": "prompt",
+      "controlName": "Prompt",
       "controlType": "text",
       "controlValue": "desktop cat",
       "controlPath": [
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "controlName": "negative-prompt",
+      "controlName": "Negative Prompt",
       "controlType": "text",
       "controlValue": "",
       "controlPath": [
@@ -42,7 +42,7 @@
       ]
     },
     {
-      "controlName": "seed",
+      "controlName": "Seed",
       "controlType": "randomInt",
       "min": 0,
       "max": 999999999,
@@ -54,7 +54,7 @@
       ]
     },
     {
-      "controlName": "steps",
+      "controlName": "Steps",
       "controlType": "number",
       "min": 1,
       "max": 100,
@@ -67,12 +67,12 @@
       ]
     },
     {
-      "controlName": "cfg",
+      "controlName": "CFG",
       "controlType": "number",
       "controlValue": 1.5,
       "min": 1,
       "max": 20,
-      "step": 0.5,
+      "step": 0.1,
       "controlPath": [
         "t2i",
         "api",

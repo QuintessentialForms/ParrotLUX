@@ -83,7 +83,7 @@
       "controlType": "number",
       "min": 1,
       "max": 50,
-      "step": 0.25,
+      "step": 0.1,
       "controlValue": 1.5,
       "controlPath": [
         "sd-prompt",
@@ -153,7 +153,7 @@
       ]
     },
     {
-      "controlName": "seed",
+      "controlName": "Seed",
       "controlType": "randomInt",
       "min": 0,
       "max": 999999999,

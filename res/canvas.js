@@ -3129,6 +3129,8 @@ let uiSettings = {
   //defaultAPIFlowName: "A1111 Lightning Demo txt2img Mini",
   //defaultAPIFlowName: "A1111 txt2img",
   defaultAPIFlowName: null,
+  generativeControls: {},
+  apiFlowNamesUsed: [],
   defaultFilterName: "basic",
   retryAPIDelay: 2000,
   backendPort: 7860,
@@ -6150,6 +6152,78 @@ function setupUIFiltersControls( filterName ) {
 
 }
 
+function findAndPropagateControlValue( apiFlowName, controlName ) {
+
+  if( ! selectedLayer.generativeControls.hasOwnProperty( apiFlowName ) )
+    selectedLayer.generativeControls[ apiFlowName ] = {};
+
+  if( ! uiSettings.generativeControls.hasOwnProperty( apiFlowName ) )
+    uiSettings.generativeControls[ apiFlowName ] = {};
+
+  if( uiSettings.apiFlowNamesUsed[ 0 ] !== apiFlowName ) {
+    const usedIndex = uiSettings.apiFlowNamesUsed.indexOf( apiFlowName );
+    if( usedIndex > -1 ) uiSettings.apiFlowNamesUsed.splice( usedIndex, 1 );
+    uiSettings.apiFlowNamesUsed.unshift( apiFlowName );
+  }
+
+  let controlValue = undefined;
+  if( selectedLayer.generativeControls[ apiFlowName ].hasOwnProperty( controlName ) )
+    controlValue = selectedLayer.generativeControls[ apiFlowName ][ controlName ];
+  else if( uiSettings.generativeControls[ apiFlowName ].hasOwnProperty( controlName ) )
+    controlValue = uiSettings.generativeControls[ apiFlowName ][ controlName ];
+  else {
+    //go hunting for controlname
+    for( const usedAPIFlowName of uiSettings.apiFlowNamesUsed ) {
+      const controls = uiSettings.generativeControls[ usedAPIFlowName ] || {};
+      if( controls.hasOwnProperty( controlName ) ) {
+        controlValue = controls[ controlName ];
+        break;
+      }
+    }
+  }
+  
+  const apiFlow = apiFlows.find( flow => flow.apiFlowName === apiFlowName );
+  const apiFlowControl = apiFlow?.controls?.find?.( c => c.controlName === controlName );
+  
+  //did we find it?
+  if( controlValue === undefined ) {
+    //nope. :-(
+    if( ! apiFlow ) return undefined; //Just bad luck all around. How did we even get here?
+    if( apiFlowControl?.hasOwnProperty?.( "controlValue" ) )
+      controlValue = apiFlowControl.controlValue; //shouldn't be undefined, as that's not valid JSON!
+  }
+
+  //okay, we did the best we could. Let's go ahead and propagate it.
+  selectedLayer.generativeControls[ apiFlowName ][ controlName ] = controlValue;
+  uiSettings.generativeControls[ apiFlowName ][ controlName ] = controlValue;
+  if( apiFlowControl ) apiFlowControl.controlValue = controlValue;
+
+  return controlValue;
+
+}
+function updateControlValue( apiFlowName, controlName, controlValue ) {
+
+  if( ! selectedLayer.generativeControls.hasOwnProperty( apiFlowName ) )
+    selectedLayer.generativeControls[ apiFlowName ] = {};
+
+  if( ! uiSettings.generativeControls.hasOwnProperty( apiFlowName ) )
+    uiSettings.generativeControls[ apiFlowName ] = {};
+
+  if( uiSettings.apiFlowNamesUsed[ 0 ] !== apiFlowName ) {
+    const usedIndex = uiSettings.apiFlowNamesUsed.indexOf( apiFlowName );
+    if( usedIndex > -1 ) uiSettings.apiFlowNamesUsed.splice( usedIndex, 1 );
+    uiSettings.apiFlowNamesUsed.unshift( usedIndex );
+  }
+
+  selectedLayer.generativeControls[ apiFlowName ][ controlName ] = controlValue;
+  uiSettings.generativeControls[ apiFlowName ][ controlName ] = controlValue;
+
+  const apiFlow = apiFlows.find( flow => flow.apiFlowName === apiFlowName );
+  const apiFlowControl = apiFlow?.controls?.find?.( c => c.controlName === controlName );
+  if( apiFlowControl ) apiFlowControl.controlValue = controlValue;
+  
+}
+
 function setupUIGenerativeControls( apiFlowName ) {
 
   if( ! setupUIGenerativeControls.init ) {
@@ -6169,14 +6243,15 @@ function setupUIGenerativeControls( apiFlowName ) {
   const imageInputsPanel = document.querySelector( "#generative-controls-images-inputs-panel");
   imageInputsPanel.innerHTML = "";
 
-  if( apiFlowName === null ) {
+  if( ! apiFlowName ) {
     setupUIGenerativeControls.currentApiFlowName = null;
     controlsPanel.apiFlowName = null;
+    selectedLayer.generativeSettings.apiFlowName = null;
     return; //nothing to do here
   }
 
   //assign name everywhere
-  selectedLayer.generativeControls[ apiFlowName ] ||= {};
+  selectedLayer.generativeSettings.apiFlowName = apiFlowName;
   setupUIGenerativeControls.currentApiFlowName = apiFlowName;
   controlsPanel.apiFlowName = apiFlowName;
 
@@ -6185,11 +6260,11 @@ function setupUIGenerativeControls( apiFlowName ) {
   const apiFlow = apiFlows.find( flow => flow.apiFlowName === apiFlowName );
   for( const controlScheme of apiFlow.controls ) {
 
-    //load control from layer if any
-    controlScheme.controlValue = selectedLayer.generativeControls[ apiFlowName ]?.[ controlScheme.controlName ] || controlScheme.controlValue;
-
+    //load prioritized control value if we can find one
+    findAndPropagateControlValue( apiFlowName, controlScheme.controlName );
+    //controlScheme.controlValue = selectedLayer.generativeControls[ apiFlowName ]?.[ controlScheme.controlName ] || controlScheme.controlValue;
     //store control value in selected layer
-    selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
+    //selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
 
     //make the element from the type
     if( controlScheme.controlType === "asset" ) {
@@ -6222,7 +6297,9 @@ function setupUIGenerativeControls( apiFlowName ) {
             const callback = asset => {
               buttonText.textContent = "↓ " + asset.name;
               controlScheme.controlValue = asset.name;
-              selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
+              updateControlValue( apiFlowName, controlScheme.controlName, asset.name );
+              //selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
+              //uiSettings.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
               const assetBasisControls = apiFlow.controls.filter( c => !!c.assetBasis );
               for( const basedControl of assetBasisControls ) {
                 for( const basis of basedControl.assetBasis ) {
@@ -6307,8 +6384,10 @@ function setupUIGenerativeControls( apiFlowName ) {
             textInput.onapply = text => {
               controlElementText.textContent = text;
               controlScheme.controlValue = text;
+              updateControlValue( apiFlowName, controlScheme.controlName, text );
               //store updated value in selected layer
-              selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
+              //selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
+              //uiSettings.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
             }
             textInput.show();
           } 
@@ -6327,7 +6406,12 @@ function setupUIGenerativeControls( apiFlowName ) {
         slideMode: "contain-step",
         onstart: () => {},
         onupdate: () => {},
-        onend: value => controlScheme.controlValue = value,
+        onend: value => {
+          controlScheme.controlValue = value;
+          updateControlValue( apiFlowName, controlScheme.controlName, value );
+          //selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
+          //uiSettings.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
+        },
       });
       controlElement.controlName = controlScheme.controlName;
       controlElement.classList.add( "control-element" );

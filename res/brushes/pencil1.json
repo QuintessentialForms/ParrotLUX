@@ -1,0 +1,16 @@
+{
+    "name": "Pencil",
+    "brushTips": ["res/img/brushes/tip-pencil01.png"],
+    "brushTiltScale": 40,
+    "brushTiltMinAngle": 0.25,
+    "brushSize": 5,
+    "minBrushSize": 2,
+    "maxBrushSize": 7,
+    "brushOpacity": 1,
+    "brushBlur": 0,
+    "minBrushBlur": 0,
+    "maxBrushBlur": 0.5,
+    "brushSpacing": 0.1,
+    "pressureOpacityCurvePoints": [[0,0],[1,1]],
+    "pressureScaleCurvePoints": [[0,1],[1,1]]
+}

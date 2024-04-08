@@ -196,7 +196,7 @@
       ]
     },
     {
-      "controlName": "B-Sampler",
+      "controlName": "B Sampler",
       "controlType": "duplicate",
       "controlSourceName": "Sampler",
       "controlValue": "ddpm",
@@ -210,7 +210,7 @@
       ]
     },
     {
-      "controlName": "B-Scheduler",
+      "controlName": "B Scheduler",
       "controlType": "duplicate",
       "controlSourceName": "Scheduler",
       "controlValue": "simple",
@@ -314,7 +314,7 @@
       ]
     },
     {
-      "controlName": "seed",
+      "controlName": "Seed",
       "controlType": "randomInt",
       "min": 0,
       "max": 999999999,

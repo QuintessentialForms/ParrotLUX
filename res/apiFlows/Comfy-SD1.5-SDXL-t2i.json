@@ -113,7 +113,7 @@
       ]
     },
     {
-      "controlName": "seed",
+      "controlName": "Seed",
       "controlType": "randomInt",
       "min": 0,
       "max": 999999999,
