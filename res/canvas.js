@@ -11864,7 +11864,7 @@ async function executeAPICall( name, controlValues ) {
           //apiCall.api has been modified from controlValues, and is ready to send
           xhr.send(new Blob([JSON.stringify(postData)],{"Content-Type":"application/json"}));
         }
-        if( apiCall.method === "GET" || uiSettings.allowAlienHost === true ) {
+        if( apiCall.method === "GET" ) {
           const postData = {
             method: "GET",
             //url: "http://127.0.0.1:"+ apiCall.port + apiCall.apiPath,
