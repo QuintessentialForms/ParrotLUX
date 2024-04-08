@@ -28,7 +28,7 @@ let displayAddress = ipAddress;
 ipAddress = "0.0.0.0";
 
 const http = require( 'http' );
-const fs = require( 'fs/promises' );
+//const fs = require( 'fs/promises' ); //not available by default on linux??? IDK nodejs... :-/
 const fss = require( "fs" );
 const host = ipAddress;
 const port = 6789;
@@ -47,26 +47,26 @@ const server = http.createServer(
             
             if( url === '/' ) {
                 response.writeHead( 200 , { 'Content-Type': 'text/html' } );
-                const indexFile = await fs.readFile( 'res/canvas.html' );
+                const indexFile = fss.readFileSync( 'res/canvas.html' );
                 response.write( indexFile );
                 //response.end( '\n<!-- Comment at end of file! -->\n' );
                 response.end();
             }
             if( url.indexOf( '/store.js' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'text/javascript' } );
-                const codeFile = await fs.readFile( 'res/store.js' );
+                const codeFile = fss.readFileSync( 'res/store.js' );
                 response.write( codeFile );
                 response.end();
             }
             if( url.indexOf( '/canvas.js' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'text/javascript' } );
-                const codeFile = await fs.readFile( 'res/canvas.js' );
+                const codeFile = fss.readFileSync( 'res/canvas.js' );
                 response.write( codeFile );
                 response.end();
             }
             if( url.indexOf( '/canvas.css' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'text/css' } );
-                const styleFile = await fs.readFile( 'res/canvas.css' );
+                const styleFile = fss.readFileSync( 'res/canvas.css' );
                 response.write( styleFile );
                 response.end();
             }
@@ -78,7 +78,7 @@ const server = http.createServer(
                     ref = "res/img/ui/icon-" + iconName + ".png";
                 if( okay ) { okay = fss.existsSync( ref ); }
                 if( okay ) {
-                    const iconImageFile = await fs.readFile( ref );
+                    const iconImageFile = fss.readFileSync( ref );
                     response.writeHead( 200 , { 'Content-Type': 'image/png' } );
                     response.write( iconImageFile );
                     response.end();
@@ -93,7 +93,7 @@ const server = http.createServer(
                     ref = "res/apiFlows/" + apiFlowName + ".json";
                 if( okay ) { okay = fss.existsSync( ref ); }
                 if( okay ) {
-                    const apiFlowJSONFile = await fs.readFile( ref );
+                    const apiFlowJSONFile = fss.readFileSync( ref );
                     response.writeHead( 200 , { 'Content-Type': 'text/json' } );
                     response.write( apiFlowJSONFile );
                     response.end();
@@ -133,37 +133,37 @@ const server = http.createServer(
 
             if( url.indexOf( '/paper.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = await fs.readFile( 'res/paper.png' );
+                const paperFile = fss.readFileSync( 'res/paper.png' );
                 response.write( paperFile );
                 response.end();
             }
             if( url.indexOf( '/ColorWheel-Base.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = await fs.readFile( 'res/ColorWheel-Base.png' );
+                const paperFile = fss.readFileSync( 'res/ColorWheel-Base.png' );
                 response.write( paperFile );
                 response.end();
             }
             if( url.indexOf( '/ColorWheel-Slots-Lower.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = await fs.readFile( 'res/ColorWheel-Slots-Lower.png' );
+                const paperFile = fss.readFileSync( 'res/ColorWheel-Slots-Lower.png' );
                 response.write( paperFile );
                 response.end();
             }
             if( url.indexOf( '/ColorWheel-Slots-Upper.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = await fs.readFile( 'res/ColorWheel-Slots-Upper.png' );
+                const paperFile = fss.readFileSync( 'res/ColorWheel-Slots-Upper.png' );
                 response.write( paperFile );
                 response.end();
             }
             if( url.indexOf( '/res/img/brushes/tip-pencil01.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = await fs.readFile( 'res/img/brushes/tip-pencil01.png' );
+                const paperFile = fss.readFileSync( 'res/img/brushes/tip-pencil01.png' );
                 response.write( paperFile );
                 response.end();
             }
             if( url.indexOf( '/res/img/brushes/tip-round01.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = await fs.readFile( 'res/img/brushes/tip-round01.png' );
+                const paperFile = fss.readFileSync( 'res/img/brushes/tip-round01.png' );
                 response.write( paperFile );
                 response.end();
             }
@@ -292,7 +292,7 @@ const server = http.createServer(
                             }
 
                             const postRequest = http.request(
-                                `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}`,
+                                `http://${requestOptions.host}${requestOptions.port ? `:${json.port}` : ""}${json.path}`,
                                 requestOptions,
                                 forwardedResponse => {
                                     //forwardedResponse.setEncoding( "utf8" );
@@ -335,7 +335,7 @@ const server = http.createServer(
 
                             try {
                                 getRequest = http.request(
-                                    `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}`,
+                                    `http://${requestOptions.host}${requestOptions.port ? `:${json.port}` : ""}${json.path}`,
                                     requestOptions,
                                     forwardedResponse => {
                                         //forwardedResponse.setEncoding( "utf8" );

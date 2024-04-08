@@ -3128,6 +3128,7 @@ let uiSettings = {
 
   //defaultAPIFlowName: "A1111 Lightning Demo txt2img Mini",
   //defaultAPIFlowName: "A1111 txt2img",
+  allowAlienHost: true,
   defaultAPIFlowName: null,
   generativeControls: {},
   apiFlowNamesUsed: [],
@@ -11837,13 +11838,13 @@ async function executeAPICall( name, controlValues ) {
 
         }
       }
-      if( apiCall.host === "device" ) {
+      if( apiCall.host === "device" || uiSettings.allowAlienHost === true ) {
         if( apiCall.method === "POST" ) {
           const postData = {
             method: "POST",
             //url: "http://127.0.0.1:"+ apiCall.port + apiCall.apiPath,
             path: apiCall.apiPath,//path: "/sdapi/v1/txt2img",
-            host: "device",
+            host: apiCall.host,
             port: apiCall.port, //port: '7860',
             dataFormat: apiCall.dataFormat,
             convertDataImages: !!apiCall.convertDataImages,
@@ -11854,12 +11855,12 @@ async function executeAPICall( name, controlValues ) {
           //apiCall.api has been modified from controlValues, and is ready to send
           xhr.send(new Blob([JSON.stringify(postData)],{"Content-Type":"application/json"}));
         }
-        if( apiCall.method === "GET" ) {
+        if( apiCall.method === "GET" || uiSettings.allowAlienHost === true ) {
           const postData = {
             method: "GET",
             //url: "http://127.0.0.1:"+ apiCall.port + apiCall.apiPath,
             path: apiCall.apiPath,//path: "/sdapi/v1/txt2img",
-            host: "device",
+            host: apiCall.host,
             port: apiCall.port, //port: '7860',
             //apiData: apiCall.api
           }
