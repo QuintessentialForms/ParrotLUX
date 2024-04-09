@@ -239,6 +239,61 @@ body {
     box-sizing: border-box;
 }
 
+
+#filename-input-overlay .overlay-close-button:hover {
+    border: 1px solid var(--white);
+}
+#filename-input-overlay .overlay-close-button {
+    border: 1px solid transparent;
+    position:absolute;
+    left:calc( 50vw - ( min( 100vw, 100vh ) / 6 ) );
+    top: 1.5rem;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 1rem;
+    background-image: url('icon/x.png');
+    background-size:contain;
+    background-position:center;
+    background-repeat:no-repeat;
+    box-sizing: border-box;
+}
+#filename-input-overlay .overlay-filename-input {
+    position:absolute;
+    left:calc( 50vw - ( min( 100vw, 100vh ) / 6 ) );
+    top: 5rem;
+    width: calc( min( 100vw, 100vh ) / 3 );
+    height: 2rem;
+    resize: none;
+    box-sizing: border-box;
+    margin:0;
+    padding:1rem;
+    border-radius: 1rem;
+    border:1px solid black;
+    background-color: var(--white);
+    text-align: center;
+}
+#filename-input-overlay .overlay-filename-input:focus {
+    outline:none;
+    box-shadow: 0 0 1rem 0 var(--white);
+}
+#filename-input-overlay .overlay-apply-button:hover {
+    box-shadow: 0 0 1rem 0 var(--white);
+}
+#filename-input-overlay .overlay-apply-button {
+    position:absolute;
+    left:calc( ( 50vw + ( min( 100vw, 100vh ) / 6 ) ) - 6rem );
+    top: 8rem;
+    width: 6rem;
+    height: 3rem;
+    border-radius: 1rem;
+    background-color: var(--high);
+    background-image: url('icon/save.png');
+    background-size:contain;
+    background-position:center;
+    background-repeat:no-repeat;
+    box-sizing: border-box;
+}
+
 #asset-browser-container {
     --asset-list-height: 100vh;
     --asset-list-width: 50vw;

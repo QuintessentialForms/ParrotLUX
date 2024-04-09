@@ -375,6 +375,15 @@
         "image",
         "image"
       ]
+    },
+    {
+      "controlName": "apiPort",
+      "controlType": "apiPort",
+      "controlValue": 7860,
+      "controlPath": [
+        "get-controlnet-preprocessors-array",
+        "port"
+      ]
     }
   ],
   "apiCalls": [

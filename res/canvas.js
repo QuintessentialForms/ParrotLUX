@@ -3119,6 +3119,8 @@ const nonSavedSettingsPaths = [
 
 let uiSettings = {
 
+  filename: "[automatic]",
+
   gpuPaint: 2,
   showDebugInfo: false,
 
@@ -3140,6 +3142,17 @@ let uiSettings = {
 
   allowAlienHost: true,
   alienHostAddress: "device",
+
+  /* hosts: {
+    "ComfyUI": {
+      address: "device",
+      port: 8188
+    },
+    "A1111": {
+      address: "device",
+      port: 7860
+    },
+  }, */
 
 
   clickTimeMS: 350,
@@ -5185,6 +5198,64 @@ function setupUI() {
       overlayContainer.appendChild( numberInputOverlay );
     }
 
+    //the project-filename-save overlay
+    {
+      //full-screen overlay
+      const filenameSaveOverlay = document.createElement( "div" );
+      filenameSaveOverlay.classList.add( "overlay-background", "hidden", "real-input", "animated" );
+      filenameSaveOverlay.id = "filename-input-overlay";
+      filenameSaveOverlay.onapply = () => {
+        let filename = document.querySelector( ".overlay-filename-input" ).value;
+        filename = filename.replace( /[^\w\d_ !.()[\]{}+-]/gmi, "" );
+        document.querySelector( ".overlay-filename-input" ).value = filename || "[automatic]";
+        uiSettings.filename = filename || "[automatic]";
+        saveJSON();
+      };
+      filenameSaveOverlay.show = () => {
+        filenameSaveOverlay.classList.remove( "hidden" );
+        filenameInput.focus();
+        disableKeyTrapping();
+      };
+      //back/close button
+      const closeButton = document.createElement( "div" );
+      closeButton.classList.add( "overlay-close-button", "overlay-element", "animated" );
+      closeButton.onclick = () => {
+        closeButton.classList.add( "pushed" );
+        setTimeout( ()=>closeButton.classList.remove("pushed"), UI.animationMS );
+        enableKeyTrapping();
+        filenameSaveOverlay.classList.add( "hidden" );
+      }
+      closeButton.role = "button"; closeButton.tabIndex = "0";
+      closeButton.onkeydown = e => {
+        if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick();
+      }
+      filenameSaveOverlay.appendChild( closeButton );
+      //text input
+      const filenameInput = document.createElement( "input" );
+      filenameInput.type = "text";
+      filenameInput.onkeydown = e => {
+        if( e.code === "Escape" ) closeButton.onclick();
+        if( e.code === "Enter" || e.code === "NumpadEnter" ) applyButton.onclick();
+      }
+      filenameInput.classList.add( "overlay-filename-input", "overlay-element", "animated" );
+      filenameSaveOverlay.appendChild( filenameInput );
+      //the apply/save button
+      const applyButton = document.createElement( "div" );
+      applyButton.classList.add( "overlay-apply-button", "overlay-element", "animated" );
+      applyButton.onclick = () => {
+        applyButton.classList.add( "pushed" );
+        setTimeout( ()=>applyButton.classList.remove("pushed"), UI.animationMS );
+        enableKeyTrapping();
+        filenameSaveOverlay.classList.add( "hidden" );
+        filenameSaveOverlay.onapply( filenameInput.value );
+      }
+      applyButton.role = "button"; applyButton.tabIndex = "0";
+      applyButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) applyButton.onclick(); }
+      filenameSaveOverlay.appendChild( applyButton );
+
+      overlayContainer.appendChild( filenameSaveOverlay );
+    }
+
     //the error notification overlay
     {
       //full-screen overlay
@@ -5463,7 +5534,7 @@ function setupUI() {
       homeRow.appendChild( saveButton );
       UI.registerElement(
         saveButton,
-        { onclick: () => saveJSON() },
+        { onclick: () => UI.showOverlay.save() },
         { tooltip: [ "Save Project", "below", "to-right-of-center" ] },
       )
     }
@@ -6267,7 +6338,8 @@ function setupUIGenerativeControls( apiFlowName ) {
   for( const controlScheme of apiFlow.controls ) {
 
     //load prioritized control value if we can find one
-    findAndPropagateControlValue( apiFlowName, controlScheme.controlName );
+    if( [ "asset", "text", "number" ].includes( controlScheme.controlType ) )
+      findAndPropagateControlValue( apiFlowName, controlScheme.controlName );
     //controlScheme.controlValue = selectedLayer.generativeControls[ apiFlowName ]?.[ controlScheme.controlName ] || controlScheme.controlValue;
     //store control value in selected layer
     //selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
@@ -6786,7 +6858,9 @@ function saveJSON() {
   const saveFileString = JSON.stringify( saveFile );
 
   const a = document.createElement( "a" );
-  a.download = "ParrotLUX - save - " + Date.now() + ".json";
+  if( uiSettings.filename === "automatic" )
+    a.download = "ParrotLUX - save - " + Date.now() + ".json";
+  else a.download = uiSettings.filename + ".json";
   const b = new Blob( [saveFileString], { type: "application/json" } );
   a.href = URL.createObjectURL( b );
   document.body.appendChild( a );
@@ -7017,6 +7091,11 @@ const UI = {
       numberInputOverlay.onapply = onapply;
       numberInputOverlay.show();
     },
+    save: () => {
+      const saveOverlay = document.querySelector( "#filename-input-overlay" );
+      document.querySelector( ".overlay-filename-input" ).value = uiSettings.filename;
+      saveOverlay.show();
+    },
     error: errorHTML => {
       const errorNotificationOverlay = document.querySelector( "#error-notification-overlay" );
       errorNotificationOverlay.querySelector( ".overlay-error-notification" ).innerHTML = errorHTML;
@@ -7025,7 +7104,7 @@ const UI = {
     generating: () => {
       const generatingOverlay = document.querySelector( "#generating-overlay" );
       generatingOverlay.show();
-    }
+    },
   },
   hideOverlay: {
     generating: () => {
@@ -11610,7 +11689,7 @@ const wait = delay => new Promise( land => setTimeout( land, delay ) );
 
 const apiExecutionQueue = [];
 
-const verboseAPICall = false;
+const verboseAPICall = true;
 async function executeAPICall( name, controlValues ) {
 
   if( verboseAPICall ) console.log( "Executing API call: ", name );
