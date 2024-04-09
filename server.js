@@ -155,7 +155,14 @@ const server = http.createServer(
                 response.write( paperFile );
                 response.end();
             }
-            if( url.indexOf( '/res/img/brushes/tip-pencil01.png' ) === 0 ) {
+            if( url.indexOf( '/res/img/brushes/' ) === 0 ) {
+                const filename = url.replace( '/res/img/brushes/', '' );
+                response.writeHead( 200 , { 'Content-Type': 'image/png' } );
+                const brushtipFile = fss.readFileSync( 'res/img/brushes/' + filename );
+                response.write( brushtipFile );
+                response.end();
+            }
+            /* if( url.indexOf( '/res/img/brushes/tip-pencil01.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
                 const paperFile = fss.readFileSync( 'res/img/brushes/tip-pencil01.png' );
                 response.write( paperFile );
@@ -166,7 +173,7 @@ const server = http.createServer(
                 const paperFile = fss.readFileSync( 'res/img/brushes/tip-round01.png' );
                 response.write( paperFile );
                 response.end();
-            }
+            } */
 
             if( url === '/favicon.ico' ) {
                 response.writeHead( 404 , { 'Content-Type': 'text/plain' } );

@@ -8773,6 +8773,7 @@ function beginPaintGPU2( layer ) {
   const brushTipImage = uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages[ 0 ];
   const brushTipCanvas = paintGPUResources2.brushTipCanvas;
   {
+    //This blue code is a total mess, and the result is unusably bad. Seriously. I need to write it myself instead of relying on the browser's awful implementation.
     const { brushBlur, brushSize } = uiSettings.toolsSettings.paint.modeSettings.all;
     const blur = brushBlur * brushSize;
     let w = brushTipCanvas.width = brushSize + 6 * blur;
@@ -8930,7 +8931,7 @@ function paintGPU2( points, layer ) {
 
   paintGPUResources2.brushDistanceTraveled += lineLength;
   
-  if( paintGPUResources2.brushDistanceTraveled < pixelSpacing ) {
+  if( false && paintGPUResources2.brushDistanceTraveled < pixelSpacing ) {
     //No paint yet. This is important; we're still wrestling with alpha-accumulation even on the GPU.
     //(And we should be. That's what physical media does. IP's no-fog painting is unnatural. Hmm... But is unnatural better???)
     return;
@@ -8977,8 +8978,8 @@ function paintGPU2( points, layer ) {
       //linearly interpolate our pressure and angles
       let paintPressure = bPressure*fr + aPressure*f,
         altitudeAngle = bAltitudeAngle*fr + aAltitudeAngle*f, //against screen z-axis
-        azimuthAngle = bAzimuthAngle*fr + aAzimuthAngle*f, //around screen, direction pointing
-        normalizedAltitudeAngle = 1 - ( altitudeAngle / 1.5707963267948966 ); //0 === perpendicular, 1 === parallel
+        azimuthAngle = bAzimuthAngle*fr + aAzimuthAngle*f; //around screen, direction pointing
+        //normalizedAltitudeAngle = 1 - ( altitudeAngle / 1.5707963267948966 ); //0 === perpendicular, 1 === parallel
 
       //when interpreting azimuth angle, we can't slerp from 6 -> 0.1 the long way, rather 6 -> 6.1
       if( Math.abs( bAzimuthAngle - aAzimuthAngle ) > 3.141 ) {
@@ -8994,13 +8995,19 @@ function paintGPU2( points, layer ) {
       //we're adding our current view angle
       azimuthAngle += Math.atan2( viewMatrices.current[ 1 ], viewMatrices.current[ 0 ] );
     
-      let unTiltClippedAltitudeAngle = Math.min( brushTiltMinAngle, normalizedAltitudeAngle ),
-        normalizedUnTiltClippedAltitudeAngle = unTiltClippedAltitudeAngle / brushTiltMinAngle,
-        tiltClippedAltitudeAngle = Math.max( 0, normalizedAltitudeAngle - brushTiltMinAngle ),
-        normalizedClippedAltitudeAngle = tiltClippedAltitudeAngle / ( 1 - brushTiltMinAngle ),
-        tiltScale = normalizedClippedAltitudeAngle * brushTiltScale;
+      //altitude ranges from PI/2 (vertical over tablet) to ~0.67 (as flat against tablet as can register)
+      //we're going to map it from 0 (vertical over tablet) to 1 (as flat as can register ~0.67)
+      const invertAltitudeAngle = ( Math.PI/2 - altitudeAngle ); //0 vertical to about 0.90 max tilt
+      const normalizedAltitudeAngle = Math.min( 1, ( invertAltitudeAngle / 0.90 ) ); //0 to 1 (maybe a little less)
 
-      let scaledBrushSize = brushSize * uiSettings.toolsSettings.paint.modeSettings.all.pressureScaleCurve( paintPressure ) * ( 1 + 1*brushBlur );
+      let clippedAngle;
+      if( normalizedAltitudeAngle < brushTiltMinAngle ) clippedAngle = 0;
+      else clippedAngle = ( normalizedAltitudeAngle - brushTiltMinAngle ) / ( 1.0 - brushTiltMinAngle );
+      
+      let tiltScale = clippedAngle * brushTiltScale;
+
+      const pointPressure = uiSettings.toolsSettings.paint.modeSettings.all.pressureScaleCurve( paintPressure );
+      let scaledBrushSize = brushSize * pointPressure * ( 1 + 1*brushBlur );
       let scaledOpacity = brushOpacity * uiSettings.toolsSettings.paint.modeSettings.all.pressureOpacityCurve( paintPressure );
   
       //our brush size in canvas pixels (this should probably be global pixels: scale again by layer canvas's scale)
@@ -9011,12 +9018,12 @@ function paintGPU2( points, layer ) {
 
       //if the pen is very vertical, we want to center the brush
       //as it leaves verticaliy, we want to offset it
+      //when angle === 0, center: xOffset = 0
+      //as soon as angle > 0, jump(ish) to the left-most edge of the image, minus the blur
+      let xOffset;
+      if( clippedAngle === 0 ) xOffset = 0;
+      else xOffset = ( scaledTipImageWidth/2 ) - Math.min( 1.0, clippedAngle*10 ) * ( 0.5 * brushBlur * scaledTipImageWidth );
 
-      //let xOffset = ( scaledTipImageWidth/2 ) * ( normalizedUnTiltClippedAltitudeAngle ) * ( 1 - brushBlur/2 );
-
-      //but only if this brush is expecting such an offset??? Will test when pencil tuning again
-      //let xOffset = ( scaledTipImageWidth/2 ) * ( normalizedUnTiltClippedAltitudeAngle ) * ( 1 - brushBlur/2 ) * tiltScale;
-      let xOffset = ( scaledTipImageWidth/2 ) * ( normalizedClippedAltitudeAngle ) * ( 1 - brushBlur/2 ) * Math.sqrt(tiltScale);
 
       //compute our verts
       {

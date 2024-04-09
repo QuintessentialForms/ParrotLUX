@@ -1,16 +1,16 @@
 {
     "name": "Pencil",
-    "brushTips": ["res/img/brushes/tip-pencil01.png"],
-    "brushTiltScale": 40,
-    "brushTiltMinAngle": 0.25,
+    "brushTips": ["res/img/brushes/soft-long-tip-textured.png"],
+    "brushTiltScale": 8,
+    "brushTiltMinAngle": 0.75,
     "brushSize": 5,
-    "minBrushSize": 2,
-    "maxBrushSize": 7,
+    "minBrushSize": 4,
+    "maxBrushSize": 20,
     "brushOpacity": 1,
     "brushBlur": 0,
     "minBrushBlur": 0,
-    "maxBrushBlur": 0.5,
+    "maxBrushBlur": 0.25,
     "brushSpacing": 0.1,
-    "pressureOpacityCurvePoints": [[0,0],[1,1]],
+    "pressureOpacityCurvePoints": [[0,0],[0.25,1],[1,1]],
     "pressureScaleCurvePoints": [[0,1],[1,1]]
 }
