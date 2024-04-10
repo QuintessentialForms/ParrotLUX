@@ -13,7 +13,7 @@
   ],
   "controls": [
     {
-      "controlName": "prompt",
+      "controlName": "Prompt",
       "controlType": "text",
       "controlValue": "desktop cat",
       "controlPath": [

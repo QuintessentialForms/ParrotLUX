@@ -113,6 +113,132 @@ function redo() {
   };
 }
 
+function updateAndMakeLayerFrame( layer ) {
+  let currentFrame = layer.frames[ layer.currentFrameIndex ];
+  if( ! currentFrame ) {
+    layer.currentFrameIndex = layer.frames.push( makeLayerFrame( layer ) ) - 1;
+    console.log( "added frame to layer" );
+  } else {
+    console.log( "Updated frame layer." );
+    updateLayerFrame( layer, currentFrame );
+  }
+}
+
+function makeLayerFrame( layer ) {
+  let frameType = layer.layerType;
+
+  const frame = { frameType, timeIndex: uiSettings.currentTimeSeekIndex };
+  updateLayerFrame( layer, frame );
+
+  return frame;
+}
+
+function updateLayerFrame( layer, frame, initGenerativeFrame = false ) {
+  //frames store equidimensioned-ish visual data representations
+  if( layer.layerType === "paint" ) {
+    const { fullSizeURL, thumbnailURL, dotURL } = getLayerCanvasURLs( layer );
+    frame.fullSizeURL = fullSizeURL;
+    frame.thumbnailURL = thumbnailURL;
+    frame.dotURL = dotURL;
+  }
+  if( layer.layerType === "pose" ) {
+    frame.rig = JSON.parse( JSON.stringify( layer.rig ) );
+  }
+  if( layer.layerType === "generative" && initGenerativeFrame === true ) {
+    frame.apiFlowName = layer.generativeSettings.apiFlowName;
+    frame.generativeControls = {
+      apiFlowName: JSON.parse( JSON.stringify( layer.generativeControls[ frame.apiFlowName ] ) )
+    };
+    //We won't change these URLs here. They aren't meant to change anyway.
+    const { fullSizeURL, thumbnailURL, dotURL } = getLayerCanvasURLs( layer );
+    frame.fullSizeURL = fullSizeURL;
+    frame.thumbnailURL = thumbnailURL;
+    frame.dotURL = dotURL;
+  }
+  if( layer.layerType === "text" ) {}
+  if( layer.layerType === "group" ) {}
+  if( layer.layerType === "filter" ) {}
+  if( layer.layerType === "model" ) {}
+}
+function makePaintFrameFromGenerativeFrame( frame ) {
+  return {
+    frameType: "paint",
+    timeIndex: frame.timeIndex,
+    fullSizeURL: frame.fullSizeURL,
+    thumbnailURL: frame.thumbnailURL,
+    dotURL: frame.dotURL
+  }
+}
+
+function getLayerCanvasURLs( layer ) {
+  const fullSizeURL = layer.canvas.toDataURL( "png" );
+  const previewLayer = getPreviewLayer();
+  const thumbnailSize = 84;
+  composeLayers( previewLayer, [layer], thumbnailSize / Math.max(layer.w,layer.h) );
+  const thumbnailURL = previewLayer.canvas.toDataURL( "png" );
+  const dotSize = 8;
+  composeLayers( previewLayer, [layer], dotSize / Math.max(layer.w,layer.h) );
+  const dotURL = previewLayer.canvas.toDataURL( "png" );
+  return { fullSizeURL, thumbnailURL, dotURL };
+}
+
+function loadLayerFrame( layer, frame, flagTextureChanged=true ) {
+  //Warning! If you're switching timeline frames, you NEED to save-update the current frame first, then load from storage. :-|
+  //(Actually, you can check if your layer is in layersToUpdateFrames to see if it has updates pending.)
+  return new Promise( r => {
+    const img = new Image();
+    img.src = frame.fullSizeURL;
+    img.onload = () => {
+      layer.context.clearRect( 0,0,layer.w,layer.h );
+      layer.context.drawImage( img, 0, 0 );
+      if( flagTextureChanged === true )
+        flagLayerTextureChanged( layer, null, true );
+    }
+    img.src = frame.fullSizeURL;
+  } )
+}
+
+const layersToUpdateFrames = new Set();
+let lullTimer = null;
+function updateFrameOnLull( layer ) {
+  if( layer ) layersToUpdateFrames.add( layer );
+  clearTimeout( lullTimer );
+  lullTimer = setTimeout( updateFrameAfterLull, uiSettings.paintBusyTimeout );
+}
+function updateFrameAfterLull() {
+  if( lullTimer !== null ) clearTimeout( lullTimer );
+  lullTimer = null;
+  const layer = [ ...layersToUpdateFrames ][ 0 ];
+  if( ! layer ) return;
+  layersToUpdateFrames.delete( layer );
+  updateAndMakeLayerFrame( layer );
+  if( layersToUpdateFrames.size > 0 ) updateFrameAfterLull();
+}
+function flushLayerUpdates() {
+  while( layersToUpdateFrames.size > 0 )
+    updateFrameAfterLull();
+}
+
+function makeFrameMergingFrameOntoFrame( topLayer, topFrame, lowerLayer, lowerFrame, respectOpacity=true ) {
+  //all layertypes and frametypes must be "paint"
+  const preview = getPreviewLayer();
+  loadLayerFrame( topLayer, topFrame, false );
+  loadLayerFrame( lowerLayer, lowerFrame, false );
+  sampleLayerInLayer( topLayer, lowerLayer, preview );
+  lowerLayer.context.save();
+  if( respectOpacity === true ) lowerLayer.globalAlpha = topLayer.opacity;
+  lowerLayer.context.drawImage( preview.canvas, 0, 0 );
+  lowerLayer.context.restore();
+  const mergedFrame = { frameType: "paint" }
+  updateLayerFrame( lowerLayer, mergedFrame );
+  //if you just merged a non-current frame, you need to reload the current!
+  return mergedFrame;
+}
+
+function getPreviewLayer() {
+  return layersStack.layers.find( l => l.layerType === "paint-preview" );
+}
+
 let layersAddedCount = -2;
 async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibling=null, doNotUpdate=false ) {
   
@@ -194,6 +320,9 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     generativeControls: {},
     filtersSettings: { filterName },
     filterControls: {},
+
+    currentFrameIndex: -1,
+    frames: [],
 
 
     
@@ -758,37 +887,6 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
       layerButton.appendChild( layerName );
     }
 
-    /* {
-      //the lineart button (temp, I think)
-      const lineartButton = document.createElement( "button" );
-      lineartButton.classList.add( "lineart" );
-      lineartButton.textContent = "✎";
-      registerUIElement( lineartButton, { onclick: async () => {
-        //adding the new layer inherently adds the undo component
-        const copy = await addCanvasLayer( "paint", lw, lh, newLayer );
-        //by altering the properties without registering a new undo, the creation undo is a copy
-        copy.topLeft = [ ...newLayer.topLeft ];
-        copy.topRight = [ ...newLayer.topRight ];
-        copy.bottomLeft = [ ...newLayer.bottomLeft ];
-        copy.bottomRight = [ ...newLayer.bottomRight ];
-        //get the image
-        console.error( "Async lineart generator needs to lock the UI but it's switching to gen controls anyway probably...");
-        const srcImg = newLayer.canvas.toDataURL();
-        const img = await getLineartA1111( {image:srcImg,res:1024,module:"lineart_realistic"} );
-        copy.context.drawImage( img, 0, 0 );
-        //turn white-black into black-alpha
-        const data = copy.context.getImageData( 0,0,copy.w,copy.h ),
-          d = data.data;
-        for( let i=0; i<d.length; i+=4 ) {
-          d[i+3] = d[i];
-          d[i]=d[i+1]=d[i+2] = 0;
-        }
-        copy.context.putImageData( data,0,0 );
-        copy.textureChanged = true;
-      } } );
-      layerButton.appendChild( lineartButton );
-    } */
-
     //add the merge-down button
     {
       const mergeButton = document.createElement( "div" );
@@ -802,6 +900,10 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
             if( layersStack.layers[ index - 1 ]?.layerType === "paint" &&
                 layersStack.layers[ index - 1 ]?.layerGroupId === newLayer.layerGroupId ) {
               const lowerLayer = layersStack.layers[ index - 1 ];
+
+              //update frames if necessary
+              flushLayerUpdates();
+
               //save the current, un-merged lower layer
               const oldData = lowerLayer.context.getImageData( 0,0,lowerLayer.w,lowerLayer.h );
 
@@ -809,7 +911,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
               //(They can be flattened to paint layers though.)
 
               //sample this layer onto the lower layer
-              let previewLayer = layersStack.layers.find( l => l.layerType === "paint-preview" );
+              let previewLayer = getPreviewLayer();
               sampleLayerInLayer( newLayer, lowerLayer, previewLayer );
 
               //merge the sampled area onto the lower layer
@@ -818,37 +920,46 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
               lowerLayer.context.drawImage( previewLayer.canvas, 0, 0 );
               lowerLayer.context.restore();
               //flag the lower layer for GPU upload
-              flagLayerTextureChanged( lowerLayer );
+              flagLayerTextureChanged( lowerLayer, null, false );
               //delete this upper layer from the stack
               layersStack.layers.splice( index, 1 );
-              //remember this upper layer's parent and sibling for DOM-reinsertion
-              const domSibling = newLayer.layerButton.nextElementSibling,
-                domParent = newLayer.layerButton.parentElement;
-              //remove this upper layer from DOM
-              domParent.removeChild( newLayer.layerButton );
               //select the lower layer
               selectLayer( lowerLayer );
-              
+
+              //get a new set of frames for the lower layer
+              console.warn( "Layer merge needs to compose merged timline for layers with more than 1 frame!" );
+              const oldFrames = lowerLayer.frames;
+              const newFrames = [];
+              //use math.min on frame.timeIndex to advance zero or one frames at a time through both layers' timelines
+              for( let i=0; i<1; i++ ) {
+                const mergedFrame = makeFrameMergingFrameOntoFrame( newLayer, newLayer.frames[i], lowerLayer, lowerLayer.frames[i] );
+                newFrames.push( mergedFrame );
+              }
+              lowerLayer.frames = newFrames;
+              lowerLayer.currentFrameIndex = 0;
+              loadLayerFrame( lowerLayer, lowerLayer.frames[ 0 ], false );
+              flagLayerTextureChanged( lowerLayer, null, false );
+
               const historyEntry = {
                 index,
                 upperLayer: newLayer,
-                domSibling, domParent,
                 lowerLayer,
                 oldData,
                 newData: null,
+                oldFrames,
+                newFrames,
                 undo: () => {
                   if( historyEntry.newData === null ) {
                     historyEntry.newData = lowerLayer.context.getImageData( 0,0,lowerLayer.w,lowerLayer.h );
                   }
                   //restore the lower layer's data
-                  lowerLayer.context.putImageData( historyEntry.oldData, 0, 0 );
+                  historyEntry.lowerLayer.context.putImageData( historyEntry.oldData, 0, 0 );
                   //and flag it for GPU upload
                   flagLayerTextureChanged( historyEntry.lowerLayer );
                   //reinsert the upper layer into the layer's stack
                   layersStack.layers.splice( historyEntry.index, 0, historyEntry.upperLayer );
-                  //reinsert the upper layer into the DOM
-                  historyEntry.domParent.insertBefore( historyEntry.upperLayer.layerButton, historyEntry.domSibling );
-                  
+                  //reattach the old frames
+                  historyEntry.lowerLayer.frames = historyEntry.oldFrames;
                   reorganizeLayerButtons();
                   UI.updateContext();
 
@@ -856,13 +967,12 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                 redo: () => {
                   //delete the upper layer from the stack
                   layersStack.layers.splice( historyEntry.index, 1 );
-                  //remove it from the DOM
-                  historyEntry.domParent.removeChild( historyEntry.upperLayer.layerButton );
                   //blit the merged data agaain
                   historyEntry.lowerLayer.context.putImageData( historyEntry.newData, 0, 0 );
                   //and flag for GPU upload
                   flagLayerTextureChanged( historyEntry.lowerLayer );
-                  
+                  //reattach the new frames
+                  historyEntry.lowerLayer.frames = historyEntry.newFrames;
                   reorganizeLayerButtons();
                   UI.updateContext();
 
@@ -939,10 +1049,25 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
             layerButton.querySelector( ".layer-type-icon" ).classList.remove( "generative" );
             layerButton.querySelector( ".layer-type-icon" ).classList.add( "paint" );
     
+            const oldFrames = newLayer.frames,
+              oldFrameIndex = newLayer.currentFrameIndex;
+            
+            const newFrames = [];
+            //we need a gen -> frames button too
+            const currentFrame = oldFrames[ oldFrameIndex ];
+            if( currentFrame ) {
+              newFrames.push( makePaintFrameFromGenerativeFrame( currentFrame ) );
+              newLayer.currentFrameIndex = 0;
+            }
+            newLayer.frames = newFrames;
+
             selectLayer( newLayer );
     
             const historyEntry = {
               newLayer,
+              oldFrameIndex,
+              oldFrames,
+              newFrames,
               poppedUplinks,
               undo: () => {
                 historyEntry.newLayer.layerType = "generative";
@@ -950,9 +1075,11 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                 for( const [uplinkingLayer,uplink] of historyEntry.poppedUplinks )
                   uplinkingLayer.nodeUplinks.add( uplink );
                 //update the layer type icon
-                layerButton.querySelector( ".layer-type-icon" ).classList.add( "generative" );
-                layerButton.querySelector( ".layer-type-icon" ).classList.remove( "paint" );
-          
+                newLayer.layerButton.querySelector( ".layer-type-icon" ).classList.add( "generative" );
+                newLayer.layerButton.querySelector( ".layer-type-icon" ).classList.remove( "paint" );
+                //reinstall the old frames
+                historyEntry.newLayer.frames = historyEntry.oldFrames;
+                historyEntry.newLayer.currentFrameIndex = historyEntry.oldFrameIndex;
                 UI.updateContext();
               },
               redo: () => {
@@ -963,7 +1090,9 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                 //update the layer type icon
                 layerButton.querySelector( ".layer-type-icon" ).classList.remove( "generative" );
                 layerButton.querySelector( ".layer-type-icon" ).classList.add( "paint" );
-          
+                //reinstall the new frames
+                historyEntry.newLayer.frames = historyEntry.newFrames;
+                historyEntry.newLayer.currentFrameIndex = 0;
                 UI.updateContext();
               }
             }
@@ -1279,7 +1408,6 @@ function reorganizeLayerButtons() {
 }
 
 //after sampleLayerInLayer, we'll swap out the img2img pull code with sampling like this
-
 function sampleLayerInLayer( sourceLayer, rectLayer, compositingLayer, backgroundColorStyle = null ) {
 
   //match our compositingLayer to the rectLayer
@@ -1337,6 +1465,8 @@ function sampleLayerInLayer( sourceLayer, rectLayer, compositingLayer, backgroun
     ctx.globalCompositeOperation = "destination-in";
     ctx.drawImage( sourceLayer.maskCanvas, 0, 0, sourceToplegLength, sourceSideLegLength );
   }
+  //We don't care about destination layer's mask.
+  //Even for layer merging, the mask does not go into the image URLs.
   ctx.restore();
 
   //compositingLayer now contains a snapshot of sourceLayer as it overlaps rectLayer
@@ -1736,12 +1866,15 @@ function renderLayerPose( layer ) {
   flagLayerTextureChanged( layer );
 }
 
-function composeLayers( destinationLayer, layers, pixelScale=1 ) {
+function composeLayers( destinationLayer, layers, pixelScale=1, ignoreVisibility=false ) {
 
   const visibleLayers = [];
-  for( const layer of layers )
-    if( getLayerVisibility( layer ) === true )
-      visibleLayers.push( layer );
+  if( ignoreVisibility === false ) {
+    for( const layer of layers )
+      if( getLayerVisibility( layer ) === true )
+        visibleLayers.push( layer );
+  }
+  else visibleLayers.push( ...layers );
 
   let minX = Infinity, minY = Infinity,
     maxX = -Infinity, maxY = -Infinity;
@@ -1761,8 +1894,6 @@ function composeLayers( destinationLayer, layers, pixelScale=1 ) {
 
   const width = parseInt( ( maxX - minX ) * pixelScale ),
     height = parseInt( ( maxY - minY ) * pixelScale );
-
-  console.log( width, height );
 
   destinationLayer.canvas.width = width;
   destinationLayer.canvas.height = height;
@@ -1798,10 +1929,6 @@ function composeLayers( destinationLayer, layers, pixelScale=1 ) {
       else if( layer.maskInitialized === false ) {
         ctx.drawImage( layer.canvas, 0, 0 );
       }
-      /* ctx.lineWidth = 1.0;
-      
-      ctx.strokeStyle = "black";
-      ctx.strokeRect( 0, 0, layer.canvas.width, layer.canvas.height ); */
       ctx.restore();
   }
 
@@ -1895,7 +2022,7 @@ function flagLayerGroupChanged( layer ) {
     groupChainLayer = groupLayer;
   }
 }
-function flagLayerTextureChanged( layer, rect=null ) {
+function flagLayerTextureChanged( layer, rect=null, updateFrame=true ) {
   layer.textureChanged = true;
   if( rect === null ) {
     layer.textureChangedRect.x = 0;
@@ -1908,6 +2035,8 @@ function flagLayerTextureChanged( layer, rect=null ) {
     layer.textureChangedRect.w = rect.w;
     layer.textureChangedRect.h = rect.h;
   }
+  //resave layer
+  if( updateFrame === true ) updateAndMakeLayerFrame( layer );
   flagLayerGroupChanged( layer );
   flagLayerFilterChanged( layer );
 }
@@ -3121,6 +3250,8 @@ let uiSettings = {
 
   filename: "[automatic]",
 
+  currentTimeSeekIndex: 0,
+
   gpuPaint: 2,
   showDebugInfo: false,
 
@@ -3134,6 +3265,9 @@ let uiSettings = {
   generativeControls: {},
   apiFlowNamesUsed: [],
   defaultFilterName: "basic",
+
+ //how long to pause after a paint stroke before updating the layer's frame
+  paintBusyTimeout: 1000,
 
   retryAPIDelay: 2000,
 
@@ -5080,11 +5214,30 @@ function setupUI() {
             if( result === false ) {
               UI.showOverlay.error( 'Generation failed. Stuff to check:<ul style="font-size:0.825rem; text-align:left; margin:0; padding:1rem; padding-right:0;"><li>Are the settings right?</li><li>Are the image inputs connected?</li><li>Is Comfy/A1111 running?</li><li>Do you have all this API\'s nodes/extensions?</li><li>If this is your custom APIFlow, check the dev tools for more info.</li></ul>' );
             } else {
-              const image = result[ "generated-image" ];
-              if( image.width !== selectedLayer.w || image.height !== selectedLayer.h )
-                cropLayerSize( selectedLayer, image.width, image.height );
-              selectedLayer.context.drawImage( result[ "generated-image" ], 0, 0 );
-              flagLayerTextureChanged( selectedLayer );
+              if( result[ "generated-image" ] ) {
+                //Generation results can't be undone
+                const image = result[ "generated-image" ];
+                if( image.width !== selectedLayer.w || image.height !== selectedLayer.h )
+                  cropLayerSize( selectedLayer, image.width, image.height );
+                selectedLayer.context.drawImage( result[ "generated-image" ], 0, 0 );
+                const frame = makeLayerFrame( selectedLayer );
+                selectedLayer.currentFrameIndex = selectedLayer.frames.push( frame ) - 1;
+                frame.timeIndex = selectedLayer.currentFrameIndex;
+                updateLayerFrame( selectedLayer, frame, true );
+                flagLayerTextureChanged( selectedLayer );
+              }
+              else if( result[ "generated-images" ] ) {
+                for( const image of result[ "generated-images" ] ) {
+                  if( image.width !== selectedLayer.w || image.height !== selectedLayer.h )
+                    cropLayerSize( selectedLayer, image.width, image.height );
+                  selectedLayer.context.drawImage( result[ "generated-image" ], 0, 0 );
+                  const frame = makeLayerFrame( selectedLayer );
+                  selectedLayer.currentFrameIndex = selectedLayer.frames.push( frame ) - 1;
+                  frame.timeIndex = selectedLayer.currentFrameIndex;
+                  updateLayerFrame( selectedLayer, frame, true );
+                }
+                flagLayerTextureChanged( selectedLayer );
+              }
             }
           }
         },
@@ -9297,6 +9450,18 @@ function finalizePaintGPU2( layer ) {
   //put the new imagedata onto the texture (since it's still just on the GPU)
   affectedContext.putImageData( newData, modRect.x, modRect.y );
 
+  //call flag texture changed because this triggers upstream changes
+  if( uiSettings.activeTool === "mask" ) {
+    flagLayerMaskChanged( layer, modRect );
+    layer.maskChanged = false; //but don't reupload to gpu; no need
+  }
+  else {
+    //flagLayerTextureChanged( layer, modRect ); //Disabling frame update for performance. Hmm. Need to schedule for a lull, I guess???
+    flagLayerTextureChanged( layer, modRect, false );
+    updateFrameOnLull( layer );
+    layer.textureChanged = false; //but don't reupload to gpu; no need
+  }
+
   const historyEntry = {
     targetLayer: layer,
     affectedContext,
@@ -11696,7 +11861,7 @@ const wait = delay => new Promise( land => setTimeout( land, delay ) );
 
 const apiExecutionQueue = [];
 
-const verboseAPICall = true;
+const verboseAPICall = false;
 async function executeAPICall( name, controlValues ) {
 
   if( verboseAPICall ) console.log( "Executing API call: ", name );
