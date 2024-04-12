@@ -43,7 +43,7 @@ const server = http.createServer(
         const { method , url , headers } = request;
         if( method === 'GET' ) {
 
-            console.log( "incoming connection: " , method , url , headers );
+            //console.log( "incoming connection: " , method , url , headers );
             
             if( url === '/' ) {
                 response.writeHead( 200 , { 'Content-Type': 'text/html' } );
@@ -106,7 +106,6 @@ const server = http.createServer(
                 const apiFlowsFolder = "res/apiFlows";
                 const apiFileNames = [];
                 const directory = fss.readdirSync( apiFlowsFolder, { withFileTypes: true } );
-                console.log( "Got directory ", directory );
                 for( const fileEntry of directory ) {
                     if( fileEntry.isFile() && ! fileEntry.isDirectory() ) {
                         apiFileNames.push( `"${fileEntry.name}"` );
@@ -120,7 +119,6 @@ const server = http.createServer(
                 const brushesFolder = "res/brushes";
                 const brushFiles = [];
                 const directory = fss.readdirSync( brushesFolder, { withFileTypes: true } );
-                console.log( "Got directory ", directory );
                 for( const fileEntry of directory ) {
                     if( fileEntry.isFile() && ! fileEntry.isDirectory() ) {
                         brushFiles.push( fss.readFileSync( "res/brushes/" + fileEntry.name ) );
@@ -156,24 +154,14 @@ const server = http.createServer(
                 response.end();
             }
             if( url.indexOf( '/res/img/brushes/' ) === 0 ) {
+                //Warning! This is EXTREMELY unsafe!!! Rewrite ASAP. :-|
+                //Brush images should be DataURIs in JSON, just make the converter already
                 const filename = url.replace( '/res/img/brushes/', '' );
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
                 const brushtipFile = fss.readFileSync( 'res/img/brushes/' + filename );
                 response.write( brushtipFile );
                 response.end();
             }
-            /* if( url.indexOf( '/res/img/brushes/tip-pencil01.png' ) === 0 ) {
-                response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = fss.readFileSync( 'res/img/brushes/tip-pencil01.png' );
-                response.write( paperFile );
-                response.end();
-            }
-            if( url.indexOf( '/res/img/brushes/tip-round01.png' ) === 0 ) {
-                response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = fss.readFileSync( 'res/img/brushes/tip-round01.png' );
-                response.write( paperFile );
-                response.end();
-            } */
 
             if( url === '/favicon.ico' ) {
                 response.writeHead( 404 , { 'Content-Type': 'text/plain' } );

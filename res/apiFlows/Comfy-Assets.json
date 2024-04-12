@@ -125,7 +125,28 @@
       ]
     }
   ],
-  "controls": [],
+  "controls": [
+    {
+      "controlName": "ComfyHost",
+      "controlType": "apiFlowVariable",
+      "variableKey": "ComfyHost",
+      "controlValue": "device",
+      "controlPath": [
+        "get-object-info",
+        "host"
+      ]
+    },
+    {
+      "controlName": "ComfyPort",
+      "controlType": "apiFlowVariable",
+      "variableKey": "ComfyPort",
+      "controlValue": 8188,
+      "controlPath": [
+        "get-object-info",
+        "port"
+      ]
+    }
+  ],
   "apiCalls": [
     {
       "apiCallName": "get-object-info",

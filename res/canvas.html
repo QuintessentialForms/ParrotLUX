@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, touch-action=none, interactive-widget=resizes-content" />
         <title>AI Canvas</title>
         <link rel="stylesheet" type="text/css" href="canvas.css" />
-        <!--script type="text/javascript" src="store.js"></script-->
+        <script type="text/javascript" src="store.js"></script>
         <style>
 /* We have this inlined during dev b/c the stylesheet won't refresh on tablet. :-/ */
 body {
@@ -128,6 +128,40 @@ body {
     box-sizing: border-box;
 }
 
+#settings-controlpanel-overlay {
+    --width: min(30rem,95vw);
+}
+#settings-controlpanel-overlay .overlay-close-button:hover {
+    border: 1px solid var(--white);
+}
+#settings-controlpanel-overlay .overlay-close-button {
+    border: 1px solid transparent;
+    position:absolute;
+    left:calc( (50vw - ( var(--width) / 2.0 )) - 4rem );
+    top: 2.5vw;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 1rem;
+    background-image: url('icon/x.png');
+    background-size:contain;
+    background-position:center;
+    background-repeat:no-repeat;
+    box-sizing: border-box;
+}
+#settings-controlpanel-overlay .overlay-controlpanel {
+    position:absolute;
+    left:calc( 50vw - ( var(--width) / 2.0 ) );
+    top: 2.5vw;
+    width: var(--width);
+    height: calc( 100vh - 5vw );
+    resize: none;
+    box-sizing: border-box;
+    margin:0;
+    padding:1rem;
+    border-radius: 1rem;
+    border:1px solid var(--mid);
+    background-color: var(--dark);
+}
 
 #multiline-text-input-overlay .overlay-close-button:hover {
     border: 1px solid var(--white);
@@ -610,6 +644,7 @@ body {
 .tools-column-flood-fill-button { background-image: url('icon/paint-bucket.png'); }
 .tools-column-text-tool-button { background-image: url('icon/text.png'); }
 .tools-column-pose-button { background-image: url('icon/rig.png'); }
+.tools-column-color-adjust-button { background-image: url('icon/three-circles.png'); }
 
 .round-toggle.unavailable { opacity: 0.25; }
 .round-toggle.unavailable.hovering { border:1px solid transparent; }
@@ -831,6 +866,34 @@ body {
     color: var(--very-dark);
     z-index: 8000;
 }
+
+#color-adjust-tools-options-row.hidden {
+    opacity: 0;
+    transform: scale(0.9,0.9);
+}
+#color-adjust-tools-options-row > div {
+    position: relative;
+    z-index: 6000;
+}
+#color-adjust-tools-options-row {
+    position:absolute;
+    left: 12.9rem;
+    width:calc( 100vw - 19.5rem );
+    height:3.5rem;
+    justify-content: center;
+    align-items: center;
+    gap:0.5rem;
+    z-index: 5000;
+}
+#color-adjust-tools-options-row .long {
+    flex-grow: 0;
+    width: 3.8rem;
+    min-width: unset;
+    flex-basis: unset;
+    overflow: visible;
+    text-overflow: unset;
+}
+
 
 #transform-tools-options-row.hidden {
     opacity: 0;

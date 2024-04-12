@@ -377,11 +377,42 @@
       ]
     },
     {
-      "controlName": "apiPort",
-      "controlType": "apiPort",
+      "controlName": "A1111Host",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Host",
+      "controlValue": "device",
+      "controlPath": [
+        "set-model",
+        "host"
+      ]
+    },
+    {
+      "controlName": "A1111Port",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Port",
       "controlValue": 7860,
       "controlPath": [
-        "get-controlnet-preprocessors-array",
+        "set-model",
+        "port"
+      ]
+    },
+    {
+      "controlName": "A1111Host2",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Host",
+      "controlValue": "device",
+      "controlPath": [
+        "t2i",
+        "host"
+      ]
+    },
+    {
+      "controlName": "A1111Port2",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Port",
+      "controlValue": 7860,
+      "controlPath": [
+        "t2i",
         "port"
       ]
     }

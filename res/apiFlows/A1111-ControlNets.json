@@ -27,8 +27,19 @@
   ],
   "controls": [
     {
-      "controlName": "apiPort",
-      "controlType": "apiPort",
+      "controlName": "A1111Host",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Host",
+      "controlValue": "device",
+      "controlPath": [
+        "get-controlnet-models-array",
+        "host"
+      ]
+    },
+    {
+      "controlName": "A1111Port",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Port",
       "controlValue": 7860,
       "controlPath": [
         "get-controlnet-models-array",

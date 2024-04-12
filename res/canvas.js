@@ -1,4 +1,3 @@
-
 /* 
 
   This needs so much debugging tho... :-|
@@ -116,7 +115,9 @@ function redo() {
 function updateAndMakeLayerFrame( layer ) {
   let currentFrame = layer.frames[ layer.currentFrameIndex ];
   if( ! currentFrame ) {
-    layer.currentFrameIndex = layer.frames.push( makeLayerFrame( layer ) ) - 1;
+    currentFrame = makeLayerFrame( layer );
+    layer.currentFrameIndex = layer.frames.push( currentFrame ) - 1;
+    updateLayerFrame( layer, currentFrame );
     console.log( "added frame to layer" );
   } else {
     console.log( "Updated frame layer." );
@@ -128,7 +129,6 @@ function makeLayerFrame( layer ) {
   let frameType = layer.layerType;
 
   const frame = { frameType, timeIndex: uiSettings.currentTimeSeekIndex };
-  updateLayerFrame( layer, frame );
 
   return frame;
 }
@@ -182,20 +182,28 @@ function getLayerCanvasURLs( layer ) {
   return { fullSizeURL, thumbnailURL, dotURL };
 }
 
+async function guaranteeLayerHasImageFrame( layer ) {
+  //flush pending lulls
+  //if paint layer, check if has image frame
+  //if not, make
+  //...Not needed though IMO. Color adjust will use its own stored image.
+}
+
 function loadLayerFrame( layer, frame, flagTextureChanged=true ) {
   //Warning! If you're switching timeline frames, you NEED to save-update the current frame first, then load from storage. :-|
   //(Actually, you can check if your layer is in layersToUpdateFrames to see if it has updates pending.)
-  return new Promise( r => {
-    const img = new Image();
-    img.src = frame.fullSizeURL;
-    img.onload = () => {
-      layer.context.clearRect( 0,0,layer.w,layer.h );
-      layer.context.drawImage( img, 0, 0 );
-      if( flagTextureChanged === true )
-        flagLayerTextureChanged( layer, null, true );
-    }
-    img.src = frame.fullSizeURL;
-  } )
+  if( layer.layerType === "paint" )
+    return new Promise( r => {
+      const img = new Image();
+      img.src = frame.fullSizeURL;
+      img.onload = () => {
+        layer.context.clearRect( 0,0,layer.w,layer.h );
+        layer.context.drawImage( img, 0, 0 );
+        if( flagTextureChanged === true )
+          flagLayerTextureChanged( layer, null, true );
+      }
+      img.src = frame.fullSizeURL;
+    } )
 }
 
 const layersToUpdateFrames = new Set();
@@ -226,10 +234,10 @@ function makeFrameMergingFrameOntoFrame( topLayer, topFrame, lowerLayer, lowerFr
   loadLayerFrame( lowerLayer, lowerFrame, false );
   sampleLayerInLayer( topLayer, lowerLayer, preview );
   lowerLayer.context.save();
-  if( respectOpacity === true ) lowerLayer.globalAlpha = topLayer.opacity;
+  if( respectOpacity === true ) lowerLayer.context.globalAlpha = topLayer.opacity;
   lowerLayer.context.drawImage( preview.canvas, 0, 0 );
   lowerLayer.context.restore();
-  const mergedFrame = { frameType: "paint" }
+  const mergedFrame = makeLayerFrame( lowerLayer );
   updateLayerFrame( lowerLayer, mergedFrame );
   //if you just merged a non-current frame, you need to reload the current!
   return mergedFrame;
@@ -321,11 +329,9 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     filtersSettings: { filterName },
     filterControls: {},
 
-    currentFrameIndex: -1,
-    frames: [],
+    currentFrameIndex: uiSettings.currentTimeSeekIndex,
+    frames: [], //should really auto-populate this on create layer
 
-
-    
     nodeUplinks: new Set(),
 
     rig: null,
@@ -2413,7 +2419,7 @@ function Loop( t ) {
 
       getTransform();
 
-      renderLayers( visibleLayers, selectedGroupLayers, floatTime );
+      renderLayers( visibleLayers, selectedGroupLayers, floatTime, null, [ 0.25,0.25,0.25, 1 ], true );
 
       //get the eyedropper color
       if( airInput.active ) {
@@ -2425,19 +2431,35 @@ function Loop( t ) {
 
 }
 
-function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
+function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime, targetLayer = null, backgroundRGBA = [0,0,0,0], showBorders = true ) {
 
   if( ! renderLayers.framebuffer ) {
     renderLayers.readPixelsDest = new Uint8ClampedArray( 4 );
     renderLayers.midFramebuffer = gl.createFramebuffer();
     renderLayers.framebuffer = gl.createFramebuffer();
-    renderLayers.width = gnv.width;
-    renderLayers.height = gnv.height;
+    if( targetLayer === null ) {
+      renderLayers.width = gnv.width;
+      renderLayers.height = gnv.height;
+    } else {
+      renderLayers.width = targetLayer.w;
+      renderLayers.height = targetLayer.h;
+    }
+
     {
       renderLayers.blankTexture = gl.createTexture();
       gl.bindTexture( gl.TEXTURE_2D, renderLayers.blankTexture );
-      //const blankData = new Uint8ClampedArray([ 1,0,0,0.5, 1,0,0,0.5, 1,0,0,0.5, 1,0,0,0.5 ]);
-      //const blankData = new Uint8ClampedArray([ 0,0,0,255, 0,0,0,255, 0,0,0,255, 0,0,0,255 ]);
+      const blankData = new Uint8ClampedArray( 4 * 4 );
+      blankData.fill( 255 );
+      gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, blankData );
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+    {
+      renderLayers.colorTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.colorTexture );
       const blankData = new Uint8ClampedArray( 4 * 4 );
       blankData.fill( 255 );
       gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, blankData );
@@ -2481,9 +2503,15 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
   gl.useProgram( glState.program );
 
   //resize the back texture
-  if( renderLayers.width !== gnv.width || renderLayers.height !== gnv.height ) {
-    renderLayers.width = gnv.width;
-    renderLayers.height = gnv.height;
+  let targetWidth = gnv.width,
+    targetHeight = gnv.height;
+  if( targetLayer !== null ) {
+    targetWidth = targetLayer.w;
+    targetHeight = targetLayer.h;
+  }
+  if( renderLayers.width !== targetWidth || renderLayers.height !== targetHeight ) {
+    renderLayers.width = targetWidth;
+    renderLayers.height = targetHeight;
     gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
@@ -2502,11 +2530,9 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
     gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
     const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
     gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
-    gl.viewport( 0, 0, gnv.width, gnv.height );
-    gl.clearColor(0.25,0.25,0.25,1);
+    gl.viewport( 0, 0, targetWidth, targetHeight );
+    gl.clearColor( ...backgroundRGBA );
     gl.clear( gl.COLOR_BUFFER_BIT );
-    gl.disable(gl.DEPTH_TEST);
-    gl.disable( gl.BLEND );
   }
   {
     gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
@@ -2514,22 +2540,18 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
     gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.midFramebuffer );
     const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
     gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.midTexture, level);
-    gl.viewport( 0, 0, gnv.width, gnv.height );
-    gl.clearColor(0.25,0.25,0.25,1);
+    gl.viewport( 0, 0, targetWidth, targetHeight );
+    gl.clearColor( ...backgroundRGBA );
     gl.clear( gl.COLOR_BUFFER_BIT );
   }
   
-  //gl.enable( gl.BLEND );
-  //gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
-
-  gl.disable(gl.DEPTH_TEST);
+  gl.disable( gl.DEPTH_TEST );
   gl.disable( gl.BLEND );
 
   gl.bindVertexArray(glState.vao);
 
   let drewToMidTexture = false;
   for( const layer of visibleLayers ) {
-    //gl.finish(); //just does a flush anyway?
 
     drewToMidTexture = !drewToMidTexture;
 
@@ -2539,9 +2561,7 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
       gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
       gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
       gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
-      gl.viewport( 0, 0, gnv.width, gnv.height );
-      //gl.disable(gl.DEPTH_TEST);
-      //gl.disable( gl.BLEND );
+      gl.viewport( 0, 0, targetWidth, targetHeight );
     }
     if( drewToMidTexture === true ) {
       const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
@@ -2549,9 +2569,7 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
       gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.midFramebuffer );
       gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
       gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.midTexture, level);
-      gl.viewport( 0, 0, gnv.width, gnv.height );
-      //gl.disable(gl.DEPTH_TEST);
-      //gl.disable( gl.BLEND );
+      gl.viewport( 0, 0, targetWidth, targetHeight );
     }
   
 
@@ -2564,6 +2582,7 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
 
 
     //transform the layer if we're mid-transform
+    //(this will not affect us during e.g. export renders, because we won't be transforming)
     if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && uiSettings.toolsSettings.transform.transformingLayers.includes( layer ) && ( cursor.mode !== "none" || pointers.count === 2 ) ) {
       getLayerTransform();
       let [x,y] = transformLayerPoint( xy ),
@@ -2669,6 +2688,9 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
     if( borderIsVisible === false && selectedLayer?.layerType === "group" && layersWithVisibleBorders.includes( layer ) )
       borderIsVisible = true;
 
+    if( showBorders === false )
+      borderIsVisible = false;
+
     gl.uniform1f( glState.borderVisibilityIndex, borderIsVisible ? 0.33 : 0.0 );
     gl.uniform1f( glState.borderWidthIndex, 2.0 / layerSizePixels ); //2 pixel border width
 
@@ -2684,12 +2706,12 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
     if( drewToMidTexture === false ) {
       gl.bindFramebuffer( gl.READ_FRAMEBUFFER, renderLayers.framebuffer );
       gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, renderLayers.midFramebuffer );
-      gl.blitFramebuffer( 0,0,gnv.width,gnv.height, 0,0,gnv.width,gnv.height, gl.COLOR_BUFFER_BIT, gl.NEAREST );
+      gl.blitFramebuffer( 0,0,targetWidth,targetHeight, 0,0,targetWidth,targetHeight, gl.COLOR_BUFFER_BIT, gl.NEAREST );
     }
     if( drewToMidTexture === true ) {
       gl.bindFramebuffer( gl.READ_FRAMEBUFFER, renderLayers.midFramebuffer );
       gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, renderLayers.framebuffer );
-      gl.blitFramebuffer( 0,0,gnv.width,gnv.height, 0,0,gnv.width,gnv.height, gl.COLOR_BUFFER_BIT, gl.NEAREST );
+      gl.blitFramebuffer( 0,0,targetWidth,targetHeight, 0,0,targetWidth,targetHeight, gl.COLOR_BUFFER_BIT, gl.NEAREST );
     }
 
   }
@@ -2697,11 +2719,21 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
 
   //draw the backtexture to the screen as if it was a layer
   {
-    gl.bindFramebuffer( gl.FRAMEBUFFER, null );
-    gl.viewport( 0, 0, gnv.width, gnv.height );
-    gl.clearColor(0.26,0.26,0.26,1); //never seen tho
+    if( targetLayer === null ) {
+      //render to the screen canvas
+      gl.bindFramebuffer( gl.FRAMEBUFFER, null );
+    } else {
+      const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
+      // render to the target layer's texture
+      gl.bindTexture( gl.TEXTURE_2D, targetLayer.glTexture );
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
+      gl.viewport( 0, 0, targetWidth, targetHeight );
+    }
+    gl.viewport( 0, 0, targetWidth, targetHeight );
+    gl.clearColor( ...backgroundRGBA ); //never seen tho
     gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
-    gl.disable(gl.DEPTH_TEST);
+    gl.disable( gl.DEPTH_TEST );
     gl.disable( gl.BLEND );
   
     //update the vertex data
@@ -2735,10 +2767,18 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
     gl.bindTexture( gl.TEXTURE_2D, renderLayers.blankTexture );
     gl.uniform1i( gl.getUniformLocation( glState.program, "imgMask" ), 1 );
 
-    //blank the undercanvas (this is the base-mix color???)
-    gl.activeTexture( gl.TEXTURE0 + 2 );
-    gl.bindTexture( gl.TEXTURE_2D, renderLayers.blankTexture );
-    gl.uniform1i( gl.getUniformLocation( glState.program, "canvas" ), 2 );
+    //blank or color the undercanvas (this is the base-mix color)
+    {
+      gl.activeTexture( gl.TEXTURE0 + 2 );
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.colorTexture );
+      const colorData = new Uint8ClampedArray( [ ...backgroundRGBA, ...backgroundRGBA, ...backgroundRGBA, ...backgroundRGBA ] );
+      gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, colorData );
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.uniform1i( gl.getUniformLocation( glState.program, "canvas" ), 2 );
+    }
 
     //set the layer's alpha
     gl.uniform1f( glState.alphaInputIndex, 1.0 );
@@ -2911,7 +2951,9 @@ function old_renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) 
 
 }
 
-function setup() {
+let storage;
+
+async function setup() {
 
     document.body.appendChild( main );
     //main.appendChild( cnv );
@@ -2989,14 +3031,15 @@ function setup() {
 
     enableKeyTrapping();
 
-    //setup two paint preview layers (some ops need double-buffering)
+    //setup two paint preview layers (these are actually still used for now)
     addCanvasLayer( "paint-preview" );
     addCanvasLayer( "paint-preview" );
 
     window.requestAnimationFrame( Loop );
 
     
-    //getImageA1111("a kitten drawing with a pen on a digital art tablet");
+    storage = await openStorage( "ParrotLUX-Storage" );
+    await loadConservedSettings();
 
 }
 
@@ -3244,9 +3287,78 @@ function endAirInput( p ) {
 const nonSavedSettingsPaths = [
   "toolsSettings.paint.modeSettings.all.brushTipsImages",
   "toolsSettings.transform",
-]
+  "maxUndoSteps",
+  "defaultLayerWidth", "defaultLayerHeight",
+  "gpuPaint", "showDebugInfo", "backendPort", "appPort", "allowAlienHost", "alienHostAddress",
+  "apiFlowVariables",
+];
+
+const conservedSettingsKeys = [
+  "maxUndoSteps",
+  "defaultLayerWidth", "defaultLayerHeight",
+  "generativeControls",
+  "paintBusyTimeout",
+  "retryAPIDelay",
+  "apiFlowVariables",
+  "clickTimeMS",
+];
+
+let initialSettings = true;
+function makeConservedSettingsObject() {
+  const snapshot = {};
+  for( const key of conservedSettingsKeys ) {
+    const value = uiSettings[ key ];
+    if( typeof value === "object" )
+      snapshot[ key ] = JSON.parse( JSON.stringify( value ) );
+    else snapshot[ key ] = value;
+  }
+  return snapshot;
+}
+function loadConservedSettingsObject( snapshot ) {
+  for( const key of conservedSettingsKeys ) {
+    const value = snapshot[ key ];
+    if( typeof value === "object" )
+      uiSettings[ key ] = JSON.parse( JSON.stringify( value ) );
+    else uiSettings[ key ] = value;
+  }
+}
+
+async function resetConservedSettings() {
+  await storage.delete( "conservedSettings" );
+  loadConservedSettings( initialSettings );
+  await conserveSettings();
+}
+
+async function conserveSettings() {
+  const snapshot = makeConservedSettingsObject();
+  await storage.set( "conservedSettings", snapshot );
+  return true;
+}
+
+async function loadConservedSettings() {
+  if( initialSettings === true ) {
+    //snapshot initial settings for reset
+    initialSettings = makeConservedSettingsObject();
+  }
+
+  const haveConservedSettings = await storage.has( "conservedSettings" );
+  if( ! haveConservedSettings ) {
+    await conserveSettings();
+  }
+
+  //console.log( await storage.get( "conservedSettings" ) );
+  const snapshot = ( await storage.get( "conservedSettings" ) );
+  loadConservedSettingsObject( snapshot );
+
+  //save updated version (may add new keys)
+  await conserveSettings();
+
+  return true;
+}
 
 let uiSettings = {
+
+  version: "0.1a.001",
 
   filename: "[automatic]",
 
@@ -3268,7 +3380,7 @@ let uiSettings = {
 
  //how long to pause after a paint stroke before updating the layer's frame
   paintBusyTimeout: 1000,
-
+  clickTimeMS: 350,
   retryAPIDelay: 2000,
 
   backendPort: 7860,
@@ -3276,20 +3388,33 @@ let uiSettings = {
 
   allowAlienHost: true,
   alienHostAddress: "device",
-
-  /* hosts: {
-    "ComfyUI": {
-      address: "device",
-      port: 8188
+  apiFlowVariables: [
+    {
+      "key": "ComfyHost",
+      "value": "device",
+      "permissions": ["all"],
     },
-    "A1111": {
-      address: "device",
-      port: 7860
+    {
+      "key": "ComfyPort",
+      "value": 8188,
+      "permissions": ["all"],
     },
-  }, */
-
-
-  clickTimeMS: 350,
+    {
+      "key": "A1111Host",
+      "value": "device",
+      "permissions": ["all"],
+    },
+    {
+      "key": "A1111Port",
+      "value": 7860,
+      "permissions": ["all"],
+    },
+    {
+      "key": "appPort",
+      "value": 6789,
+      "permissions": ["all"],
+    },
+  ],
 
   lastUsedAssets: {},
 
@@ -3300,7 +3425,7 @@ let uiSettings = {
     UI.updateContext();
   },
 
-  activeTool: null, //null | generate | paint | mask | transform | flood-fill | text-tool | pose
+  activeTool: null, //null | generate | paint | mask | transform | flood-fill | text-tool | pose | color-adjust
   toolsSettings: {
     "generate": {},
     "paint": {
@@ -4093,6 +4218,40 @@ function setupUI() {
       )
     }
 
+    //the color adjust tool button
+    {
+      const colorAdjustButton = document.createElement( "div" );
+      colorAdjustButton.classList.add( "tools-column-color-adjust-button", "round-toggle", "animated", "unavailable" );
+      toolsColumn.appendChild( colorAdjustButton );
+      UI.registerElement(
+        colorAdjustButton,
+        {
+          onclick: () => {
+            if( ! colorAdjustButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
+              uiSettings.setActiveTool( "color-adjust" );
+            } else {
+              colorAdjustButton.classList.add( "unavailable" );
+            }
+          },
+          updateContext: () => {
+            //if no layer selected, unavailable
+            if( selectedLayer?.layerType !== "paint" ) {
+              colorAdjustButton.classList.add( "unavailable" );
+              colorAdjustButton.querySelector(".tooltip" ).textContent = "Color Adjust Tool [Select paint layer to enable]";
+              colorAdjustButton.classList.remove( "on" );
+            }
+            if( selectedLayer?.layerType === "paint" ) {
+              colorAdjustButton.classList.remove( "unavailable" );
+              colorAdjustButton.querySelector(".tooltip" ).textContent = "Color Adjust Tool";
+              if( uiSettings.activeTool === "color-adjust" ) colorAdjustButton.classList.add( "on" );
+              else colorAdjustButton.classList.remove( "on" );
+            }
+          },
+        },
+        { tooltip: [ "Color Adjust Tool", "to-right", "vertical-center" ] }
+      )
+    }
+
   }
 
   //the paint tool options
@@ -4542,6 +4701,228 @@ function setupUI() {
         heightSlider.onend = height => cropLayerSize( layer, layer.w, height );
       }
       transformToolOptionsRow.appendChild( heightSlider );
+    }
+
+  }
+
+  //the color adjust tool options
+  {
+    
+    const colorAdjustToolOptionsRow = document.createElement( "div" );
+    colorAdjustToolOptionsRow.classList.add( "flex-row", "hidden", "animated" );
+    colorAdjustToolOptionsRow.id = "color-adjust-tools-options-row";
+    uiContainer.appendChild( colorAdjustToolOptionsRow );
+    let adjustingLayer = null,
+      sourceImage = new Image(),
+      sourceURL = "",
+      sourceLoaded = false,
+      colorAdjustments = {
+        saturation: 0, //0=unsaturated, 1=no effect, >1 saturate
+        contrast: 0, //0=gray, 1=no effect, >1 contrast
+        brightness: 0, //0=black, 1=no effect, >1 brighten
+        hue: 0, //degrees or turns, 0=no effect
+        invert: 0, //0=no effect, 1=invert
+      };
+    UI.registerElement(
+      colorAdjustToolOptionsRow,
+      {
+        updateContext: () => {
+          if( uiSettings.activeTool === "color-adjust" && selectedLayer && selectedLayer.layerType === "paint" ) {
+            if( adjustingLayer !== selectedLayer ) {
+              if( adjustingLayer !== null ) {
+                //this is weird behavior
+                //e.g., if you preview, then merge down, then undo... what happens? is it reasonable?
+                resetPreview();
+                adjustingLayer = null;
+                sourceURL = "";
+              }
+              colorAdjustToolOptionsRow.classList.remove( "hidden" );
+              adjustingLayer = selectedLayer;
+              loadSourceImageFromLayer( adjustingLayer );
+              Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
+            }
+          }
+          else {
+            if( adjustingLayer !== null ) {
+              //roll back any changes if any filter is non-zero
+              resetPreview();
+              adjustingLayer = null;
+              sourceURL = "";
+            }
+            if( uiSettings.activeTool === "color-adjust" ) {
+              uiSettings.setActiveTool( null );
+              adjustingLayer = null;
+              sourceURL = "";
+              sourceLoaded = false;
+            }
+            colorAdjustToolOptionsRow.classList.add( "hidden" );
+          }
+        }
+      },
+      {
+        zIndex: 1000,
+      }
+    );
+
+    function loadSourceImageFromLayer( layer ) {
+      let registerSourceLoaded;
+      adjustingLayer = layer;
+      sourceLoaded = new Promise( r => registerSourceLoaded = r );
+      sourceImage.onload = registerSourceLoaded;
+      sourceURL = layer.canvas.toDataURL();
+      sourceImage.src = sourceURL;
+    }
+
+    async function resetPreview() {
+      if( sourceLoaded === false ) return;
+      await sourceLoaded;
+      if( sourceLoaded === false ) return;
+      Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
+      colorAdjustToolOptionsRow.querySelectorAll( ".number-slider" ).forEach( s => s.setValue( 0 ) );
+      adjustingLayer.context.save();
+      adjustingLayer.context.filter = "none";
+      adjustingLayer.context.globalCompositeOperation = "copy";
+      adjustingLayer.context.globalAlpha = 1.0;
+      adjustingLayer.context.drawImage( sourceImage, 0, 0 );
+      adjustingLayer.context.restore();
+      flagLayerTextureChanged( adjustingLayer, null, false );
+    }
+    async function updateColorAdjustPreview() {
+      if( sourceLoaded === false ) return;
+      await sourceLoaded;
+      if( sourceLoaded === false ) return;
+      adjustingLayer.context.save();
+      adjustingLayer.context.filter = `saturate(${colorAdjustments.saturation+1}) contrast(${colorAdjustments.contrast+1}) brightness(${colorAdjustments.brightness+1}) hue-rotate(${colorAdjustments.hue}turn) invert(${colorAdjustments.invert})`;
+      adjustingLayer.context.globalCompositeOperation = "copy";
+      adjustingLayer.context.globalAlpha = 1.0;
+      adjustingLayer.context.drawImage( sourceImage, 0, 0 );
+      adjustingLayer.context.restore();
+      flagLayerTextureChanged( adjustingLayer, null, false );
+    }
+    async function finalizeColorAdjust() {
+      if( sourceLoaded === false ) return;
+      await sourceLoaded;
+      if( sourceLoaded === false ) return;
+
+      adjustingLayer.context.save();
+      adjustingLayer.context.filter = `saturate(${colorAdjustments.saturation+1}) contrast(${colorAdjustments.contrast+1}) brightness(${colorAdjustments.brightness+1}) hue-rotate(${colorAdjustments.hue}turn) invert(${colorAdjustments.invert})`;
+      adjustingLayer.context.globalCompositeOperation = "copy";
+      adjustingLayer.context.globalAlpha = 1.0;
+      adjustingLayer.context.drawImage( sourceImage, 0, 0 );
+      const finalURL = adjustingLayer.canvas.toDataURL();
+      adjustingLayer.context.restore();
+      flagLayerTextureChanged( adjustingLayer, null, true );
+      
+      Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
+      colorAdjustToolOptionsRow.querySelectorAll( ".number-slider" ).forEach( s => s.setValue( 0 ) );
+
+      //add undo record
+      const oldImg = new Image(),
+        newImg = new Image();
+      oldImg.src = sourceURL;
+      newImg.src = finalURL;
+
+      const historyEntry = {
+        targetLayer: adjustingLayer,
+        oldImg,
+        newImg,
+        undo: () => {
+          historyEntry.targetLayer.context.save();
+          historyEntry.targetLayer.context.globalCompositeOperation = "copy";
+          historyEntry.targetLayer.context.globalAlpha = 1.0;
+          //while it is technically possible to miss timing here, it's probably nbd
+          historyEntry.targetLayer.context.drawImage( historyEntry.oldImg, 0, 0 );
+          historyEntry.targetLayer.context.restore();
+          flagLayerTextureChanged( historyEntry.targetLayer, null, true );
+        },
+        redo: () => {
+          historyEntry.targetLayer.context.save();
+          historyEntry.targetLayer.context.globalCompositeOperation = "copy";
+          historyEntry.targetLayer.context.globalAlpha = 1.0;
+          historyEntry.targetLayer.context.drawImage( historyEntry.newImg, 0, 0 );
+          historyEntry.targetLayer.context.restore();
+          flagLayerTextureChanged( historyEntry.targetLayer, null, true );
+        },
+      };
+      recordHistoryEntry( historyEntry );
+
+      loadSourceImageFromLayer( adjustingLayer );
+      
+    }
+
+    //the saturation slider
+    {
+      const saturationSlider = UI.make.numberSlider({
+        label: "Saturation", slideMode: "contain-range",
+        value: 0, min: -1, max: 1, step: 0.01,
+      });
+      saturationSlider.classList.add( "saturation-slider" );
+      saturationSlider.onupdate = v => ( colorAdjustments.saturation = v, updateColorAdjustPreview() );
+      colorAdjustToolOptionsRow.appendChild( saturationSlider );
+    }
+    
+    //the contrast slider
+    {
+      const contrastSlider = UI.make.numberSlider({
+        label: "Contrast", slideMode: "contain-range",
+        value: 0, min: -1, max: 1, step: 0.01,
+      });
+      contrastSlider.classList.add( "contrast-slider" );
+      contrastSlider.onupdate = v => ( colorAdjustments.contrast = v, updateColorAdjustPreview() );
+      colorAdjustToolOptionsRow.appendChild( contrastSlider );
+    }
+
+    //the brightness slider
+    {
+      const brightnessSlider = UI.make.numberSlider({
+        label: "Brightness", slideMode: "contain-range",
+        value: 0, min: -1, max: 1, step: 0.01,
+      });
+      brightnessSlider.classList.add( "brightness-slider" );
+      brightnessSlider.onupdate = v => ( colorAdjustments.brightness = v, updateColorAdjustPreview() );
+      colorAdjustToolOptionsRow.appendChild( brightnessSlider );
+    }
+
+    //the hue slider
+    {
+      const hueSlider = UI.make.numberSlider({
+        label: "Hue", slideMode: "contain-range",
+        value: 0, min: 0, max: 1, step: 0.01,
+      });
+      hueSlider.classList.add( "hue-slider" );
+      hueSlider.onupdate = v => ( colorAdjustments.hue = v, updateColorAdjustPreview() );
+      colorAdjustToolOptionsRow.appendChild( hueSlider );
+    }
+
+    //the invert slider
+    {
+      const invertSlider = UI.make.numberSlider({
+        label: "Invert", slideMode: "contain-range",
+        value: 0, min: 0, max: 1, step: 0.01,
+      });
+      invertSlider.classList.add( "Invert-slider" );
+      invertSlider.onupdate = v => ( colorAdjustments.invert = v, updateColorAdjustPreview() );
+      colorAdjustToolOptionsRow.appendChild( invertSlider );
+    }
+    
+    //the apply button
+    {
+      const applyButton = document.createElement( "div" );
+      applyButton.classList.add( "asset-button-text", "round-toggle", "long", "on" );
+      const buttonText = document.createElement( "div" );
+      buttonText.classList.add( "button-text" );
+      buttonText.textContent = "Apply";
+      applyButton.appendChild( buttonText );
+      UI.registerElement(
+        applyButton,
+        {
+          onclick: () => {
+            finalizeColorAdjust();
+          },
+        },
+        { tooltip: [ "Apply Color Adjustments", "below", "to-left-of-center" ] }
+      );
+      colorAdjustToolOptionsRow.appendChild( applyButton );
     }
 
   }
@@ -5077,7 +5458,12 @@ function setupUI() {
       generativeControlsRow,
       {
         updateContext: () => {
-          if( uiSettings.activeTool === "generate" ) generativeControlsRow.classList.remove( "hidden" );
+          if( uiSettings.activeTool === "generate" ) {
+            if( setupUIGenerativeControls.currentSelectedLayer !== selectedLayer ) {
+              setupUIGenerativeControls( selectedLayer.generativeSettings.apiFlowName );
+            }
+            generativeControlsRow.classList.remove( "hidden" );
+          }
           else generativeControlsRow.classList.add( "hidden" );
         }
       },
@@ -5224,7 +5610,7 @@ function setupUI() {
                 selectedLayer.currentFrameIndex = selectedLayer.frames.push( frame ) - 1;
                 frame.timeIndex = selectedLayer.currentFrameIndex;
                 updateLayerFrame( selectedLayer, frame, true );
-                flagLayerTextureChanged( selectedLayer );
+                flagLayerTextureChanged( selectedLayer, null, false );
               }
               else if( result[ "generated-images" ] ) {
                 for( const image of result[ "generated-images" ] ) {
@@ -5236,7 +5622,7 @@ function setupUI() {
                   frame.timeIndex = selectedLayer.currentFrameIndex;
                   updateLayerFrame( selectedLayer, frame, true );
                 }
-                flagLayerTextureChanged( selectedLayer );
+                flagLayerTextureChanged( selectedLayer, null, false );
               }
             }
           }
@@ -5245,6 +5631,39 @@ function setupUI() {
       )
       generativeControlsRow.appendChild( generateButton );
     }
+
+    //the settings controlpanel overlay
+    {
+      const settingsControlPanelOverlay = document.createElement( "div" );
+      settingsControlPanelOverlay.classList.add( "overlay-background", "hidden", "real-input", "animated" );
+      //settingsControlPanelOverlay.classList.add( "overlay-background", "real-input", "animated" );
+      settingsControlPanelOverlay.id = "settings-controlpanel-overlay";
+      settingsControlPanelOverlay.onapply = () => {};
+      settingsControlPanelOverlay.show = () => {
+        settingsControlPanelOverlay.classList.remove( "hidden" );
+        controlPanel.focus();
+        disableKeyTrapping();
+      };
+      //back/close button
+      const closeButton = document.createElement( "div" );
+      closeButton.classList.add( "overlay-close-button", "overlay-element", "animated" );
+      closeButton.onclick = () => {
+        closeButton.classList.add( "pushed" );
+        setTimeout( ()=>closeButton.classList.remove("pushed"), UI.animationMS );
+        enableKeyTrapping();
+        settingsControlPanelOverlay.classList.add( "hidden" );
+      }
+      closeButton.role = "button"; closeButton.tabIndex = "0";
+      closeButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick(); }
+      settingsControlPanelOverlay.appendChild( closeButton );
+      //controlpanel
+      const controlPanel = document.createElement( "div" );
+      controlPanel.classList.add( "overlay-controlpanel", "overlay-element", "animated" );
+      settingsControlPanelOverlay.appendChild( controlPanel );
+
+      overlayContainer.appendChild( settingsControlPanelOverlay );
+    }
+
     //the text-input overlay
     {
       //full-screen overlay
@@ -6475,6 +6894,7 @@ function setupUIGenerativeControls( apiFlowName ) {
 
   if( ! apiFlowName ) {
     setupUIGenerativeControls.currentApiFlowName = null;
+    setupUIGenerativeControls.currentSelectedLayer = null;
     controlsPanel.apiFlowName = null;
     selectedLayer.generativeSettings.apiFlowName = null;
     return; //nothing to do here
@@ -6484,6 +6904,9 @@ function setupUIGenerativeControls( apiFlowName ) {
   selectedLayer.generativeSettings.apiFlowName = apiFlowName;
   setupUIGenerativeControls.currentApiFlowName = apiFlowName;
   controlsPanel.apiFlowName = apiFlowName;
+  
+  //track layer for switch
+  setupUIGenerativeControls.currentSelectedLayer = selectedLayer;
 
   let numberOfImageInputs = 0;
 
@@ -6966,8 +7389,15 @@ function saveJSON() {
       opacity,
 
       generativeSettings,
-      nodeUplinks,
       generativeControls,
+
+      //filtersSettings,
+      //filterControls,
+
+      //currentFrameIndex,
+      frames,
+
+      nodeUplinks,
 
       rig,
 
@@ -6992,11 +7422,20 @@ function saveJSON() {
       rig,
 
       generativeSettings,
-      nodeUplinks: [ ...nodeUplinks ],
       generativeControls,
-      
+
+      //filtersSettings,
+      //filterControls,
+
+      //currentFrameIndex,
+      frames: [ ...frames ],
+
+      nodeUplinks: [ ...nodeUplinks ],
+
       w, h,
       topLeft, topRight, bottomLeft, bottomRight,
+
+      //compat feature, will replace with frame load on load, add compat convert
       saveImageDataURL,
       saveMaskDataURL
     } );
@@ -7011,7 +7450,7 @@ function saveJSON() {
   const saveFileString = JSON.stringify( saveFile );
 
   const a = document.createElement( "a" );
-  if( uiSettings.filename === "automatic" )
+  if( uiSettings.filename === "[automatic]" )
     a.download = "ParrotLUX - save - " + Date.now() + ".json";
   else a.download = uiSettings.filename + ".json";
   const b = new Blob( [saveFileString], { type: "application/json" } );
@@ -7113,8 +7552,15 @@ function loadJSON() {
             opacity,
       
             generativeSettings,
-            nodeUplinks,
             generativeControls,
+            
+            //filtersSettings,
+            //filterControls,
+
+            //currentFrameIndex,
+            frames,
+
+            nodeUplinks,
 
             rig,
             
@@ -7134,8 +7580,12 @@ function loadJSON() {
           newLayer.opacity = opacity;
 
           newLayer.generativeSettings = generativeSettings;
-          newLayer.nodeUplinks = new Set( nodeUplinks );
           newLayer.generativeControls = generativeControls;
+
+          newLayer.currentFrameIndex = uiSettings.currentTimeSeekIndex;
+          newLayer.frames = frames;
+          
+          newLayer.nodeUplinks = new Set( nodeUplinks );
 
           newLayer.rig = rig;
 
@@ -7303,7 +7753,7 @@ const UI = {
     },
     numberSlider: ( {
       label="", value=0, min=0, max=1, step=0.1, slideMode="contain-range",
-      onstart=()=>{}, onupdate=()=>{}, onend=n=>console.log(n)
+      onstart=()=>{}, onupdate=()=>{}, onend=()=>{}
     } ) => {
 
       const sliderElement = document.createElement( "div" );
@@ -12026,7 +12476,7 @@ async function executeAPICall( name, controlValues ) {
             target = apiCall;
 
             //just ignore this line...
-            if( isApiOrConfig === "host" && apiCall.host === "device" ) { throw console.error( "Unsafe behavior! An API control may be trying to redirect an API call to an external service." ); }
+            //if( isApiOrConfig === "host" && apiCall.host === "device" ) { throw console.error( "Unsafe behavior! An API control may be trying to redirect an API call to an external service." ); }
 
             controlPath = [ isApiOrConfig, ...controlPath ];
             for( let i=0, j=controlPath.length-1; i<j; i++ ) {
@@ -12062,6 +12512,13 @@ async function executeAPICall( name, controlValues ) {
             }
             if( verboseAPICall ) console.log( "Assigning control-value ", retrievedValue, " to target ", target[ controlPath[ 0 ] ] );
             target[ controlPath.shift() ] = retrievedValue;
+          }
+          else if( controlScheme.controlType === "apiFlowVariable" ) {
+            const  variable = uiSettings.apiFlowVariables.find( v => v.key === controlScheme.variableKey );
+            if( variable && ( variable.permissions.includes( "all" ) || variable.permissions.includes( apiFlow.apiFlowName ) ) ) {
+              controlScheme.controlValue = variable.value;
+              target[ controlPath.shift() ] = variable.value;
+            }
           }
           else if( controlScheme.controlType === "apiPort") {
             controlScheme.controlValue = uiSettings.backendPort;

@@ -401,6 +401,46 @@
         "image",
         "image"
       ]
+    },
+    {
+      "controlName": "A1111Host",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Host",
+      "controlValue": "device",
+      "controlPath": [
+        "set-model",
+        "host"
+      ]
+    },
+    {
+      "controlName": "A1111Port",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Port",
+      "controlValue": 7860,
+      "controlPath": [
+        "set-model",
+        "port"
+      ]
+    },
+    {
+      "controlName": "A1111Host2",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Host",
+      "controlValue": "device",
+      "controlPath": [
+        "i2i",
+        "host"
+      ]
+    },
+    {
+      "controlName": "A1111Port2",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Port",
+      "controlValue": 7860,
+      "controlPath": [
+        "i2i",
+        "port"
+      ]
     }
   ],
   "apiCalls": [

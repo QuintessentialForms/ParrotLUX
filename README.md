@@ -55,10 +55,6 @@ A Painting App for Open-Source AI
     - GPU optimized
     - (more default brushes coming in Beta)
     - (user-custom brushes coming in Beta)
-- Flood fill
-    - area or color
-    - padding border
-- Posing
 - Generation
     - Text-to-Image
     - Image-to-Image
@@ -68,4 +64,14 @@ A Painting App for Open-Source AI
     - A1111 and Comfy
     - SD1.5, SDXL, and StableCascade
     - (user-custom apiflows coming in Beta)
+- Flood fill
+    - area or color
+    - padding border
+- Posing
+- Color Adjustment
+    - Saturation
+    - Contrast
+    - Brightness
+    - Hue
+    - Invert
 - More features coming in Beta!

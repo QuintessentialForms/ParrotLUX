@@ -2,7 +2,7 @@
 
     Store Usage:
 
-    0. const { openStorage } = await access( "zip" );
+    0. const { openStorage } = await access( "zip" ); <-- What is this??? From 2d game engine?
 
     1. const store = await openStorage( databaseName );
 
