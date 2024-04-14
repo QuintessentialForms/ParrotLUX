@@ -3324,7 +3324,7 @@ async function loadConservedSettings() {
     initialSettings = makeConservedSettingsObject();
   }
 
-  if( true ){
+  if( false ){
     await resetConservedSettings();
     console.error( "loadConservedSettings() is auto-resetting persistent settings! (in debug mode).")
   }
@@ -3376,7 +3376,7 @@ let uiSettings = {
   currentTimeSeekIndex: 0,
 
   gpuPaint: 2,
-  showDebugInfo: true,
+  showDebugInfo: false,
 
   maxUndoSteps: 20,
   defaultLayerWidth: 1024,
