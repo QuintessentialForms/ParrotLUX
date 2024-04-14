@@ -2572,6 +2572,8 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime, targe
       gl.viewport( 0, 0, targetWidth, targetHeight );
     }
   
+    //we don't call getTransform anywhere inside this function.
+    //Prior functions can load the transform matrix as they like.
 
     let [x,y] = transformPoint( layer.topLeft ),
       [x2,y2] = transformPoint( layer.topRight ),
@@ -3322,7 +3324,7 @@ async function loadConservedSettings() {
     initialSettings = makeConservedSettingsObject();
   }
 
-  if( false ){
+  if( true ){
     await resetConservedSettings();
     console.error( "loadConservedSettings() is auto-resetting persistent settings! (in debug mode).")
   }
@@ -3374,7 +3376,7 @@ let uiSettings = {
   currentTimeSeekIndex: 0,
 
   gpuPaint: 2,
-  showDebugInfo: false,
+  showDebugInfo: true,
 
   maxUndoSteps: 20,
   defaultLayerWidth: 1024,
@@ -6451,7 +6453,6 @@ function setupUI() {
     }
 
     }
-    console.error( "Debug file and save settings z-index tooltip vs. gen controls; try remove zindex on file/set")
     //the settings button
     {
       const settingsButton = document.createElement( "div" );
@@ -7083,7 +7084,6 @@ function openAssetBrowser( assets, callback, assetName=null, multiSelectBatch=nu
 
   if( assetInterpreter.defaultSort ) {
     assets.sort( assetInterpreter.defaultSort );
-    console.log( "Sorted." );
   }
 
   //add the assets
@@ -8507,7 +8507,8 @@ const startHandler = p => {
 
     cancelEvent( p );
 
-    if( p.pressure > 0 ) {
+    //Linux pen pressure in Chromium always starts and ends at zero. :-|
+    if( p.pressure > 0 || true ) {
       const caughtByUI = UI.testElements( p );
       if( caughtByUI ) return false;
     }
@@ -8535,65 +8536,45 @@ const startHandler = p => {
             cursor.origin.y = y;
             cursor.current.x = x;
             cursor.current.y = y;
-            if( p.buttons === 1 ) cursor.mode = "pan";
-            if( p.buttons === 2 ) {
+            if( p.buttons === 1 && ( keys[ "Shift"] !== true && keys[ "Control" ] !== true ) ) {
+              cursor.mode = "pan";
+            }
+            if( p.buttons === 2 || ( keys[ "Shift" ] === true && keys[ "Control" ] !== true ) ) {
                 //must have offset for rotate (0-angle) to prevent shuddering (insta-moving to extreme angle with tiny mouse movement)
-                cursor.origin.y -= cursor.zoomLength;
+                //cursor.origin.y -= cursor.zoomLength;
+                //get center of screen
+                cursor.origin.x = gnv.width/2;
+                cursor.origin.y = gnv.height/2;
+
+                const dx = cursor.origin.x - cursor.current.x;
+                const dy = cursor.origin.y - cursor.current.y;
+          
+                view.initialAngleOffset = -Math.atan2( dy , dx );
+
                 cursor.mode = "rotate";
             }
-            if( p.buttons === 4 ) {
+            if( p.buttons === 4 || ( keys[ "Control" ] === true && keys[ "Shift" ] !== true ) ) {
                 //must have offset for zoom (cannot start on zero-length reference basis)
-                cursor.origin.x -= Math.cos(0.7855) * cursor.zoomLength;
-                cursor.origin.y -= Math.sin( 0.7855 ) * cursor.zoomLength;
+                cursor.origin.x = gnv.width/2;
+                cursor.origin.y = gnv.height/2;
+
+                const dx = cursor.origin.x - cursor.current.x;
+                const dy = cursor.origin.y - cursor.current.y;
+          
+                view.initialZoomLength = Math.sqrt( dx**2 + dy**2 );
+
                 cursor.mode = "zoom";
             }
             //check if one of our points is inside the selected layer, and disable transform if not
             if( uiSettings.activeTool === "transform" ) {
-              const point = [cursor.origin.x,cursor.origin.y,1];
+              const point = [cursor.current.x,cursor.current.y,1];
               let pointInSelectedLayer = testPointsInLayer( selectedLayer, [point], true );
-              /* let pointInSelectedLayer = false;
-              //get screen->global space inversion
-              _originMatrix[ 2 ] = -view.origin.x;
-              _originMatrix[ 5 ] = -view.origin.y;
-              _positionMatrix[ 2 ] = view.origin.x;
-              _positionMatrix[ 5 ] = view.origin.y;
-    
-              mul3x3( viewMatrices.current , _originMatrix , _inverter );
-              mul3x3( _inverter , viewMatrices.moving , _inverter );
-              mul3x3( _inverter , _positionMatrix , _inverter );
-              inv( _inverter , _inverter );
-    
-              //cast our input points to global space
-              mul3x1( _inverter, point, point );
-    
-              //get our selected layer's space
-              let origin = { x:selectedLayer.topLeft[0], y:selectedLayer.topLeft[1] },
-                xLeg = { x:selectedLayer.topRight[0] - origin.x, y: selectedLayer.topRight[1] - origin.y },
-                xLegLength = Math.sqrt( xLeg.x**2 + xLeg.y**2 ),
-                normalizedXLeg = { x:xLeg.x/xLegLength, y:xLeg.y/xLegLength },
-                yLeg = { x:selectedLayer.bottomLeft[0] - origin.x, y: selectedLayer.bottomLeft[1] - origin.y },
-                yLegLength = Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
-                normalizedYLeg = { x:yLeg.x/yLegLength, y:yLeg.y/yLegLength };
-    
-              //cast global point to our selected layer's space
-              {
-                let [x,y] = point;
-                //translate from origin
-                x -= origin.x; y -= origin.y;
-                //project on normals
-                let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
-                let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
-                //unnormalize
-                xProjection *= selectedLayer.w / xLegLength;
-                yProjection *= selectedLayer.h / yLegLength;
-                //check if the point is inside the layer bounds
-                if( x >= 0 && x <= selectedLayer.w && y >= 0 && y <= selectedLayer.h ) {
-                  pointInSelectedLayer = true;
-                }
-              } */
     
               if( pointInSelectedLayer ) {
+                //activate transform
                 uiSettings.toolsSettings.transform.current = true;
+
+                //collect transforming layers
                 uiSettings.toolsSettings.transform.transformingLayers.length = 0;
                 if( selectedLayer.layerType === "group" ) {
                   const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
@@ -8607,6 +8588,32 @@ const startHandler = p => {
                 else {
                   uiSettings.toolsSettings.transform.transformingLayers.push( selectedLayer );
                 }
+
+                //get layer(s) center
+                if( cursor.mode === "rotate" || cursor.mode === "zoom" ) {
+                  let lx=0, ly=0, i = 0;
+                  for( const layer of uiSettings.toolsSettings.transform.transformingLayers ) {
+                    for( const pointName of [ "topLeft", "bottomRight", "bottomLeft", "topRight" ] ) {
+                      lx += layer[ pointName ][ 0 ];
+                      ly += layer[ pointName ][ 1 ];
+                      i++;
+                    }
+                  }
+                  lx /= i;
+                  ly /= i;
+                  //transform center to screen space
+                  getTransform();
+                  [lx,ly] = transformPoint( [lx,ly,1] );
+                  cursor.origin.x = lx;
+                  cursor.origin.y = ly;
+
+                  const dx = cursor.origin.x - cursor.current.x;
+                  const dy = cursor.origin.y - cursor.current.y;
+            
+                  layerTransform.initialAngleOffset = -Math.atan2( dy , dx );
+                  layerTransform.initialZoomLength = Math.sqrt( dx**2 + dy**2 );
+                }
+
               }
               else {
                 uiSettings.toolsSettings.transform.current = false;
@@ -8617,7 +8624,7 @@ const startHandler = p => {
         else if( p.pointerType !== "touch" && selectedLayer &&
           ( uiSettings.activeTool === "paint" || uiSettings.activeTool === "mask" ) ) {
           if( uiSettings.gpuPaint === 2 ) beginPaintGPU2( selectedLayer );
-          else if( uiSettings.gpuPaint === 1 ) beginPaintGPU( selectedLayer );
+          //else if( uiSettings.gpuPaint === 1 ) beginPaintGPU( selectedLayer );
           else beginPaint();
         }
     }
@@ -8742,6 +8749,8 @@ const moveHandler = ( p, pseudo = false ) => {
 
     cancelEvent( p );
 
+    //The reason we can't support Firefox pentablet on windows is it returns a new PointerID for every pen event, no matter what.
+    
     if( p.pointerType !== "touch" && pseudo === false ) {
       if( airInput.active ) {
         if( p.buttons === 0 && p.pressure === 0 && !keys[ "o" ] ) {
@@ -8952,12 +8961,16 @@ function writeInfo() {
 
 const view = {
     angle: 0,
+    initialAngleOffset: 0,
+    initialZoomLength: 1,
     zoom: 1,
     pan: { x: 0, y: 0 },
     origin: { x: 0 , y: 0 }
 }
 const layerTransform = {
   angle: 0,
+  initialAngleOffset: 0,
+  initialZoomLength: 1,
   zoom: 1,
   pan: { x: 0, y: 0 },
   origin: { x: 0 , y: 0 }
@@ -8983,7 +8996,7 @@ function updateCycle( t ) {
         const dx = cursor.current.x - cursor.origin.x;
         const dy = cursor.current.y - cursor.origin.y;
         const d = Math.sqrt( dx**2 + dy**2 );
-        layerTransform.zoom = d / cursor.zoomLength;
+        layerTransform.zoom = d / layerTransform.initialZoomLength;
         mat( layerTransform.zoom , 0 , 0 , 0 , layerTransformMatrices.moving );
       }
   
@@ -8992,10 +9005,10 @@ function updateCycle( t ) {
         layerTransform.origin.x = cursor.origin.x;
         layerTransform.origin.y = cursor.origin.y;
         
-        const dx = cursor.current.x - cursor.origin.x;
-        const dy = cursor.current.y - cursor.origin.y;
+        const dx = cursor.origin.x - cursor.current.x;
+        const dy = cursor.origin.y - cursor.current.y;
   
-        layerTransform.angle = -Math.atan2( dx , dy );
+        layerTransform.angle = Math.atan2( dy , dx ) + layerTransform.initialAngleOffset;
         mat( 1 , layerTransform.angle , 0 , 0 , layerTransformMatrices.moving );
       }
     }
@@ -9019,7 +9032,7 @@ function updateCycle( t ) {
         const dx = cursor.current.x - cursor.origin.x;
         const dy = cursor.current.y - cursor.origin.y;
         const d = Math.sqrt( dx**2 + dy**2 );
-        view.zoom = d / cursor.zoomLength;
+        view.zoom = d / view.initialZoomLength;
         mat( view.zoom , 0 , 0 , 0 , viewMatrices.moving );
         UI.updateView();
       }
@@ -9029,10 +9042,11 @@ function updateCycle( t ) {
         view.origin.x = cursor.origin.x;
         view.origin.y = cursor.origin.y;
         
-        const dx = cursor.current.x - cursor.origin.x;
-        const dy = cursor.current.y - cursor.origin.y;
+        const dx = cursor.origin.x - cursor.current.x;
+        const dy = cursor.origin.y - cursor.current.y;
   
-        view.angle = -Math.atan2( dx , dy );
+        //view.angle = Math.atan2( dy, dx );
+        view.angle = Math.atan2( dy, dx ) + view.initialAngleOffset;
         mat( 1 , view.angle , 0 , 0 , viewMatrices.moving );
         UI.updateView();
       }
@@ -12374,6 +12388,8 @@ function finalizeViewMove() {
     view.pan.y = 0;
     view.zoom = 1;
     view.angle = 0;
+    view.initialAngleOffset = 0;
+    view.initialZoomLength = 0;
 
     //renable transform for next pinch if it was temporarily disable for nav
     if( uiSettings.activeTool === "transform" )
@@ -12457,6 +12473,8 @@ function finalizeLayerTransform() {
   layerTransform.pan.y = 0;
   layerTransform.zoom = 1;
   layerTransform.angle = 0;
+  layerTransform.initialAngleOffset = 0;
+  layerTransform.initialZoomLength = 0;
 
   if( selectedLayer.layerType === "group" )
     updateLayerGroupCoordinates( selectedLayer );

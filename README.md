@@ -5,11 +5,20 @@
 # ParrotLUX (V0.1-Alpha)
 A Painting App for Open-Source AI
 
-**This app is currently in Alpha version. Expect bugs and missing features. Tuturials and documentation will be added soon.**
+This app is currently in Alpha version. Expect bugs and missing features. Tuturials and documentation will be added soon.
 
 <p align="center" width="100%">
     <img src="showcase-sketch.gif" width="30%"> <img src="showcase-pose.gif" width="30%"> <img src="showcase-paint.gif" width="30%"> 
 </p>
+
+# Cross-Platform
+This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
+
+<img src="os-support.png">
+
+(*Pen pressure is unavailable on Windows.)
+
+(It may also work on MacOS and iOS. Untested.)
 
 # Installation
 
@@ -19,8 +28,8 @@ A Painting App for Open-Source AI
     * ComfyUI should run on port 8188
     * A1111 should run on port 7860
     * The app will support configuring ports etc. in the future
-* An Android tablet with a pen stylus input (for example, a Samsung Galaxy Tab), with Chrome installed.
-    * iPad may be supported in the future, and may already work. Untested.
+* The Chrome or Chromium browser, running on Android, Windows, or Linux.
+    * MacOS and iOS are untested.
 
 ### Install
 1. Clone this repository to a directory on your local device.
