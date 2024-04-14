@@ -3322,7 +3322,7 @@ async function loadConservedSettings() {
     initialSettings = makeConservedSettingsObject();
   }
 
-  {
+  if( false ){
     await resetConservedSettings();
     console.error( "loadConservedSettings() is auto-resetting persistent settings! (in debug mode).")
   }
