@@ -80,8 +80,19 @@
   ],
   "controls": [
     {
-      "controlName": "appPort",
-      "controlType": "appPort",
+      "controlName": "AppHost",
+      "controlType": "apiFlowVariable",
+      "variableKey": "AppHost",
+      "controlValue": "localhost",
+      "controlPath": [
+        "get-brushes-array",
+        "host"
+      ]
+    },
+    {
+      "controlName": "AppPort",
+      "controlType": "apiFlowVariable",
+      "variableKey": "AppPort",
       "controlValue": 6789,
       "controlPath": [
         "get-brushes-array",
@@ -99,7 +110,7 @@
           "resultPath": []
         }
       ],
-      "host": "device",
+      "host": "localhost",
       "port": 6789,
       "method": "GET",
       "dataFormat": null,

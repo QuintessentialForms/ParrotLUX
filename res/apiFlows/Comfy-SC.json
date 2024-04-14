@@ -354,6 +354,66 @@
         "view",
         "apiPath"
       ]
+    },
+    {
+      "controlName": "ComfyHost",
+      "controlType": "apiFlowVariable",
+      "variableKey": "ComfyHost",
+      "controlValue": "localhost",
+      "controlPath": [
+        "sc-prompt",
+        "host"
+      ]
+    },
+    {
+      "controlName": "ComfyPort",
+      "controlType": "apiFlowVariable",
+      "variableKey": "ComfyPort",
+      "controlValue": 8188,
+      "controlPath": [
+        "sc-prompt",
+        "port"
+      ]
+    },
+    {
+      "controlName": "ComfyHost",
+      "controlType": "apiFlowVariable",
+      "variableKey": "ComfyHost",
+      "controlValue": "localhost",
+      "controlPath": [
+        "get-filename",
+        "host"
+      ]
+    },
+    {
+      "controlName": "ComfyPort",
+      "controlType": "apiFlowVariable",
+      "variableKey": "ComfyPort",
+      "controlValue": 8188,
+      "controlPath": [
+        "get-filename",
+        "port"
+      ]
+    },
+    {
+      "controlName": "ComfyHost",
+      "controlType": "apiFlowVariable",
+      "variableKey": "ComfyHost",
+      "controlValue": "localhost",
+      "controlPath": [
+        "view",
+        "host"
+      ]
+    },
+    {
+      "controlName": "ComfyPort",
+      "controlType": "apiFlowVariable",
+      "variableKey": "ComfyPort",
+      "controlValue": 8188,
+      "controlPath": [
+        "view",
+        "port"
+      ]
     }
   ],
   "apiCalls": [
@@ -368,7 +428,7 @@
           ]
         }
       ],
-      "host": "device",
+      "host": "localhost",
       "port": 8188,
       "apiPath": "/prompt",
       "method": "POST",
@@ -613,7 +673,7 @@
           ]
         }
       ],
-      "host": "device",
+      "host": "localhost",
       "port": 8188,
       "method": "GET",
       "dataFormat": null,
@@ -629,7 +689,7 @@
           "resultPath": "file"
         }
       ],
-      "host": "device",
+      "host": "localhost",
       "port": 8188,
       "method": "GET",
       "dataFormat": null,

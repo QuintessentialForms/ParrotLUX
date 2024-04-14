@@ -30,7 +30,7 @@
       "controlName": "A1111Host",
       "controlType": "apiFlowVariable",
       "variableKey": "A1111Host",
-      "controlValue": "device",
+      "controlValue": "localhost",
       "controlPath": [
         "get-vaes-array",
         "host"
@@ -57,7 +57,7 @@
           "resultPath": []
         }
       ],
-      "host": "device",
+      "host": "localhost",
       "port": 7860,
       "method": "GET",
       "dataFormat": null,

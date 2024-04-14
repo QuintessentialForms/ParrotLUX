@@ -1,16 +1,16 @@
 {
-    "name": "Ink Line",
+    "name": "Mechanical Pencil",
     "brushTips": ["res/img/brushes/tip-round01.png"],
     "brushTiltScale": 0,
     "brushTiltMinAngle": 1,
-    "brushSize": 6.7,
-    "minBrushSize": 2,
-    "maxBrushSize": 50,
+    "brushSize": 6,
+    "minBrushSize": 4,
+    "maxBrushSize": 256,
     "brushOpacity": 1,
     "brushBlur": 0.085,
     "minBrushBlur": 0,
-    "maxBrushBlur": 0.5,
+    "maxBrushBlur": 0.25,
     "brushSpacing": 0.1,
     "pressureOpacityCurvePoints": [[0,1],[1,1]],
-    "pressureScaleCurvePoints": [[0,0.33],[0.33,0.33],[1,1]]
+    "pressureScaleCurvePoints": [[0,1],[1,1]]
 }

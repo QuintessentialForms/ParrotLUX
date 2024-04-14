@@ -157,7 +157,7 @@
       "controlName": "A1111Host",
       "controlType": "apiFlowVariable",
       "variableKey": "A1111Host",
-      "controlValue": "device",
+      "controlValue": "localhost",
       "controlPath": [
         "set-model",
         "host"
@@ -177,7 +177,7 @@
       "controlName": "A1111Host2",
       "controlType": "apiFlowVariable",
       "variableKey": "A1111Host",
-      "controlValue": "device",
+      "controlValue": "localhost",
       "controlPath": [
         "i2i",
         "host"
@@ -198,7 +198,7 @@
     {
       "apiCallName": "set-model",
       "results": [],
-      "host": "device",
+      "host": "localhost",
       "port": 7860,
       "apiPath": "/sdapi/v1/options",
       "method": "POST",
@@ -220,7 +220,7 @@
           ]
         }
       ],
-      "host": "device",
+      "host": "localhost",
       "port": 7860,
       "apiPath": "/sdapi/v1/img2img",
       "method": "POST",

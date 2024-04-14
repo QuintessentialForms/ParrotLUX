@@ -1,5 +1,5 @@
 {
-  "apiFlowName": "A1111 ControlNet models Asset Loader",
+  "apiFlowName": "A1111 ControlNet Models Asset Loader",
   "assetLibraries": [
     "A1111 ControlNet Models"
   ],
@@ -30,7 +30,7 @@
       "controlName": "A1111Host",
       "controlType": "apiFlowVariable",
       "variableKey": "A1111Host",
-      "controlValue": "device",
+      "controlValue": "localhost",
       "controlPath": [
         "get-controlnet-models-array",
         "host"
@@ -57,7 +57,7 @@
           "resultPath": [ "model_list" ]
         }
       ],
-      "host": "device",
+      "host": "localhost",
       "port": 7860,
       "method": "GET",
       "dataFormat": null,

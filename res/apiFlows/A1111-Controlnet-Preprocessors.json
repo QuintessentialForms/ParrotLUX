@@ -45,7 +45,7 @@
       "controlName": "A1111Host",
       "controlType": "apiFlowVariable",
       "variableKey": "A1111Host",
-      "controlValue": "device",
+      "controlValue": "localhost",
       "controlPath": [
         "get-controlnet-preprocessors-array",
         "host"
@@ -72,7 +72,7 @@
           "resultPath": [ "module_detail" ]
         }
       ],
-      "host": "device",
+      "host": "localhost",
       "port": 7860,
       "method": "GET",
       "dataFormat": null,

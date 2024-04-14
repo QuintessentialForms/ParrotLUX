@@ -196,7 +196,7 @@ const server = http.createServer(
                             port: '7860', //json.port
                             path: '/sdapi/v1/txt2img', //json.path */
                             //host: json.host,
-                            host: json.host === "device" ? ipAddress : json.host,
+                            host: json.host === "localhost" ? ipAddress : json.host,
                             port: json.port,
                             path: json.path,
                             method: json.method === "POST" ? 'POST' : 'GET',

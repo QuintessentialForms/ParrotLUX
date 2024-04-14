@@ -179,7 +179,7 @@
       "controlName": "A1111Host",
       "controlType": "apiFlowVariable",
       "variableKey": "A1111Host",
-      "controlValue": "device",
+      "controlValue": "localhost",
       "controlPath": [
         "cn",
         "host"
@@ -209,7 +209,7 @@
           ]
         }
       ],
-      "host": "device",
+      "host": "localhost",
       "port": 7860,
       "apiPath": "/controlnet/detect",
       "method": "POST",

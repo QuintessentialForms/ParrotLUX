@@ -11,13 +11,13 @@
   (fixed) - blending has edges even on fully opaque layer
   (fixed) - clicking up/down arrows on slider often fails; tune sensitivity
   - need to save size per brush so I can easily switch between e.g. line brush & fill brush (copies of same base)
-  - there are no filters (hue/saturation/contrast)
+  (fixed)- there are no filters (hue/saturation/contrast)
   - there's no select/cut area. Have to paint instead of outlining to erase area.
   - no way to set layers to exact positions / rotations
   - lineart looks blocky / pixely when zoomed out. (Not doing subsampling.)
-  - cascade doesn't have img2img
+  (fixed)- cascade doesn't have img2img
   - there's no lora browser
-  - have to input settings again when switching from txt2img to img2img
+  (fixed)- have to input settings again when switching from txt2img to img2img
   - have to input settings + choose api every time I start a new file
   - there's no batches generate and no gen history
   - accidentally hit back button deletes drawing with no way to recover!
@@ -3284,25 +3284,6 @@ function endAirInput( p ) {
   airInput.uiElement.style.display = "none";
 }
 
-const nonSavedSettingsPaths = [
-  "toolsSettings.paint.modeSettings.all.brushTipsImages",
-  "toolsSettings.transform",
-  "maxUndoSteps",
-  "defaultLayerWidth", "defaultLayerHeight",
-  "gpuPaint", "showDebugInfo", "backendPort", "appPort", "allowAlienHost", "alienHostAddress",
-  "apiFlowVariables",
-];
-
-const conservedSettingsKeys = [
-  "maxUndoSteps",
-  "defaultLayerWidth", "defaultLayerHeight",
-  "generativeControls",
-  "paintBusyTimeout",
-  "retryAPIDelay",
-  "apiFlowVariables",
-  "clickTimeMS",
-];
-
 let initialSettings = true;
 function makeConservedSettingsObject() {
   const snapshot = {};
@@ -3325,7 +3306,7 @@ function loadConservedSettingsObject( snapshot ) {
 
 async function resetConservedSettings() {
   await storage.delete( "conservedSettings" );
-  loadConservedSettings( initialSettings );
+  loadConservedSettingsObject( initialSettings );
   await conserveSettings();
 }
 
@@ -3341,6 +3322,10 @@ async function loadConservedSettings() {
     initialSettings = makeConservedSettingsObject();
   }
 
+  {
+    await resetConservedSettings();
+    console.error( "loadConservedSettings() is auto-resetting persistent settings! (in debug mode).")
+  }
   const haveConservedSettings = await storage.has( "conservedSettings" );
   if( ! haveConservedSettings ) {
     await conserveSettings();
@@ -3356,6 +3341,30 @@ async function loadConservedSettings() {
   return true;
 }
 
+const nonSavedSettingsPaths = [
+  "toolsSettings.paint.modeSettings.all.brushTipsImages",
+  "toolsSettings.transform",
+  "maxUndoSteps",
+  "defaultLayerWidth", "defaultLayerHeight",
+  "addTimeStampToFilename",
+  "gpuPaint", "showDebugInfo",
+  "apiFlowVariables",
+  "paintBusyTimeout",
+  "clickTimeMS",
+  "retryAPIDelay",
+];
+
+const conservedSettingsKeys = [
+  "maxUndoSteps",
+  "defaultLayerWidth", "defaultLayerHeight",
+  "addTimeStampToFilename",
+  "generativeControls",
+  "paintBusyTimeout",
+  "clickTimeMS",
+  "retryAPIDelay",
+  "apiFlowVariables",
+];
+
 let uiSettings = {
 
   version: "0.1a.001",
@@ -3370,9 +3379,8 @@ let uiSettings = {
   maxUndoSteps: 20,
   defaultLayerWidth: 1024,
   defaultLayerHeight: 1024,
+  addTimeStampToFilename: true,
 
-  //defaultAPIFlowName: "A1111 Lightning Demo txt2img Mini",
-  //defaultAPIFlowName: "A1111 txt2img",
   defaultAPIFlowName: null,
   generativeControls: {},
   apiFlowNamesUsed: [],
@@ -3383,36 +3391,36 @@ let uiSettings = {
   clickTimeMS: 350,
   retryAPIDelay: 2000,
 
-  backendPort: 7860,
-  appPort: 6789,
-
-  allowAlienHost: true,
-  alienHostAddress: "device",
   apiFlowVariables: [
     {
       "key": "ComfyHost",
-      "value": "device",
-      "permissions": ["all"],
+      "value": "localhost",
+      "permissions": ["Comfy SD1.5/SDXL ControlNet","Comfy SD1.5/SDXL txt2img","Comfy SD1.5/SDXL img2img + ControlNet","Comfy SD1.5/SDXL img2img","Comfy StableCascade img2img + ControlNet","Comfy StableCascade img2img","Comfy StableCascade txt2img","Comfy Asset Loaders",],
     },
     {
       "key": "ComfyPort",
       "value": 8188,
-      "permissions": ["all"],
+      "permissions": ["Comfy SD1.5/SDXL ControlNet","Comfy SD1.5/SDXL txt2img","Comfy SD1.5/SDXL img2img + ControlNet","Comfy SD1.5/SDXL img2img","Comfy StableCascade img2img + ControlNet","Comfy StableCascade img2img","Comfy StableCascade txt2img","Comfy Asset Loaders",],
     },
     {
       "key": "A1111Host",
-      "value": "device",
-      "permissions": ["all"],
+      "value": "localhost",
+      "permissions": ["A1111 ControlNet Preprocessors Asset Loader","A1111 VAEs Asset Loader","A1111 txt2img + ControlNet","A1111 txt2img","A1111 Samplers Asset Loader","A1111 ControlNet Preprocessor","A1111 Models Asset Loader","A1111 img2img + ControlNet","A1111 img2img","A1111 ControlNet Models Asset Loader",],
     },
     {
       "key": "A1111Port",
       "value": 7860,
-      "permissions": ["all"],
+      "permissions": ["A1111 ControlNet Preprocessors Asset Loader","A1111 VAEs Asset Loader","A1111 txt2img + ControlNet","A1111 txt2img","A1111 Samplers Asset Loader","A1111 ControlNet Preprocessor","A1111 Models Asset Loader","A1111 img2img + ControlNet","A1111 img2img","A1111 ControlNet Models Asset Loader",],
     },
     {
-      "key": "appPort",
+      "key": "AppHost",
+      "value": "localhost",
+      "permissions": ["Local Brushes Loader",],
+    },
+    {
+      "key": "AppPort",
       "value": 6789,
-      "permissions": ["all"],
+      "permissions": ["Local Brushes Loader",],
     },
   ],
 
@@ -5598,7 +5606,7 @@ function setupUI() {
             const result = await executeAPICall( apiFlowName, controlValues );
             UI.hideOverlay.generating();
             if( result === false ) {
-              UI.showOverlay.error( 'Generation failed. Stuff to check:<ul style="font-size:0.825rem; text-align:left; margin:0; padding:1rem; padding-right:0;"><li>Are the settings right?</li><li>Are the image inputs connected?</li><li>Is Comfy/A1111 running?</li><li>Do you have all this API\'s nodes/extensions?</li><li>If this is your custom APIFlow, check the dev tools for more info.</li></ul>' );
+              UI.showOverlay.error( 'Generation failed. Stuff to check:<ul style="font-size:0.825rem; text-align:left; margin:0; padding:1rem; padding-right:0;"><li>Are the generative controls right?</li><li>Are the image inputs connected?</li><li>Is Comfy/A1111 running?</li><li>Do you have all this API\'s nodes/extensions?</li><li>Do you have all your APIKeys configured right in settings?</li><li>If this is your custom APIFlow, check the dev tools for more info.</li></ul>' );
             } else {
               if( result[ "generated-image" ] ) {
                 //Generation results can't be undone
@@ -5643,6 +5651,10 @@ function setupUI() {
         settingsControlPanelOverlay.classList.remove( "hidden" );
         controlPanel.focus();
         disableKeyTrapping();
+        const apiKeysPanel = controlPanel.querySelector(".apikeys-panel");
+        apiKeysPanel.classList.add( "blur" );
+        apiKeysPanel.onclick = apiKeysPanel.removeBlur;
+        apiKeysPanel.showApiKeys();
       };
       //back/close button
       const closeButton = document.createElement( "div" );
@@ -5656,9 +5668,203 @@ function setupUI() {
       closeButton.role = "button"; closeButton.tabIndex = "0";
       closeButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick(); }
       settingsControlPanelOverlay.appendChild( closeButton );
+
       //controlpanel
       const controlPanel = document.createElement( "div" );
       controlPanel.classList.add( "overlay-controlpanel", "overlay-element", "animated" );
+
+      //the apikeys panel
+      {
+
+        //the apikeys panel specialized undo functionality
+        const apiKeyHistory = [], apiKeyFuture = [];
+        function undoApiKey() {
+          if( apiKeyHistory.length > 0 ) {
+            const historyEntry = apiKeyHistory.pop();
+            uiSettings.apiFlowVariables = JSON.parse( historyEntry.oldState );
+            apiKeyFuture.push( historyEntry );
+            redoApiKeyButton.classList.remove( "unavailable" );
+            apiKeysPanel.showApiKeys();
+          }
+          if( apiKeyHistory.length === 0 ) {
+            undoApiKeyButton.classList.add( "unavailable" );
+          }
+        }
+        function redoApiKey() {
+          if( apiKeyFuture.length > 0 ) {
+            const historyEntry = apiKeyFuture.pop();
+            uiSettings.apiFlowVariables = JSON.parse( historyEntry.newState );
+            apiKeyHistory.push( historyEntry );
+            undoApiKeyButton.classList.remove( "unavailable" );
+            apiKeysPanel.showApiKeys();
+          }
+          if( apiKeyFuture.length === 0 ) {
+            redoApiKeyButton.classList.add( "unavailable" );
+          }
+        }
+        function recordApiKeyUndo( oldState, newState ) {
+          const historyEntry = { oldState, newState };
+          apiKeyHistory.push( historyEntry );
+          undoApiKeyButton.classList.remove( "unavailable" );
+          apiKeyFuture.length = 0;
+          redoApiKeyButton.classList.add( "unavailable" );
+          apiKeysPanel.showApiKeys();
+        }
+
+
+        const apiKeysPanelLabel = document.createElement( "div" );
+        apiKeysPanelLabel.classList.add( "overlay-controlpanel-label" );
+        apiKeysPanelLabel.textContent = "APIFlow Keys";
+        controlPanel.appendChild( apiKeysPanelLabel );
+
+        const redoApiKeyButton = document.createElement( "div" );
+        redoApiKeyButton.classList.add( "round-toggle", "animated" );
+        redoApiKeyButton.id = "redo-apikey-button";
+        redoApiKeyButton.onclick = () => {
+          if( apiKeyFuture.length === 0 ) return;
+          redoApiKey();
+          redoApiKeyButton.classList.add( "pushed" );
+          setTimeout( ()=>redoApiKeyButton.classList.remove("pushed"), UI.animationMS );
+        }
+        apiKeysPanelLabel.appendChild( redoApiKeyButton );
+        const undoApiKeyButton = document.createElement( "div" );
+        undoApiKeyButton.classList.add( "round-toggle", "unavailable", "animated" );
+        undoApiKeyButton.id = "undo-apikey-button";
+        undoApiKeyButton.onclick = () => {
+          if( apiKeyHistory.length === 0 ) return;
+          undoApiKey();
+          undoApiKeyButton.classList.add( "pushed" );
+          setTimeout( ()=>undoApiKeyButton.classList.remove("pushed"), UI.animationMS );
+        }
+        apiKeysPanelLabel.appendChild( undoApiKeyButton );
+
+
+        const apiKeysPanel = document.createElement( "div" );
+        apiKeysPanel.classList.add( "apikeys-panel", "blur" );
+        apiKeysPanel.removeBlur = () => {
+          apiKeysPanel.classList.remove( "blur" );
+          apiKeysPanel.onclick = undefined;
+        }
+        apiKeysPanel.onclick = apiKeysPanel.removeBlur;
+        apiKeysPanel.showApiKeys = () => {
+          apiKeysPanel.innerHTML = "";
+          //the add button
+          {
+            const addRow = document.createElement( "div" );
+            addRow.classList.add( "apikey-row" );
+            const addbutton = document.createElement( "div" );
+            addbutton.classList.add( "apikey-row-button", "long", "dark" );
+            addbutton.textContent = "+ Add New";
+            addbutton.onclick = () => 
+              UI.showOverlay.text({
+                value:"Key Name",
+                label: "New APIFlow Variable Key",
+                onapply: newKey => {
+                  const oldState = JSON.stringify(uiSettings.apiFlowVariables);
+                  uiSettings.apiFlowVariables.unshift({
+                    "key": newKey,
+                    "value": "",
+                    "permissions": []
+                  });
+                  const newState = JSON.stringify(uiSettings.apiFlowVariables);
+                  recordApiKeyUndo( oldState, newState ); //calls redisplay
+                }
+              } );
+            addRow.appendChild( addbutton );
+            apiKeysPanel.appendChild( addRow );
+          }
+          //the api key rows
+          for( let i=0; i<uiSettings.apiFlowVariables.length; i++ ) {
+            const apiFlowVariable = uiSettings.apiFlowVariables[ i ];
+            const {key,value,permissions} = apiFlowVariable;
+            const row = document.createElement( "div" );
+            row.classList.add( "apikey-row" );
+
+            const keyButton = document.createElement( "div" );
+            keyButton.classList.add( "apikey-row-button" );
+            keyButton.textContent = "✎ " + key;
+            keyButton.onclick = () => 
+              UI.showOverlay.text({
+                value:key,
+                label: "APIFlow Variable Key",
+                onapply: newKey => {
+                  const oldState = JSON.stringify(uiSettings.apiFlowVariables);
+                  apiFlowVariable.key = newKey;
+                  const newState = JSON.stringify(uiSettings.apiFlowVariables);
+                  recordApiKeyUndo( oldState, newState ); //calls redisplay
+                }
+              } );
+
+            row.appendChild( keyButton );
+            const valueButton = document.createElement( "div" );
+            valueButton.classList.add( "apikey-row-button" );
+            valueButton.textContent = "✎ " + value;
+            valueButton.onclick = () => 
+              UI.showOverlay.text({
+                value:value,
+                label: "APIFlow Variable Value",
+                onapply: newValue => {
+                  const oldState = JSON.stringify(uiSettings.apiFlowVariables);
+                  apiFlowVariable.value = newValue;
+                  const newState = JSON.stringify(uiSettings.apiFlowVariables);
+                  recordApiKeyUndo( oldState, newState ); //calls redisplay
+                }
+              } );
+
+            row.appendChild( valueButton );
+            const permissionsButton = document.createElement( "div" );
+            permissionsButton.classList.add( "apikey-row-button", "dark" );
+            permissionsButton.textContent = "↓ Permissions";
+            permissionsButton.onclick = () => {
+              const apiFlowNames = apiFlows.map( f => ({name:f.apiFlowName}) );
+              const activePermissions = apiFlowNames.filter( f => permissions.includes(f.name) );
+              openAssetBrowser( apiFlowNames,
+                modifiedPermissions => {
+                  //check for changes so we don't pollute our undo history
+                  let changeFound = false;
+                  for( const permission of modifiedPermissions ) {
+                    if( ! activePermissions.find( p => p.name === permission.name ) ) {
+                      changeFound = true;
+                      break;
+                    }
+                  }
+                  if( ! changeFound )
+                    for( const permission of activePermissions ) {
+                      if( ! modifiedPermissions.find( p => p.name === permission.name ) ) {
+                        changeFound = true;
+                        break;
+                      }
+                    }
+                  if( changeFound === false ) {
+                    return;
+                  }
+                  const oldState = JSON.stringify(uiSettings.apiFlowVariables);
+                  apiFlowVariable.permissions = modifiedPermissions.map(p=>p.name);
+                  const newState = JSON.stringify(uiSettings.apiFlowVariables);
+                  //calling redisplay to bind new permissions array to this function
+                  recordApiKeyUndo( oldState, newState );
+                },
+                null, activePermissions );
+            }
+            row.appendChild( permissionsButton );
+
+            const deleteButton = document.createElement( "div" );
+            deleteButton.classList.add( "apikey-row-button", "dark", "stub", "apikey-row-delete-icon" );
+            deleteButton.onclick = () => {
+              const oldState = JSON.stringify(uiSettings.apiFlowVariables);
+              uiSettings.apiFlowVariables.splice( i, 1 );
+              const newState = JSON.stringify(uiSettings.apiFlowVariables);
+              recordApiKeyUndo( oldState, newState ); //calls redisplay, rebinds all indices for delete
+            };
+            row.appendChild( deleteButton );
+
+            apiKeysPanel.appendChild( row );
+          }
+
+        }
+        controlPanel.appendChild( apiKeysPanel );
+      }
+
       settingsControlPanelOverlay.appendChild( controlPanel );
 
       overlayContainer.appendChild( settingsControlPanelOverlay );
@@ -5672,6 +5878,7 @@ function setupUI() {
       textInputOverlay.id = "multiline-text-input-overlay";
       textInputOverlay.onapply = () => {};
       textInputOverlay.setText = text => { textInput.value = text };
+      textInputOverlay.setLabel = label => { textInputLabel.textContent = label };
       textInputOverlay.show = () => {
         textInputOverlay.classList.remove( "hidden" );
         textInput.focus();
@@ -5689,6 +5896,11 @@ function setupUI() {
       closeButton.role = "button"; closeButton.tabIndex = "0";
       closeButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick(); }
       textInputOverlay.appendChild( closeButton );
+      //label
+      const textInputLabel = document.createElement( "div" );
+      textInputLabel.classList.add( "overlay-input-label", "overlay-element", "animated" );
+      textInputLabel.textContent = "";
+      textInputOverlay.appendChild( textInputLabel );
       //text input
       const textInput = document.createElement( "textarea" );
       textInput.classList.add( "overlay-text-input", "overlay-element", "animated" );
@@ -5720,6 +5932,7 @@ function setupUI() {
       const numberInputOverlay = document.createElement( "div" );
       numberInputOverlay.classList.add( "overlay-background", "hidden", "real-input", "animated" );
       numberInputOverlay.id = "number-input-overlay";
+      numberInputOverlay.setLabel = label => { numberInputLabel.textContent = label };
       numberInputOverlay.onapply = () => {};
       numberInputOverlay.show = () => {
         numberInputOverlay.classList.remove( "hidden" );
@@ -5740,6 +5953,11 @@ function setupUI() {
         if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick();
       }
       numberInputOverlay.appendChild( closeButton );
+      //label
+      const numberInputLabel = document.createElement( "div" );
+      numberInputLabel.classList.add( "overlay-input-label", "overlay-element", "animated" );
+      numberInputLabel.textContent = "";
+      numberInputOverlay.appendChild( numberInputLabel );
       //text input
       const numberInput = document.createElement( "input" );
       numberInput.type = "number";
@@ -5788,6 +6006,13 @@ function setupUI() {
         filenameInput.focus();
         disableKeyTrapping();
       };
+      //label
+      {
+        const label = document.createElement( "div" );
+        label.classList.add( "overlay-input-label", "overlay-element", "animated" );
+        label.textContent = "Save Filename";
+        filenameSaveOverlay.appendChild( label );
+      }
       //back/close button
       const closeButton = document.createElement( "div" );
       closeButton.classList.add( "overlay-close-button", "overlay-element", "animated" );
@@ -5826,49 +6051,6 @@ function setupUI() {
       filenameSaveOverlay.appendChild( applyButton );
 
       overlayContainer.appendChild( filenameSaveOverlay );
-    }
-
-    //the error notification overlay
-    {
-      //full-screen overlay
-      const errorNotificationOverlay = document.createElement( "div" );
-      errorNotificationOverlay.classList.add( "overlay-background", "hidden", "real-input", "animated" );
-      errorNotificationOverlay.id = "error-notification-overlay";
-      errorNotificationOverlay.show = () => {
-        errorNotificationOverlay.classList.remove( "hidden" );
-        disableKeyTrapping();
-      };
-      //back/close button
-      const closeButton = document.createElement( "div" );
-      closeButton.classList.add( "overlay-close-button", "overlay-element", "animated" );
-      closeButton.onclick = () => {
-        closeButton.classList.add( "pushed" );
-        setTimeout( ()=>closeButton.classList.remove("pushed"), UI.animationMS );
-        enableKeyTrapping();
-        errorNotificationOverlay.classList.add( "hidden" );
-      }
-      closeButton.role = "button"; closeButton.tabIndex = "0";
-      closeButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick(); }
-      errorNotificationOverlay.appendChild( closeButton );
-      //text input
-      const errorText = document.createElement( "div" );
-      errorText.textContent = "Error.";
-      errorText.classList.add( "overlay-error-notification", "overlay-element", "animated" );
-      errorNotificationOverlay.appendChild( errorText );
-      //the accept button
-      const acceptButton = document.createElement( "div" );
-      acceptButton.classList.add( "overlay-accept-button", "overlay-element", "animated" );
-      acceptButton.onclick = () => {
-        acceptButton.classList.add( "pushed" );
-        setTimeout( ()=>acceptButton.classList.remove("pushed"), UI.animationMS );
-        enableKeyTrapping();
-        errorNotificationOverlay.classList.add( "hidden" );
-      }
-      acceptButton.role = "button"; acceptButton.tabIndex = "0";
-      acceptButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) acceptButton.onclick(); }
-      errorNotificationOverlay.appendChild( acceptButton );
-
-      overlayContainer.appendChild( errorNotificationOverlay );
     }
 
     //the generating overlay
@@ -6038,6 +6220,49 @@ function setupUI() {
       
     }
 
+    //the error notification overlay
+    {
+      //full-screen overlay
+      const errorNotificationOverlay = document.createElement( "div" );
+      errorNotificationOverlay.classList.add( "overlay-background", "hidden", "real-input", "animated" );
+      errorNotificationOverlay.id = "error-notification-overlay";
+      errorNotificationOverlay.show = () => {
+        errorNotificationOverlay.classList.remove( "hidden" );
+        disableKeyTrapping();
+      };
+      //back/close button
+      const closeButton = document.createElement( "div" );
+      closeButton.classList.add( "overlay-close-button", "overlay-element", "animated" );
+      closeButton.onclick = () => {
+        closeButton.classList.add( "pushed" );
+        setTimeout( ()=>closeButton.classList.remove("pushed"), UI.animationMS );
+        enableKeyTrapping();
+        errorNotificationOverlay.classList.add( "hidden" );
+      }
+      closeButton.role = "button"; closeButton.tabIndex = "0";
+      closeButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) closeButton.onclick(); }
+      errorNotificationOverlay.appendChild( closeButton );
+      //text input
+      const errorText = document.createElement( "div" );
+      errorText.textContent = "Error.";
+      errorText.classList.add( "overlay-error-notification", "overlay-element", "animated" );
+      errorNotificationOverlay.appendChild( errorText );
+      //the accept button
+      const acceptButton = document.createElement( "div" );
+      acceptButton.classList.add( "overlay-accept-button", "overlay-element", "animated" );
+      acceptButton.onclick = () => {
+        acceptButton.classList.add( "pushed" );
+        setTimeout( ()=>acceptButton.classList.remove("pushed"), UI.animationMS );
+        enableKeyTrapping();
+        errorNotificationOverlay.classList.add( "hidden" );
+      }
+      acceptButton.role = "button"; acceptButton.tabIndex = "0";
+      acceptButton.onkeydown = e => { if( ["Enter","Space"].includes( e.code ) ) acceptButton.onclick(); }
+      errorNotificationOverlay.appendChild( acceptButton );
+
+      overlayContainer.appendChild( errorNotificationOverlay );
+    }
+
   }
 
   //the filter controls
@@ -6081,7 +6306,7 @@ function setupUI() {
     //the fullscreen button
     {
       const fullscreenButton = document.createElement( "div" );
-      fullscreenButton.classList.add( "round-toggle", "on", "home-row-enter-fullscreen-button" );
+      fullscreenButton.classList.add( "round-toggle", "home-row-enter-fullscreen-button" );
       if( document.fullscreenElement ) fullscreenButton.classList.add( "fullscreen" );
       homeRow.appendChild( fullscreenButton );
       UI.registerElement(
@@ -6092,45 +6317,150 @@ function setupUI() {
             else main.requestFullscreen();
           },
           updateContext: () => {
-            if( document.fullscreenElement ) fullscreenButton.classList.add( "fullscreen" );
-            else fullscreenButton.classList.remove( "fullscreen" );
+            if( document.fullscreenElement ) fullscreenButton.classList.add( "fullscreen", "on" );
+            else fullscreenButton.classList.remove( "fullscreen", "on" );
           },
         },
         { tooltip: [ "Enter/Exit Fullscreen", "below", "to-right-of-center" ] },
       )
     }
-    //the save button
+    //the file button
     {
-      const saveButton = document.createElement( "div" );
-      saveButton.classList.add( "round-toggle", "on", "home-row-save-button" );
-      homeRow.appendChild( saveButton );
+      const fileButton = document.createElement( "div" );
+      fileButton.classList.add( "round-toggle", "home-row-file-button", "animated" );
+      homeRow.appendChild( fileButton );
       UI.registerElement(
-        saveButton,
-        { onclick: () => UI.showOverlay.save() },
-        { tooltip: [ "Save Project", "below", "to-right-of-center" ] },
-      )
+        fileButton, {
+          onclick: () => {
+            if( UI.context.has( "add-file-panel-visible" ) ) {
+              UI.deleteContext( "add-file-panel-visible" );
+            } else {
+              UI.addContext( "add-file-panel-visible" );
+            }
+            fileButton.classList.add( "pushed" );
+            setTimeout( () => fileButton.classList.remove( "pushed" ), UI.animationMS );
+          },
+          updateContext: context => {
+            if( context.has( "add-file-panel-visible" ) ) {
+              fileButton.classList.add( "on" );
+            } else {
+              fileButton.classList.remove( "on" );
+            }
+          }
+        },
+        { tooltip: [ "File", "below", "to-right-of-center" ], zIndex:2000, },
+      );
+      
+    //the file hovering panel
+    {
+      const filePanel = document.createElement( "div" );
+      filePanel.classList.add( "animated" );
+      filePanel.id = "file-panel";
+      fileButton.appendChild( filePanel );
+
+      //add the stylized summon marker arrow to the top-left
+      const summonMarker = document.createElement( "div" );
+      summonMarker.classList.add( "summon-marker" );
+      filePanel.appendChild( summonMarker );
+
+      UI.registerElement( filePanel, {
+        onclickout: () => {
+          UI.deleteContext( "add-file-panel-visible" );
+        },
+        updateContext: context => {
+          if( context.has( "add-file-panel-visible" ) ) filePanel.classList.remove( "hidden" );
+          else filePanel.classList.add( "hidden" );
+        },
+      }, { zIndex: 10000 } );
+
+      {
+        //add the project save button
+        const projectSaveButton = filePanel.appendChild( document.createElement( "div" ) );
+        projectSaveButton.classList.add( "rounded-line-button", "animated" );
+        projectSaveButton.appendChild( new Image() ).src = "icon/save.png";
+        projectSaveButton.appendChild( document.createElement("span") ).textContent = "Save Project";
+        UI.registerElement( projectSaveButton, {
+          onclick: () => {
+            projectSaveButton.classList.add( "pushed" );
+            setTimeout( () => projectSaveButton.classList.remove( "pushed" ), UI.animationMS );
+            UI.showOverlay.save()
+            UI.deleteContext( "add-file-panel-visible" );
+          },
+          updateContext: context => {
+            if( context.has( "add-file-panel-visible" ) ) projectSaveButton.uiActive = true;
+            else projectSaveButton.uiActive = false;
+          }
+        }, { 
+          tooltip: [ "Save Project", "to-right", "vertical-center" ],
+          zIndex: 11000
+        } );
+      }
+
+      //add a spacer
+      filePanel.appendChild( document.createElement( "div" ) ).className = "spacer";
+
+      {
+        //add the project load button
+        const projectLoadButton = filePanel.appendChild( document.createElement( "div" ) );
+        projectLoadButton.classList.add( "rounded-line-button", "animated" );
+        projectLoadButton.appendChild( new Image() ).src = "icon/open.png";
+        projectLoadButton.appendChild( document.createElement("span") ).textContent = "Open Project";
+        UI.registerElement( projectLoadButton, {
+          onclick: () => {
+            projectLoadButton.classList.add( "pushed" );
+            setTimeout( () => projectLoadButton.classList.remove( "pushed" ), UI.animationMS );
+            loadJSON()
+            UI.deleteContext( "add-file-panel-visible" );
+          },
+          updateContext: context => {
+            if( context.has( "add-file-panel-visible" ) ) projectLoadButton.uiActive = true;
+            else projectLoadButton.uiActive = false;
+          }
+        }, { 
+          tooltip: [ "Load Project", "to-right", "vertical-center" ],
+          zIndex: 11000
+        } );
+      }
+
+      //add a spacer
+      filePanel.appendChild( document.createElement( "div" ) ).className = "spacer";
+
+      {
+        //add the export image button
+        const exportImageButton = filePanel.appendChild( document.createElement( "div" ) );
+        exportImageButton.classList.add( "rounded-line-button", "animated" );
+        exportImageButton.appendChild( new Image() ).src = "icon/export-image.png";
+        exportImageButton.appendChild( document.createElement("span") ).textContent = "Export Image";
+        UI.registerElement( exportImageButton, {
+          onclick: () => {
+            exportImageButton.classList.add( "pushed" );
+            setTimeout( () => exportImageButton.classList.remove( "pushed" ), UI.animationMS );
+            exportPNG()
+            UI.deleteContext( "add-file-panel-visible" );
+          },
+          updateContext: context => {
+            if( context.has( "add-file-panel-visible" ) ) exportImageButton.uiActive = true;
+            else exportImageButton.uiActive = false;
+          }
+        }, { 
+          tooltip: [ "Export Image", "to-right", "vertical-center" ],
+          zIndex: 11000
+        } );
+      }
+
     }
-    //the load button
-    {
-      const loadButton = document.createElement( "div" );
-      loadButton.classList.add( "round-toggle", "on", "home-row-load-button" );
-      homeRow.appendChild( loadButton );
-      UI.registerElement(
-        loadButton,
-        { onclick: () => loadJSON() },
-        { tooltip: [ "Load Project", "below", "to-right-of-center" ] },
-      )
+
     }
-    //the export button
+    console.error( "Debug file and save settings z-index tooltip vs. gen controls; try remove zindex on file/set")
+    //the settings button
     {
-      const exportButton = document.createElement( "div" );
-      exportButton.classList.add( "round-toggle", "on", "home-row-export-button" );
-      homeRow.appendChild( exportButton );
+      const settingsButton = document.createElement( "div" );
+      settingsButton.classList.add( "round-toggle", "home-row-settings-button", "animated" );
+      homeRow.appendChild( settingsButton );
       UI.registerElement(
-        exportButton,
-        { onclick: () => exportPNG() },
-        { tooltip: [ "Export as Image", "below", "to-right-of-center" ] },
-      )
+        settingsButton, { onclick: () => UI.showOverlay.controlPanel() },
+        { tooltip: [ "Settings", "below", "to-right-of-center" ], zIndex:2000, },
+      );
     }
   }
 
@@ -6734,7 +7064,7 @@ function setupUI() {
 
 }
 
-function openAssetBrowser( assets, callback, assetName ) {
+function openAssetBrowser( assets, callback, assetName=null, multiSelectBatch=null ) {
 
   const assetBrowserContainer = document.querySelector( "#asset-browser-container" );
   //const assetBrowserPreview = document.querySelector( "#asset-browser-preview" );
@@ -6745,7 +7075,7 @@ function openAssetBrowser( assets, callback, assetName ) {
   
   //get our interpreter
   let assetInterpreterName = "simple-name";
-  if( assetInterpreters.hasOwnProperty( assetName ) ) {
+  if( assetName !== null && assetInterpreters.hasOwnProperty( assetName ) ) {
     assetInterpreterName = assetName;
   }
 
@@ -6758,16 +7088,35 @@ function openAssetBrowser( assets, callback, assetName ) {
 
   //add the assets
   let activeAsset = null;
+  const activeAssets = new Set();
+  if( multiSelectBatch )
+    multiSelectBatch.forEach( a => activeAssets.add( a ) );
   for( const asset of assets ) {
     const assetElement = assetInterpreter.makeElement( asset );
     assetElement.onclick = () => {
-      document.querySelectorAll( ".asset-element" ).forEach(
-        e => e.classList.remove( "active" )
-      );
-      assetElement.classList.add( "active" );
-      assetInterpreter.showPreview( asset )
-      activeAsset = asset;
+      if( multiSelectBatch === null ) {
+        document.querySelectorAll( ".asset-element" ).forEach(
+          e => e.classList.remove( "active" )
+        );
+        assetElement.classList.add( "active" );
+        assetInterpreter.showPreview( asset );
+        activeAsset = asset;
+      }
+      else if( multiSelectBatch ) {
+        if( activeAssets.has( asset ) ) {
+          activeAssets.delete( asset );
+          assetElement.classList.remove( "active" );
+          assetInterpreters.clearPreview();
+        }
+        else {
+          activeAssets.add( asset );
+          assetElement.classList.add( "active" );
+          assetInterpreter.showPreview( asset );
+        }
+      }
     }
+    if( multiSelectBatch?.includes?.( asset ) )
+      assetElement.classList.add( "active" );
     list.appendChild( assetElement );
   }
 
@@ -6777,8 +7126,8 @@ function openAssetBrowser( assets, callback, assetName ) {
   const applyButton = document.querySelector( "#asset-browser-apply-button" );
   applyButton.onclick = () => {
 
-    //just close if no asset picked
-    if( activeAsset === null ) {
+    //just close if no clicks happened
+    if( activeAsset === null && multiSelectBatch === null ) {
       enableKeyTrapping();
       assetBrowserContainer.classList.add( "hidden" );
       return;
@@ -6788,8 +7137,13 @@ function openAssetBrowser( assets, callback, assetName ) {
     setTimeout( ()=>applyButton.classList.remove("pushed"), UI.animationMS );
     enableKeyTrapping();
     assetBrowserContainer.classList.add( "hidden" );
-    uiSettings.lastUsedAssets[ assetName ] = activeAsset.uniqueId;
-    callback( activeAsset );
+
+    if( multiSelectBatch ) callback( [ ...activeAssets ] );
+    else {
+      uiSettings.lastUsedAssets[ assetName ] = activeAsset.uniqueId;
+      callback( activeAsset );
+    }
+
   }
 
   assetBrowserContainer.classList.remove( "hidden" );
@@ -7129,10 +7483,10 @@ function setupUIGenerativeControls( apiFlowName ) {
     }
   }
 
-  const imageInputsWidth = 0.5 + numberOfImageInputs * 1.5;
+  const imageInputsWidth = 0 + numberOfImageInputs * 1.5;
 
   imageInputsPanel.style.width = imageInputsWidth + "rem";
-  controlsPanel.style.width = `calc( 100% - ( 12.4rem + ${imageInputsWidth}rem ) )`;
+  controlsPanel.style.width = `calc( 100% - ( ( var(--generate-button-width) + 2.5rem ) + ${imageInputsWidth}rem ) )`;
 
   UI.updateContext();
 
@@ -7338,7 +7692,15 @@ function exportPNG() {
   const imgURL = layersStack.layers[0].canvas.toDataURL();
   
   const a = document.createElement( "a" );
-  a.download = "ParrotLUX - export - " + Date.now() + ".png";
+  if( uiSettings.filename === "[automatic]" )
+    a.download = "ParrotLUX - export - " + Date.now() + ".png";
+  else {
+    if( uiSettings.addTimeStampToFilename === true ) {
+      a.download = uiSettings.filename + " - " + Date.now() + ".png";
+    } else {
+      a.download = uiSettings.filename + ".png";
+    }
+  }
   a.href = imgURL;
   document.body.appendChild( a );
   a.click();
@@ -7452,7 +7814,13 @@ function saveJSON() {
   const a = document.createElement( "a" );
   if( uiSettings.filename === "[automatic]" )
     a.download = "ParrotLUX - save - " + Date.now() + ".json";
-  else a.download = uiSettings.filename + ".json";
+  else {
+    if( uiSettings.addTimeStampToFilename === true ) {
+      a.download = uiSettings.filename + " - " + Date.now() + ".json";
+    } else {
+      a.download = uiSettings.filename + ".json";
+    }
+  }
   const b = new Blob( [saveFileString], { type: "application/json" } );
   a.href = URL.createObjectURL( b );
   document.body.appendChild( a );
@@ -7576,8 +7944,10 @@ function loadJSON() {
           newLayer.groupCompositeUpToDate = false;
           newLayer.groupClosed = groupClosed;
 
-          newLayer.visible = visible;
-          newLayer.opacity = opacity;
+          //newLayer.visible = visible;
+          newLayer.setVisibility( visible ); //update icon
+          //newLayer.opacity = opacity;
+          newLayer.setOpacity( opacity ); //update slider position
 
           newLayer.generativeSettings = generativeSettings;
           newLayer.generativeControls = generativeControls;
@@ -7677,16 +8047,20 @@ const UI = {
   pointerHandlers: {},
 
   showOverlay: {
-    text: ( { value="", onapply=txt=>console.log(txt) } ) => {
+    controlPanel: () => {
+      document.querySelector("#settings-controlpanel-overlay").show();
+    },
+    text: ( { value="", onapply=txt=>console.log(txt), label="" } ) => {
       const textInput = document.querySelector( "#multiline-text-input-overlay" );
       textInput.setText( value );
+      textInput.setLabel( label );
       textInput.onapply = onapply;
       textInput.show();
     },
-    number: ( { value=0, min=0, max=1, step=0.1, onapply=num=>console.log(num) } ) => {
+    number: ( { value=0, min=0, max=1, step=0.1, onapply=num=>console.log(num), label="" } ) => {
       const numberInputOverlay = document.querySelector( "#number-input-overlay" ),
         numberInput = numberInputOverlay.querySelector( "input" );
-      //numberInputOverlay.setText( value );
+      numberInputOverlay.setLabel( label );
       numberInput.value = value;
       numberInput.min = min;
       numberInput.max = max;
@@ -9604,7 +9978,8 @@ function paintGPU2( points, layer ) {
       const normalizedAltitudeAngle = Math.min( 1, ( invertAltitudeAngle / 0.90 ) ); //0 to 1 (maybe a little less)
 
       let clippedAngle;
-      if( normalizedAltitudeAngle < brushTiltMinAngle ) clippedAngle = 0;
+      if( brushTiltMinAngle === 1 ) clippedAngle = 0;
+      else if( normalizedAltitudeAngle < brushTiltMinAngle ) clippedAngle = 0;
       else clippedAngle = ( normalizedAltitudeAngle - brushTiltMinAngle ) / ( 1.0 - brushTiltMinAngle );
       
       let tiltScale = clippedAngle * brushTiltScale;
@@ -9624,7 +9999,7 @@ function paintGPU2( points, layer ) {
       //when angle === 0, center: xOffset = 0
       //as soon as angle > 0, jump(ish) to the left-most edge of the image, minus the blur
       let xOffset;
-      if( clippedAngle === 0 ) xOffset = 0;
+      if( clippedAngle === 0 || brushTiltScale === 0 ) xOffset = 0;
       else xOffset = ( scaledTipImageWidth/2 ) - Math.min( 1.0, clippedAngle*10 ) * ( 0.5 * brushBlur * scaledTipImageWidth );
 
 
@@ -12332,9 +12707,6 @@ async function executeAPICall( name, controlValues ) {
 
     const apiCall = apiFlow.apiCalls[ i ];
 
-    if( apiCall.port !== uiSettings.appPort && apiCall.host === "device" && uiSettings.allowAlienHost )
-      apiCall.host = uiSettings.alienHostAddress;
-
     if( verboseAPICall ) console.log( "On apicall ", apiCall.apiCallName )
 
     let resultSchemeExpectingRawFile = false;
@@ -12475,9 +12847,6 @@ async function executeAPICall( name, controlValues ) {
           else if( topLevel === apiCall.apiCallName ) {
             target = apiCall;
 
-            //just ignore this line...
-            //if( isApiOrConfig === "host" && apiCall.host === "device" ) { throw console.error( "Unsafe behavior! An API control may be trying to redirect an API call to an external service." ); }
-
             controlPath = [ isApiOrConfig, ...controlPath ];
             for( let i=0, j=controlPath.length-1; i<j; i++ ) {
               target = target[ controlPath.shift() ];
@@ -12514,10 +12883,13 @@ async function executeAPICall( name, controlValues ) {
             target[ controlPath.shift() ] = retrievedValue;
           }
           else if( controlScheme.controlType === "apiFlowVariable" ) {
-            const  variable = uiSettings.apiFlowVariables.find( v => v.key === controlScheme.variableKey );
-            if( variable && ( variable.permissions.includes( "all" ) || variable.permissions.includes( apiFlow.apiFlowName ) ) ) {
+            const variable = uiSettings.apiFlowVariables.find( v => v.key === controlScheme.variableKey );
+            if( variable && variable.permissions.includes( apiFlow.apiFlowName ) ) {
               controlScheme.controlValue = variable.value;
               target[ controlPath.shift() ] = variable.value;
+            } else {
+              console.error( "Failed to load variable ", variable, " for apiflow ", apiFlow );
+              complete( false );
             }
           }
           else if( controlScheme.controlType === "apiPort") {
@@ -12555,7 +12927,7 @@ async function executeAPICall( name, controlValues ) {
 
         }
       }
-      if( apiCall.host === "device" || uiSettings.allowAlienHost === true ) {
+      {
         if( apiCall.method === "POST" ) {
           const postData = {
             method: "POST",
@@ -12688,7 +13060,12 @@ async function loadDefaultAPIFlows() {
         async response => {
           if( response.ok ) {
             const apiFlow = await response.json();
-            apiFlows.push( apiFlow );
+            const existingApiFlow = apiFlows.find( f => f.apiFlowName === apiFlow.apiFlowName );
+            if( existingApiFlow ) {
+              UI.showOverlay.error( "Some APIFlows failed to load because of duplicate names." );
+              console.error( "Failed to load duplicate apiflow name: ", apiFlow.apiFlowName );
+            }
+            else apiFlows.push( apiFlow );
             //console.log( "Loaded apiflow ", defaultAPIFlowName );
           } else {
             console.error( "Failed to load default apiflow: ", defaultAPIFlowName );
