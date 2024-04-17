@@ -53,6 +53,7 @@ gnv.id = "gnv";
 let W = 0, H = 0;
 let currentImage = null,
   //currentArtCanvas = null,
+  batchedLayers = new Set(),
   selectedLayer = null;
   //selectedPaintLayer = null,
   //selectedGenLayer = null;
@@ -337,6 +338,8 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     nodeUplinks: new Set(),
 
     rig: null,
+    textInfo: JSON.parse( JSON.stringify( uiSettings.defaultTextInfo ) ),
+    vectors: [],
 
     //we can use transform + l/w to rectify our points and avoid drift accumulation
     transform: {
@@ -524,8 +527,63 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
       groupIcon.classList.add( "layer-type-icon", newLayer.layerType );
       if( newLayer.layerType === "group" ) {
         groupIcon.classList.add( "open" );
+        UI.registerElement(
+          groupIcon,
+          {
+            onclick: () => {
+              newLayer.groupClosed = ! newLayer.groupClosed;
+              if( newLayer.groupClosed ) {
+                groupIcon.querySelector( ".tooltip" ).textContent = "Open Group";
+                groupIcon.classList.remove( "open" );
+              }
+              else {
+                groupIcon.querySelector( ".tooltip" ).textContent = "Close Group";
+                groupIcon.classList.add( "open" );
+              }
+              reorganizeLayerButtons();
+            }
+          },
+          { tooltip: ["Close Group", "to-left", "above-center" ], zIndex:100 }
+        )
       }
       layerButton.appendChild( groupIcon );
+    }
+
+    //add the select box icon
+    {
+      const selectIcon = document.createElement( "div" );
+      selectIcon.classList.add( "layer-select-icon", newLayer.layerType );
+      UI.registerElement(
+        selectIcon,
+        {
+          onclick: () => {
+            if( batchedLayers.has( newLayer ) ) {
+              removeLayerFromSelection( newLayer );
+            }
+            else if( selectedLayer === newLayer ) {
+                selectLayer( null );
+            }
+            else {
+              addLayerToSelection( newLayer );
+            }
+            reorganizeLayerButtons();
+            UI.updateContext();
+          },
+          updateContext: () => {
+            if( batchedLayers.has( newLayer ) ) {
+              selectIcon.querySelector( ".tooltip" ).textContent = "Remove Layer from Selected";
+            }
+            else if( selectedLayer === newLayer ) {
+                selectIcon.querySelector( ".tooltip" ).textContent = "Unselect Layer";
+            }
+            else {
+              selectIcon.querySelector( ".tooltip" ).textContent = "Add Layer to Selected";
+            }
+          }
+        },
+        { tooltip: ["Add Layer to Selected", "to-left", "above-center" ], zIndex:100 }
+      )
+      layerButton.appendChild( selectIcon );
     }
 
     //add the layer group joiner
@@ -1308,21 +1366,6 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     }
 
 
-    //insert the layer buttom into the DOM
-    /* if( nextSibling ) {
-      document.querySelector( "#layers-column" ).insertBefore( layerButton, nextSibling.layerButton );
-      layerSibling = nextSibling.layerButton;
-    } else {
-      const firstLayer = document.querySelector( "#layers-column > .layer" );
-      if( firstLayer ) {
-        layerSibling = firstLayer;
-        document.querySelector( "#layers-column" ).insertBefore( layerButton, layerSibling );
-      }
-      else {
-        document.querySelector( "#layers-column" ).appendChild( layerButton );
-      }
-    } */
-
     //activate the layer
     if( ! doNotUpdate )
       selectLayer( newLayer );
@@ -1571,7 +1614,7 @@ function testPointsInLayer( layer, testPoints, screenSpacePoints = false ) {
     yLegLength = Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
     normalizedYLeg = { x:yLeg.x/yLegLength, y:yLeg.y/yLegLength };
 
-  let pointInSelectedLayer = false;
+  let pointInLayer = false;
 
   //cast global points to our selected layer's space
   for( const point of points ) {
@@ -1582,16 +1625,16 @@ function testPointsInLayer( layer, testPoints, screenSpacePoints = false ) {
     let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
     let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
     //unnormalize
-    xProjection *= selectedLayer.w / xLegLength;
-    yProjection *= selectedLayer.h / yLegLength;
+    xProjection *= layer.w / xLegLength;
+    yProjection *= layer.h / yLegLength;
     //check if the point is inside the layer bounds
-    if( xProjection >= 0 && xProjection <= selectedLayer.w && yProjection >= 0 && yProjection <= selectedLayer.h ) {
-      pointInSelectedLayer = true;
+    if( xProjection >= 0 && xProjection <= layer.w && yProjection >= 0 && yProjection <= layer.h ) {
+      pointInLayer = true;
       break;
     }
   }
 
-  return pointInSelectedLayer;
+  return pointInLayer;
 
 }
 
@@ -1832,6 +1875,31 @@ function floodFillLayer( layer, layerX, layerY ) {
 
   flagLayerTextureChanged( layer, changedRect );
 
+}
+
+function renderLayerText( layer ) {
+
+}
+
+const gradientGPUResources = {
+  gradientShapes: {},
+}
+function setupRenderGradientGPU(){}
+function renderGradientGPU( layer, gradientShape ) {
+  if( ! gradientGPUResources.gradientShapes.has( gradientShape.shapeId ) ) {
+    //create the gradient shape's databuffers
+  }
+  //update gradient shape's databuffers
+  //render to layer's texture
+}
+function renderLayerVector( layer ) {
+  for( const vector of layer.vectors ) {
+    if( vector.vectorType === "line" ) {}
+    if( vector.vectorType === "bezier" ) {}
+    if( vector.vectorType === "quadratic" ) {}
+    if( vector.vectorType === "ellipse" ) {}
+    if( vector.vectorType === "rect" ) {}
+  }
 }
 
 function renderLayerPose( layer ) {
@@ -2246,9 +2314,22 @@ async function resetLayerSizeAndClear( layer, width, height ) {
 
 }
 
-async function cropLayerSize( layer, width, height, x=null, y=null ) {
+async function cropLayerSizeAndRecordUndo( layer, width, height, x=null, y=null ) {
 
-  if( ! layer.dataCache.length ) buildDataCache( layer );
+  buildDataCache( layer );
+
+  const oldData = {
+    topLeft: [...layer.topLeft],
+    topRight: [...layer.topRight],
+    bottomLeft: [...layer.bottomLeft],
+    bottomRight: [...layer.bottomRight],
+    w: layer.w,
+    h: layer.h,
+    x: 0,
+    y: 0,
+    canvasData: layer.dataCache[0],
+    maskData: layer.dataCache[1], //may be undefined
+  }
 
   const widthScale = width / layer.w,
     heightScale = height / layer.h;
@@ -2287,10 +2368,52 @@ async function cropLayerSize( layer, width, height, x=null, y=null ) {
   }
 
   layer.context.putImageData( layer.dataCache[ 0 ], x, y );
-  if( layer.maskInitialized ) layer.maskColor.putImageData( layer.dataCache[ 1 ], x, y );
+  if( layer.maskInitialized ) layer.maskContext.putImageData( layer.dataCache[ 1 ], x, y );
 
   flagLayerTextureChanged( layer );
   if( layer.maskInitialized ) flagLayerMaskChanged( layer );
+
+  //rebuild the datacache
+  buildDataCache( layer );
+  //have the new data
+  const newData = {
+    topLeft: [...layer.topLeft],
+    topRight: [...layer.topRight],
+    bottomLeft: [...layer.bottomLeft],
+    bottomRight: [...layer.bottomRight],
+    w: layer.w,
+    h: layer.h,
+    x,
+    y,
+    canvasData: layer.dataCache[0],
+    maskData: layer.dataCache[1], //may be undefined
+  }
+
+  //build our undo history entry
+  const historyEntry = {
+    targetLayer: layer,
+    oldData,
+    newData,
+    applyData: ( dataSource ) => {
+      const layer = historyEntry.targetLayer;
+      layer.canvas.width = layer.maskCanvas.width = layer.w = dataSource.w;
+      layer.canvas.height = layer.maskCanvas.height = layer.h = dataSource.h;     
+      layer.topLeft = [...dataSource.topLeft];
+      layer.topRight = [...dataSource.topRight];
+      layer.bottomLeft = [...dataSource.bottomLeft];
+      layer.bottomRight = [...dataSource.bottomRight];
+      layer.context.putImageData( dataSource.canvasData, dataSource.x, dataSource.y );
+      //The frames update on layer texture update
+      flagLayerTextureChanged( layer );
+      if( layer.maskInitialized ) {
+        layer.maskContext.putImageData( dataSource.maskData, dataSource.x, dataSource.y );
+        flagLayerMaskChanged( layer );
+      }
+    },
+    undo: () => { historyEntry.applyData( historyEntry.oldData ) },
+    redo: () => { historyEntry.applyData( historyEntry.newData ) },
+  }
+  recordHistoryEntry( historyEntry );
 
 }
 
@@ -2404,11 +2527,38 @@ function initializeLayerMask( layer, state ) {
   layer.maskInitialized = true;
 }
 
+function removeLayerFromSelection( layer ) {
+  if( layer.layerType === "group" ) {
+    collectGroupedLayersAsFlatList( layer.layerId ).forEach( l => batchedLayers.delete( l ) );
+  }
+  batchedLayers.delete( layer );
+  document.querySelectorAll( ".layer-button" ).forEach( l => l.classList.remove( "active", "selected", "hovering", "no-hover" ) );
+  for( const l of batchedLayers ) l.layerButton.classList.add( "selected" );
+}
+function addLayerToSelection( layer ) {
+  if( selectedLayer ) {
+    selectedLayer.layerButton.querySelector( ".layer-name" ).uiActive = false;
+    //not visually hidden, just non-hoverable in UI
+    selectedLayer.layerButton.querySelector( ".layer-name" ).classList.add( "no-hover" );
+    batchedLayers.add( selectedLayer );
+    selectedLayer = null;
+  }
+  batchedLayers.add( layer );
+  if( layer.layerType === "group" ) {
+    collectGroupedLayersAsFlatList( layer.layerId ).forEach( l => batchedLayers.add( l ) );
+  }
+  document.querySelectorAll( ".layer-button" ).forEach( l => l.classList.remove( "active", "selected", "hovering", "no-hover" ) );
+  for( const l of batchedLayers ) l.layerButton.classList.add( "selected" );
+}
+
 function selectLayer( layer ) {
   if( selectedLayer ) {
     selectedLayer.layerButton.querySelector( ".layer-name" ).uiActive = false;
     //not visually hidden, just non-hoverable in UI
     selectedLayer.layerButton.querySelector( ".layer-name" ).classList.add( "no-hover" );
+  }
+  if( batchedLayers.size ) {
+    batchedLayers.clear();
   }
   selectedLayer = layer;
   if( layer ) {
@@ -2416,7 +2566,7 @@ function selectLayer( layer ) {
       updateLayerGroupCoordinates( layer );
     }
     for( const l of document.querySelectorAll( "#layers-column > .layer-button" ) ) {
-      l.classList.remove( "active", "no-hover", "hovering" );
+      l.classList.remove( "active", "selected", "no-hover", "hovering" );
     }
     layer.layerButton.classList.add( "active", "no-hover" );
     layer.layerButton.classList.remove( "hovering" );
@@ -2482,6 +2632,11 @@ function Loop( t ) {
         if( getLayerVisibility( layer ) ) {
           visibleLayers.push( layer );
         }
+      }
+      for( const batchedLayer of batchedLayers ) {
+        if( selectedGroupLayers.indexOf( batchedLayer ) > -1 ) continue;
+        if( batchedLayer.layerType === "group" ) continue;
+        selectedGroupLayers.push( batchedLayer );
       }
 
       getTransform();
@@ -2756,7 +2911,7 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime, targe
     if( layer.layerType === "group" && uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && ( cursor.mode !== "none" || pointers.count === 2 ) )
       borderIsVisible = false;
 
-    if( borderIsVisible === false && selectedLayer?.layerType === "group" && layersWithVisibleBorders.includes( layer ) )
+    if( borderIsVisible === false && layersWithVisibleBorders.includes( layer ) )
       borderIsVisible = true;
 
     if( showBorders === false )
@@ -2866,160 +3021,6 @@ function renderLayers( visibleLayers, layersWithVisibleBorders, floatTime, targe
       const primitiveType = gl.TRIANGLES, structStartOffset = 0, structCount = 6;
       gl.drawArrays( primitiveType, structStartOffset, structCount );
     }
-
-  }
-
-}
-
-function old_renderLayers( visibleLayers, layersWithVisibleBorders, floatTime ) {
-
-  gl.useProgram( glState.program );
-  gl.bindFramebuffer( gl.FRAMEBUFFER, null );
-  gl.viewport( 0, 0, gnv.width, gnv.height );
-  gl.clearColor(0.26,0.26,0.26,1); //slight color to see clear effect
-  gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
-  gl.disable(gl.DEPTH_TEST);
-  
-  //gl.enable( gl.BLEND );
-  //gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
-  gl.disable( gl.BLEND );
-
-  gl.bindVertexArray(glState.vao);
-
-  const midTexture = renderLayers.midTexture || gl.createTexture();
-
-  for( const layer of visibleLayers ) {
-
-    let [x,y] = transformPoint( layer.topLeft ),
-      [x2,y2] = transformPoint( layer.topRight ),
-      [x3,y3] = transformPoint( layer.bottomLeft ),
-      [x4,y4] = transformPoint( layer.bottomRight );
-    //this unpacking and repacking is because of array re-use
-    let xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
-
-
-    //TODO: This transform actually needs to happen for all layers that are transforming (if we're transforming a group)
-    //transform the layer if we're mid-transform
-    if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && uiSettings.toolsSettings.transform.transformingLayers.includes( layer ) && ( cursor.mode !== "none" || pointers.count === 2 ) ) {
-      getLayerTransform();
-      let [x,y] = transformLayerPoint( xy ),
-        [x2,y2] = transformLayerPoint( xy2 ),
-        [x3,y3] = transformLayerPoint( xy3 ),
-        [x4,y4] = transformLayerPoint( xy4 );
-      xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
-      layer.transform.transformingPoints.topLeft = [...xy];
-      layer.transform.transformingPoints.topRight = [...xy2];
-      layer.transform.transformingPoints.bottomLeft = [...xy3];
-      layer.transform.transformingPoints.bottomRight = [...xy4];
-    }
-
-    //get the layer's physical size on-display
-    let layerSizePixels;
-    {
-      const dx = xy2[0] - xy[0], dy = xy2[1] - xy[1];
-      layerSizePixels = Math.sqrt( dx**2 + dy**2 );
-    }
-
-    //convert that screenspace to GL space
-    const glOriginX = W/2, glOriginY = H/2;
-    for( const p of [xy,xy2,xy3,xy4] ) {
-      p[0] -= glOriginX; p[1] -= glOriginY;
-      //We're flipping the y coordinate! OpenGL NDC space defines the bottom of the screen as -1 y, and the top as +1 y (center 0).
-      p[0] /= glOriginX; p[1] /= -glOriginY;
-    }
-
-    //update the vertex data
-    //top-left triangle
-    glState.vertices[0] = xy[0]; glState.vertices[1] = xy[1];
-    glState.vertices[4] = xy2[0]; glState.vertices[5] = xy2[1];
-    glState.vertices[8] = xy3[0]; glState.vertices[9] = xy3[1];
-    //bottom-right triangle
-    glState.vertices[12] = xy2[0]; glState.vertices[13] = xy2[1];
-    glState.vertices[16] = xy4[0]; glState.vertices[17] = xy4[1];
-    glState.vertices[20] = xy3[0]; glState.vertices[21] = xy3[1];
-    //push the updated vertex data to the GPU
-    gl.bindBuffer( gl.ARRAY_BUFFER, glState.vertexBuffer );
-    gl.bufferData( gl.ARRAY_BUFFER, glState.vertices, gl.STREAM_DRAW );
-
-    //do I need to re-enable the vertex array??? Let's assume so, then try coding this out later
-    gl.enableVertexAttribArray( glState.xyuvInputIndex );
-    {
-      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
-      gl.vertexAttribPointer( glState.xyuvInputIndex, size, dType, normalize, stride, offset );
-    }
-
-    //let's bind the layer's texture
-    gl.activeTexture( gl.TEXTURE0 + 0 );
-    gl.bindTexture( gl.TEXTURE_2D, layer.glTexture );
-    if( layer.layerType !== "group" && layer.textureChanged ) {
-      //let's re-upload the layer's texture when it's changed
-      const mipLevel = 0,
-      internalFormat = gl.RGBA,
-      //internalFormat = gl.RGBA16F,
-      srcFormat = gl.RGBA,
-      srcType = gl.UNSIGNED_BYTE;
-      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.canvas );
-      layer.textureChanged = false;
-    }
-    //point the layer's source image at texture 0
-    gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
-
-    //bind the layer's mask
-    gl.activeTexture( gl.TEXTURE0 + 1 );
-    gl.bindTexture( gl.TEXTURE_2D, layer.glMask );
-    if( layer.layerType !== "group" && layer.maskChanged ) {
-      //re-upload the layer's mask when it's changed
-      const mipLevel = 0,
-      internalFormat = gl.RGBA,
-      //internalFormat = gl.RGBA16F,
-      srcFormat = gl.RGBA,
-      srcType = gl.UNSIGNED_BYTE;
-      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.maskCanvas );
-      layer.maskChanged = false;
-    }
-    //point the mask at texture 1
-    gl.uniform1i( gl.getUniformLocation( glState.program, "imgMask" ), 1 );
-
-    //and finally bind the current render canvas
-    gl.activeTexture( gl.TEXTURE0 + 2 );
-    gl.bindTexture( gl.TEXTURE_2D, midTexture );
-    //point canvas at texture 2
-    gl.uniform1i( gl.getUniformLocation( glState.program, "canvas" ), 2 );
-
-
-    //set the layer's alpha
-    gl.uniform1f( glState.alphaInputIndex, getLayerOpacity( layer ) );
-    let maskVisibility = 0.0;
-    if( layer === selectedLayer && uiSettings.activeTool === "mask" && layer.maskInitialized )
-      maskVisibility = 0.5;
-    gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
-    gl.uniform1f( glState.timeIndex, floatTime );
-
-    let borderIsVisible = layer === selectedLayer;
-
-    //disable border while transform group to avoid recalculating coordinates every cycle (and visuals are confusing anyway)
-    if( layer.layerType === "group" && uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && ( cursor.mode !== "none" || pointers.count === 2 ) )
-      borderIsVisible = false;
-
-    if( borderIsVisible === false && selectedLayer?.layerType === "group" && layersWithVisibleBorders.includes( layer ) )
-      borderIsVisible = true;
-
-    gl.uniform1f( glState.borderVisibilityIndex, borderIsVisible ? 0.33 : 0.0 );
-    gl.uniform1f( glState.borderWidthIndex, 2.0 / layerSizePixels ); //2 pixel border width
-
-    {
-      //and draw our triangles
-      const primitiveType = gl.TRIANGLES,
-        structStartOffset = 0,
-        structCount = 6;
-      gl.drawArrays( primitiveType, structStartOffset, structCount );
-    }
-
-    //let's see how this affects our time
-    gl.finish();
-    gl.bindTexture( gl.TEXTURE_2D, midTexture );
-    gl.copyTexImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, W, H, 0 );
-    gl.finish();
 
   }
 
@@ -3459,6 +3460,12 @@ let uiSettings = {
   generativeControls: {},
   apiFlowNamesUsed: [],
   defaultFilterName: "basic",
+  defaultTextInfo: [
+    [ "font-family", "sans-serif" ],
+    [ "font-size", "48px" ],
+    [ "text-align", "center" ],
+    [ "color", "black" ],
+  ],
 
  //how long to pause after a paint stroke before updating the layer's frame
   paintBusyTimeout: 1000,
@@ -3507,7 +3514,8 @@ let uiSettings = {
     UI.updateContext();
   },
 
-  activeTool: null, //null | generate | paint | mask | transform | flood-fill | text-tool | pose | color-adjust
+ //null | generate | paint | vector | select | mask | transform | flood-fill | text-tool | pose | color-adjust
+  activeTool: null,
   toolsSettings: {
     "generate": {},
     "paint": {
@@ -4010,7 +4018,9 @@ function setupUI() {
     }
     layersColumn.scrollOffset = 0;
     uiContainer.appendChild( layersColumn );
+
     //layersColumn.scrollMomentum = 0;
+    
     UI.registerElement( layersColumn, {
       updateContext: context => {
         if( context.has( "layers-visible" ) ) {
@@ -4047,16 +4057,18 @@ function setupUI() {
       const generateButton = document.createElement( "div" );
       generateButton.classList.add( "tools-column-generate-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( generateButton );
+      const activateGenerativeTool = () => {
+        if( ! generateButton.classList.contains( "unavailable" ) ) {
+          uiSettings.setActiveTool( "generate" );
+          setupUIGenerativeControls( selectedLayer.generativeSettings.apiFlowName );
+          document.querySelector( "#generative-controls-row" ).classList.remove( "hidden" );
+        }
+      }
+
       UI.registerElement(
         generateButton,
         {
-          onclick: () => {
-            if( ! generateButton.classList.contains( "unavailable" ) ) {
-              uiSettings.setActiveTool( "generate" );
-              setupUIGenerativeControls( selectedLayer.generativeSettings.apiFlowName );
-              document.querySelector( "#generative-controls-row" ).classList.remove( "hidden" );
-            }
-          },
+          onclick: activateGenerativeTool,
           updateContext: () => {
             if( uiSettings.activeTool === "generate" ) { generateButton.classList.add( "on" ); }
             else { generateButton.classList.remove( "on" ); }
@@ -4076,7 +4088,12 @@ function setupUI() {
             }
           },
         },
-        { tooltip: [ "AI Generation Tool", "to-right", "vertical-center" ] }
+        {
+          tooltip: [ "AI Generation Tool", "to-right", "vertical-center" ],
+          bindings: {
+            "Activate Generative Tool": activateGenerativeTool
+          }
+        }
       )
     }
 
@@ -4085,53 +4102,153 @@ function setupUI() {
       const paintButton = document.createElement( "div" );
       paintButton.classList.add( "tools-column-paint-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( paintButton );
+      const activateCanvasToolsOptions = () => {
+        if( ! paintButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
+          uiSettings.setActiveTool( "paint" );
+          console.error( "Left-column paint button needs to remember last active canvas tool and switch to it instead of paint." );
+        } else {
+          paintButton.classList.add( "unavailable" );
+        }
+      }
       UI.registerElement(
         paintButton,
         {
-          onclick: () => {
-            if( ! paintButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
-              uiSettings.setActiveTool( "paint" )
-            } else {
-              paintButton.classList.add( "unavailable" );
-            }
-          },
+          onclick: activateCanvasToolsOptions,
           updateContext: () => {
-            if( uiSettings.activeTool === "paint" ) { paintButton.classList.add( "on" ); }
-            else { paintButton.classList.remove( "on" ); }
+            if( [ "paint", "mask", "select", "flood-fill", "color-adjust" ].includes( uiSettings.activeTool ) ) {
+              paintButton.classList.add( "on" );
+            }
+            else {
+              paintButton.classList.remove( "on" );
+            }
 
             //if not paint layer selected, unavailable
             if( selectedLayer?.layerType !== "paint" ) {
               paintButton.classList.add( "unavailable" );
-              paintButton.querySelector(".tooltip" ).textContent = "Paint Tool [Select paint layer to enable]";
+              paintButton.querySelector(".tooltip" ).textContent = "Canvas Tools [Select paint layer to enable]";
               paintButton.classList.remove( "on" );
               if( uiSettings.activeTool === "paint" )
                 uiSettings.setActiveTool( null );
             } else {
               paintButton.classList.remove( "unavailable" );
-              paintButton.querySelector(".tooltip" ).textContent = "Paint Tool";
+              paintButton.querySelector(".tooltip" ).textContent = "Canvas Tools";
             }
 
           },
         },
-        { tooltip: [ "Paint Tool", "to-right", "vertical-center" ] }
+        {
+          tooltip: [ "Canvas Tools", "to-right", "vertical-center" ],
+          bindings: {
+            "Activate Canvas Tools": activateCanvasToolsOptions,
+          }
+        }
       )
     }
 
-    //the mask button
+    //the vector tool button
     {
+      const vectorToolButton = document.createElement( "div" );
+      vectorToolButton.classList.add( "tools-column-vector-button", "round-toggle", "animated", "unimplemented", "unavailable" );
+      toolsColumn.appendChild( vectorToolButton );
+      const activateVectorTool = () => {
+        if( ! vectorToolButton.classList.contains( "unavailable" ) && ! vectorToolButton.classList.contains( "unimplemented" ) ) {
+          uiSettings.setActiveTool( "vector-tool" )
+        }
+      }
+      UI.registerElement(
+        vectorToolButton,
+        {
+          onclick: activateVectorTool,
+          updateContext: () => {
+            if( vectorToolButton.classList.contains( "unimplemented" ) ) {
+              vectorToolButton.classList.add( "unavailable" );
+              vectorToolButton.classList.remove( "on" );
+              vectorToolButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Vector Tool" + ((selectedLayer?.layerType==="vector") ? "" : " [Select vector layer to enable]");
+              return;
+            }
+            //if no layer selected, unavailable
+            if( selectedLayer?.layerType !== "vector" ) {
+              vectorToolButton.classList.add( "unavailable" );
+              vectorToolButton.querySelector(".tooltip" ).textContent = "Vector Tool [Select vector layer to enable]";
+              vectorToolButton.classList.remove( "on" );
+            } 
+            if( selectedLayer?.layerType === "vector" ) {
+              vectorToolButton.classList.remove( "unavailable" );
+              vectorToolButton.querySelector(".tooltip" ).textContent = "Vector Tool";
+              if( uiSettings.activeTool === "vector-tool" ) vectorToolButton.classList.add( "on" );
+              else vectorToolButton.classList.remove( "on" );
+            }
+          },
+        },
+        {
+          tooltip: [ "Vector Tool", "to-right", "vertical-center" ],
+          bindings: {
+            "Activate Vector Tool": activateVectorTool,
+          }
+        }
+      )
+    }
+    
+    //the select tool button
+    if( false ){
+      const selectToolButton = document.createElement( "div" );
+      selectToolButton.classList.add( "tools-column-select-button", "round-toggle", "animated", "unimplemented", "unavailable" );
+      toolsColumn.appendChild( selectToolButton );
+      const activateSelectTool = () => {
+        if( ! selectToolButton.classList.contains( "unavailable" ) && ! selectToolButton.classList.contains( "unimplemented" ) ) {
+          uiSettings.setActiveTool( "select-tool" )
+        }
+      }
+      UI.registerElement(
+        selectToolButton,
+        {
+          onclick: activateSelectTool,
+          updateContext: () => {
+            if( selectToolButton.classList.contains( "unimplemented" ) ) {
+              selectToolButton.classList.add( "unavailable" );
+              selectToolButton.classList.remove( "on" );
+              selectToolButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Select Tool" + ((selectedLayer?.layerType==="paint") ? "" : " [Select paint layer to enable]");
+              return;
+            }
+            //if no paint layer selected, unavailable
+            if( selectedLayer?.layerType !== "paint" ) {
+              selectToolButton.classList.add( "unavailable" );
+              selectToolButton.querySelector(".tooltip" ).textContent = "Select Tool [Select paint layer to enable]";
+              selectToolButton.classList.remove( "on" );
+            } 
+            if( selectedLayer?.layerType === "paint" ) {
+              selectToolButton.classList.remove( "unavailable" );
+              selectToolButton.querySelector(".tooltip" ).textContent = "Select Tool";
+              if( uiSettings.activeTool === "select-tool" ) selectToolButton.classList.add( "on" );
+              else selectToolButton.classList.remove( "on" );
+            }
+          },
+        },
+        {
+          tooltip: [ "Select Tool", "to-right", "vertical-center" ],
+          binding: {
+            "Activate Select Tool": activateSelectTool,
+          }
+        }
+      )
+    }
+    
+    //the mask button
+    if( false ){
       const maskButton = document.createElement( "div" );
       maskButton.classList.add( "tools-column-mask-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( maskButton );
+      const activateMaskTool = () => {
+        if( ! maskButton.classList.contains( "unavailable" ) && [ "paint","generative","text" ].includes( selectedLayer?.layerType ) ) {
+          uiSettings.setActiveTool( "mask" )
+        } else {
+          maskButton.classList.add( "unavailable" );
+        }
+      }
       UI.registerElement(
         maskButton,
         {
-          onclick: () => {
-            if( ! maskButton.classList.contains( "unavailable" ) && [ "paint","generative","text" ].includes( selectedLayer?.layerType ) ) {
-              uiSettings.setActiveTool( "mask" )
-            } else {
-              maskButton.classList.add( "unavailable" );
-            }
-          },
+          onclick: activateMaskTool,
           updateContext: () => {
             //if no layer selected, unavailable
             if( uiSettings.activeTool === "mask" ) maskButton.classList.add( "on" );
@@ -4149,7 +4266,12 @@ function setupUI() {
             }
           },
         },
-        { tooltip: [ "Mask Tool", "to-right", "vertical-center" ] }
+        {
+          tooltip: [ "Mask Tool", "to-right", "vertical-center" ],
+          binding: {
+            "Activate Mask Tool": activateMaskTool
+          }
+        }
       )
     }
 
@@ -4158,22 +4280,23 @@ function setupUI() {
       const transformButton = document.createElement( "div" );
       transformButton.classList.add( "tools-column-transform-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( transformButton );
+      const activateTransformTool = () => {
+        if( ! transformButton.classList.contains( "unavailable" ) && ( selectedLayer || batchedLayers.size ) ) {
+          uiSettings.setActiveTool( "transform" );
+        } else {
+          transformButton.classList.add( "unavailable" );
+        }
+      }
       UI.registerElement(
         transformButton,
         {
-          onclick: () => {
-            if( ! transformButton.classList.contains( "unavailable" ) && selectedLayer ) {
-              uiSettings.setActiveTool( "transform" );
-            } else {
-              transformButton.classList.add( "unavailable" );
-            }
-          },
+          onclick: activateTransformTool,
           updateContext: () => {
             //if no layer selected, unavailable
             //This tool AFAIK can be used on every layer type.
             if( uiSettings.activeTool === "transform" ) transformButton.classList.add( "on" );
             else transformButton.classList.remove( "on" );
-            if( ! selectedLayer ) {
+            if( ! selectedLayer && batchedLayers.size === 0 ) {
               transformButton.classList.add( "unavailable" );
               transformButton.querySelector(".tooltip" ).textContent = "Transform Tool [Select layer to enable]";
               transformButton.classList.remove( "on" );
@@ -4185,25 +4308,31 @@ function setupUI() {
             }
           },
         },
-        { tooltip: [ "Transform Tool", "to-right", "vertical-center" ] }
+        {
+          tooltip: [ "Transform Tool", "to-right", "vertical-center" ],
+          bindings: {
+            "Activate Transform Tool": activateTransformTool
+          }
+        }
       )
     }
 
     //the flood fill button
-    {
+    if( false ){
       const floodFillButton = document.createElement( "div" );
       floodFillButton.classList.add( "tools-column-flood-fill-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( floodFillButton );
+      const activateFloodFillTool = () => {
+        if( ! floodFillButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
+          uiSettings.setActiveTool( "flood-fill" );
+        } else {
+          floodFillButton.classList.add( "unavailable" );
+        }
+      }
       UI.registerElement(
         floodFillButton,
         {
-          onclick: () => {
-            if( ! floodFillButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
-              uiSettings.setActiveTool( "flood-fill" );
-            } else {
-              floodFillButton.classList.add( "unavailable" );
-            }
-          },
+          onclick: activateFloodFillTool,
           updateContext: () => {
 
             //if no layer selected, unavailable
@@ -4222,7 +4351,12 @@ function setupUI() {
             }
           },
         },
-        { tooltip: [ "Flood Fill Tool", "to-right", "vertical-center" ] }
+        {
+          tooltip: [ "Flood Fill Tool", "to-right", "vertical-center" ],
+          bindings: {
+            "Activate Flood Fill Tool": activateFloodFillTool,
+          },
+        }
       )
     }
     
@@ -4231,14 +4365,15 @@ function setupUI() {
       const textToolButton = document.createElement( "div" );
       textToolButton.classList.add( "tools-column-text-tool-button", "round-toggle", "animated", "unimplemented", "unavailable" );
       toolsColumn.appendChild( textToolButton );
+      const activateTextTool = () => {
+        if( ! textToolButton.classList.contains( "unavailable" ) && ! textToolButton.classList.contains( "unimplemented" ) ) {
+          uiSettings.setActiveTool( "text-tool" )
+        }
+      }
       UI.registerElement(
         textToolButton,
         {
-          onclick: () => {
-            if( ! textToolButton.classList.contains( "unavailable" ) && ! textToolButton.classList.contains( "unimplemented" ) ) {
-              uiSettings.setActiveTool( "text-tool" )
-            }
-          },
+          onclick: activateTextTool,
           updateContext: () => {
 
             if( textToolButton.classList.contains( "unimplemented" ) ) {
@@ -4261,7 +4396,12 @@ function setupUI() {
             }
           },
         },
-        { tooltip: [ "Flood Fill Tool", "to-right", "vertical-center" ] }
+        {
+          tooltip: [ "Flood Fill Tool", "to-right", "vertical-center" ],
+          bindings: {
+            "Activate Text Tool": activateTextTool
+          }
+        }
       )
     }
     
@@ -4270,17 +4410,18 @@ function setupUI() {
       const poseButton = document.createElement( "div" );
       poseButton.classList.add( "tools-column-pose-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( poseButton );
+      const activatePoseTool = () => {
+        if( ! poseButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "pose" ) {
+          uiSettings.setActiveTool( "pose" );
+          document.querySelector( "#pose-rig-container" ).loadLayer( selectedLayer );
+        } else {
+          poseButton.classList.add( "unavailable" );
+        }
+      }
       UI.registerElement(
         poseButton,
         {
-          onclick: () => {
-            if( ! poseButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "pose" ) {
-              uiSettings.setActiveTool( "pose" );
-              document.querySelector( "#pose-rig-container" ).loadLayer( selectedLayer );
-            } else {
-              poseButton.classList.add( "unavailable" );
-            }
-          },
+          onclick: activatePoseTool,
           updateContext: () => {
             //if no layer selected, unavailable
             if( selectedLayer?.layerType !== "pose" ) {
@@ -4296,25 +4437,31 @@ function setupUI() {
             }
           },
         },
-        { tooltip: [ "Pose Tool", "to-right", "vertical-center" ] }
+        {
+          tooltip: [ "Pose Tool", "to-right", "vertical-center" ],
+          bindings: {
+            "Activate Pose Tool": activatePoseTool
+          }
+        }
       )
     }
 
     //the color adjust tool button
-    {
+    if( false ){
       const colorAdjustButton = document.createElement( "div" );
       colorAdjustButton.classList.add( "tools-column-color-adjust-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( colorAdjustButton );
+      const activateColorAdjustTool = () => {
+        if( ! colorAdjustButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
+          uiSettings.setActiveTool( "color-adjust" );
+        } else {
+          colorAdjustButton.classList.add( "unavailable" );
+        }
+      }
       UI.registerElement(
         colorAdjustButton,
         {
-          onclick: () => {
-            if( ! colorAdjustButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
-              uiSettings.setActiveTool( "color-adjust" );
-            } else {
-              colorAdjustButton.classList.add( "unavailable" );
-            }
-          },
+          onclick: activateColorAdjustTool,
           updateContext: () => {
             //if no layer selected, unavailable
             if( selectedLayer?.layerType !== "paint" ) {
@@ -4330,48 +4477,41 @@ function setupUI() {
             }
           },
         },
-        { tooltip: [ "Color Adjust Tool", "to-right", "vertical-center" ] }
+        {
+          tooltip: [ "Color Adjust Tool", "to-right", "vertical-center" ],
+          bindings: {
+            "Activate Color Adjust Tool": activateColorAdjustTool
+          }
+        }
       )
     }
 
   }
 
-  //the paint tool options
+  //the canvas tool options
   {
     console.error( "UI.updateContext() needs to rebuild list of hidden elements, not check every mouse move." );
-    const paintToolsOptionsRow = document.createElement( "div" );
-    paintToolsOptionsRow.classList.add( "flex-row", "hidden", "animated" );
-    paintToolsOptionsRow.id = "paint-tools-options-row";
-    uiContainer.appendChild( paintToolsOptionsRow );
+    const canvasControlsOptionsRow = document.createElement( "div" );
+    canvasControlsOptionsRow.classList.add( "flex-row", "hidden", "animated" );
+    canvasControlsOptionsRow.id = "paint-tools-options-row";
+    uiContainer.appendChild( canvasControlsOptionsRow );
     UI.registerElement(
-      paintToolsOptionsRow,
+      canvasControlsOptionsRow,
       {
         updateContext: () => {
-          if( uiSettings.activeTool === "paint" ) {
-            if( selectedLayer?.layerType === "paint" ) {
-              paintToolsOptionsRow.classList.remove( "hidden" );
-              const colorWell = document.querySelector( ".paint-tools-options-color-well" );
+          if( [ "paint", "mask", "select", "flood-fill", "color-adjust" ].includes( uiSettings.activeTool ) ) {
+
+            canvasControlsOptionsRow.classList.remove( "hidden" );
+
+            /* const colorWell = document.querySelector( ".paint-tools-options-color-well" );
+            if( [ "paint", "color-adjust" ].includes( uiSettings.activeTool ) )
               colorWell.classList.remove( "hidden" );
-              paintToolsOptionsRow.appendChild( colorWell );
-            } else {
-              paintToolsOptionsRow.classList.add( "hidden" );
-              uiSettings.setActiveTool( null );
-            }
-          }
-          else if( uiSettings.activeTool === "mask" ) {
-            if( [ "paint", "generative", "text" ].includes( selectedLayer?.layerType ) ) {
-              paintToolsOptionsRow.classList.remove( "hidden" );
-              const colorWell = document.querySelector( ".paint-tools-options-color-well" );
-              colorWell.classList.add( "hidden" );
-              paintToolsOptionsRow.appendChild( colorWell );
-            } else {
-              paintToolsOptionsRow.classList.add( "hidden" );
-              uiSettings.setActiveTool( null );
-            }
+            else colorWell.classList.add( "hidden" ); */
           }
           else {
-            paintToolsOptionsRow.classList.add( "hidden" );
+            canvasControlsOptionsRow.classList.add( "hidden" );
           }
+
         }
       },
       {
@@ -4379,318 +4519,954 @@ function setupUI() {
       }
     );
 
-    //the brush select (asset browser) button
+    //the radio boxes controls toggles
     {
-      const brushSelectBrowseButton = document.createElement( "div" );
-      //brushSelectBrowseButton.classList.add( "asset-browser-button" );
-      brushSelectBrowseButton.classList.add( "asset-button", "round-toggle", "on", "unimplemented" );
-      UI.registerElement(
-        brushSelectBrowseButton,
-        { onclick: () => {
-          openAssetBrowser( assetsLibrary.Brushes, brush => loadBrush( brush ), "Brushes" );
-        } },
-        { tooltip: [ "Select Brush", "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      paintToolsOptionsRow.appendChild( brushSelectBrowseButton );
-    }
+      //the paint-canvas controls button
+      {
+        const paintCanvasControlsButton = document.createElement( "div" );
+        paintCanvasControlsButton.classList.add( "round-toggle", "on" );
+        paintCanvasControlsButton.style.backgroundImage = "url('icon/canvas-paint.png')";
+        const activatePaintCanvasControls = () => {
+          if( ! paintCanvasControlsButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
+            uiSettings.setActiveTool( "paint" )
+          } else {
+            paintCanvasControlsButton.classList.add( "unavailable" );
+          }
+        }
+        UI.registerElement(
+          paintCanvasControlsButton,
+          {
+            onclick: activatePaintCanvasControls,
+            updateContext: () => {
+              if( uiSettings.activeTool === "paint" ) { paintCanvasControlsButton.classList.add( "on" ); }
+              else { paintCanvasControlsButton.classList.remove( "on" ); }
   
-    //the paint button
+              //if not paint layer selected, unavailable
+              if( selectedLayer?.layerType !== "paint" ) {
+                paintCanvasControlsButton.classList.add( "unavailable" );
+                //paintCanvasControlsButton.querySelector(".tooltip" ).textContent = "Paint Tool [Select paint layer to enable]";
+                paintCanvasControlsButton.classList.remove( "on" );
+                if( uiSettings.activeTool === "paint" )
+                  uiSettings.setActiveTool( null );
+              } else {
+                paintCanvasControlsButton.classList.remove( "unavailable" );
+                //paintCanvasControlsButton.querySelector(".tooltip" ).textContent = "Paint Tool";
+              }
+            }
+          },
+          {
+            tooltip: [ "Canvas Paint", "below", "to-right-of-center" ], zIndex:10000,
+            bindings: {
+              "Activate Canvas Controls - Paint": activatePaintCanvasControls
+            }
+          }
+        );
+        canvasControlsOptionsRow.appendChild( paintCanvasControlsButton );
+      }
+      //the mask-canvas controls button
+      {
+        const maskCanvasControlsButton = document.createElement( "div" );
+        maskCanvasControlsButton.classList.add( "round-toggle", "on" );
+        maskCanvasControlsButton.style.backgroundImage = "url('icon/gala-mask.png')";
+        const activateMaskCanvasControls = () => {
+          if( ! maskCanvasControlsButton.classList.contains( "unavailable" ) && [ "paint","generative","text" ].includes( selectedLayer?.layerType ) ) {
+            uiSettings.setActiveTool( "mask" )
+          } else {
+            maskCanvasControlsButton.classList.add( "unavailable" );
+          }
+        }
+        UI.registerElement(
+          maskCanvasControlsButton,
+          {
+            onclick: activateMaskCanvasControls,
+            updateContext: () => {
+              //if no layer selected, unavailable
+              if( uiSettings.activeTool === "mask" ) maskCanvasControlsButton.classList.add( "on" );
+              if( uiSettings.activeTool !== "mask" ) maskCanvasControlsButton.classList.remove( "on" );
+              
+              if( ! selectedLayer || ! [ "paint", "generative", "text" ].includes( selectedLayer?.layerType ) ) {
+                maskCanvasControlsButton.classList.add( "unavailable" );
+                //maskCanvasControlsButton.querySelector(".tooltip" ).textContent = "Mask Tool [Select paint, text, or generative layer to enable]";
+                maskCanvasControlsButton.classList.remove( "on" );
+              } else {
+                maskCanvasControlsButton.classList.remove( "unavailable" );
+                //maskCanvasControlsButton.querySelector(".tooltip" ).textContent = "Mask Tool";
+                if( uiSettings.activeTool === "mask" ) maskCanvasControlsButton.classList.add( "on" );
+                else maskCanvasControlsButton.classList.remove( "on" );
+              }
+            }
+          },
+          {
+            tooltip: [ "Canvas Mask", "below", "to-right-of-center" ], zIndex:10000,
+            bindings: {
+              "Activate Canvas Controls - Mask": activateMaskCanvasControls
+            }
+          }
+        );
+        canvasControlsOptionsRow.appendChild( maskCanvasControlsButton );
+      }
+      //the select-canvas controls button
+      {
+        const selectCanvasControlsButton = document.createElement( "div" );
+        selectCanvasControlsButton.classList.add( "round-toggle", "on", "unimplemented" );
+        selectCanvasControlsButton.style.backgroundImage = "url('icon/select-free.png')";
+        const activateSelectCanvasControls = () => {
+          if( ! selectCanvasControlsButton.classList.contains( "unavailable" ) && ! selectCanvasControlsButton.classList.contains( "unimplemented" ) ) {
+            uiSettings.setActiveTool( "select-tool" )
+          }
+        }
+        UI.registerElement(
+          selectCanvasControlsButton,
+          {
+            onclick: activateSelectCanvasControls,
+            updateContext: () => {
+              if( selectCanvasControlsButton.classList.contains( "unimplemented" ) ) {
+                selectCanvasControlsButton.classList.add( "unavailable" );
+                selectCanvasControlsButton.classList.remove( "on" );
+                //selectCanvasControlsButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Select Tool" + ((selectedLayer?.layerType==="paint") ? "" : " [Select paint layer to enable]");
+                return;
+              }
+              //if no paint layer selected, unavailable
+              if( selectedLayer?.layerType !== "paint" ) {
+                selectCanvasControlsButton.classList.add( "unavailable" );
+                //selectCanvasControlsButton.querySelector(".tooltip" ).textContent = "Select Tool [Select paint layer to enable]";
+                selectCanvasControlsButton.classList.remove( "on" );
+              } 
+              if( selectedLayer?.layerType === "paint" ) {
+                selectCanvasControlsButton.classList.remove( "unavailable" );
+                //selectCanvasControlsButton.querySelector(".tooltip" ).textContent = "Select Tool";
+                if( uiSettings.activeTool === "select-tool" ) selectCanvasControlsButton.classList.add( "on" );
+                else selectCanvasControlsButton.classList.remove( "on" );
+              }
+            }
+          },
+          {
+            tooltip: [ "!Unimplemented! Canvas Select", "below", "to-right-of-center" ], zIndex:10000,
+            bindings: {
+              "Activate Canvas Controls - Select": activateSelectCanvasControls
+            }
+          }
+        );
+        canvasControlsOptionsRow.appendChild( selectCanvasControlsButton );
+      }
+      //the flood-fill-canvas controls button
+      {
+        const floodFillCanvasControlsButton = document.createElement( "div" );
+        floodFillCanvasControlsButton.classList.add( "round-toggle", "on" );
+        floodFillCanvasControlsButton.style.backgroundImage = "url('icon/paint-bucket.png')";
+        const activateFlooodFillCanvasControls = () => {
+          if( ! floodFillCanvasControlsButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
+            uiSettings.setActiveTool( "flood-fill" );
+          } else {
+            floodFillCanvasControlsButton.classList.add( "unavailable" );
+          }
+        }
+        UI.registerElement(
+          floodFillCanvasControlsButton,
+          {
+            onclick: activateFlooodFillCanvasControls,
+            updateContext: () => {
+              //if no layer selected, unavailable
+              if( selectedLayer?.layerType !== "paint" ) {
+                floodFillCanvasControlsButton.classList.add( "unavailable" );
+                //floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool [Select paint layer to enable]";
+                floodFillCanvasControlsButton.classList.remove( "on" );
+              }
+              if( selectedLayer?.layerType === "paint" ) {
+                floodFillCanvasControlsButton.classList.remove( "unavailable" );
+                //floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool";
+                if( uiSettings.activeTool === "flood-fill" ) {
+                  floodFillCanvasControlsButton.classList.add( "on" );
+                }
+                else floodFillCanvasControlsButton.classList.remove( "on" );
+              }
+            }
+          },
+          {
+            tooltip: [ "Canvas Flood Fill", "below", "to-right-of-center" ], zIndex:10000,
+            bindings: {
+              "Activate Canvas Controls - Flood Fill": activateFlooodFillCanvasControls
+            }
+          }
+        );
+        canvasControlsOptionsRow.appendChild( floodFillCanvasControlsButton );
+      }
+      //the color-adjust-canvas controls button
+      {
+        const colorAdjustCanvasControlsButton = document.createElement( "div" );
+        colorAdjustCanvasControlsButton.classList.add( "round-toggle", "on" );
+        colorAdjustCanvasControlsButton.style.backgroundImage = "url('icon/adjust.png')";
+        const activateColorAdjustCanvasControls = () => {
+          if( ! colorAdjustCanvasControlsButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
+            uiSettings.setActiveTool( "color-adjust" );
+          } else {
+            colorAdjustCanvasControlsButton.classList.add( "unavailable" );
+          }
+        }
+        UI.registerElement(
+          colorAdjustCanvasControlsButton,
+          {
+            onclick: activateColorAdjustCanvasControls,
+            updateContext: () => {
+              //if no layer selected, unavailable
+              if( selectedLayer?.layerType !== "paint" ) {
+                colorAdjustCanvasControlsButton.classList.add( "unavailable" );
+                //colorAdjustCanvasControlsButton.querySelector(".tooltip" ).textContent = "Color Adjust Tool [Select paint layer to enable]";
+                colorAdjustCanvasControlsButton.classList.remove( "on" );
+              }
+              if( selectedLayer?.layerType === "paint" ) {
+                colorAdjustCanvasControlsButton.classList.remove( "unavailable" );
+                //colorAdjustCanvasControlsButton.querySelector(".tooltip" ).textContent = "Color Adjust Tool";
+                if( uiSettings.activeTool === "color-adjust" ) colorAdjustCanvasControlsButton.classList.add( "on" );
+                else colorAdjustCanvasControlsButton.classList.remove( "on" );
+              }
+            }
+          },
+          {
+            tooltip: [ "Canvas Color Adjust", "below", "to-right-of-center" ], zIndex:10000,
+            bindings: {
+              "Activate Canvas Controls - Color Adjust": activateColorAdjustCanvasControls
+            }
+          }
+        );
+        canvasControlsOptionsRow.appendChild( colorAdjustCanvasControlsButton );
+      }
+    }
+
+    //a vertical spacer divider
     {
-      const paintModeButton = document.createElement( "div" );
-      //brushSelectBrowseButton.classList.add( "asset-browser-button" );
-      paintModeButton.classList.add( "paint-tools-options-paint-mode", "round-toggle", "on" );
-      UI.registerElement(
-        paintModeButton,
+      const verticalSpacer = document.createElement( "div" );
+      verticalSpacer.classList.add( "vertical-spacer" );
+      canvasControlsOptionsRow.appendChild( verticalSpacer );
+    }
+
+    //the tool options row
+    {
+      const toolOptionsRow = document.createElement( "div" );
+      toolOptionsRow.classList.add( "tool-options-container", "flex-row" );
+      canvasControlsOptionsRow.appendChild( toolOptionsRow );
+      //the paint and mask tool options
+      {
+        const paintAndMaskOptionsRow = document.createElement( "div" );
+        paintAndMaskOptionsRow.classList.add( "flex-row", "animated" );
+        paintAndMaskOptionsRow.id = "paint-mask-options-row";
+        toolOptionsRow.appendChild( paintAndMaskOptionsRow );
+        UI.registerElement(
+          paintAndMaskOptionsRow,
+          {
+            updateContext: () => {
+              if( [ "paint", "mask" ].includes( uiSettings.activeTool ) ) {
+                paintAndMaskOptionsRow.classList.remove( "hidden" );
+              }
+              else { paintAndMaskOptionsRow.classList.add( "hidden" ); }
+            }
+          }
+        );
+  
+  
+        //the brush select (asset browser) button
         {
-          ondrag: () => {
+          const brushSelectBrowseButton = document.createElement( "div" );
+          //brushSelectBrowseButton.classList.add( "asset-browser-button" );
+          brushSelectBrowseButton.classList.add( "paint-tools-options-brushes-button", "round-toggle", "on" );
+          const changeBrush = () => {
+            openAssetBrowser( assetsLibrary.Brushes, brush => loadBrush( brush ), "Brushes" );
+          }
+          UI.registerElement(
+            brushSelectBrowseButton,
+            { onclick: changeBrush },
+            {
+              tooltip: [ "Select Brush", "below", "to-right-of-center" ], zIndex:10000,
+              bindings: { "Change Brush": changeBrush }
+            }
+          );
+          paintAndMaskOptionsRow.appendChild( brushSelectBrowseButton );
+        }
+      
+        //the paint button
+        {
+          const paintModeButton = document.createElement( "div" );
+          //brushSelectBrowseButton.classList.add( "asset-browser-button" );
+          paintModeButton.classList.add( "paint-tools-options-paint-mode", "round-toggle", "on" );
+          const activatePaintModePaint = () => {
             uiSettings.toolsSettings.paint.setMode( "brush" );
             uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 0;
             uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha = 0;
-          },
-          updateContext: () => {
-            if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 0 && 
-                uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha === 0 )
-              paintModeButton.classList.add( "on" );
-            else paintModeButton.classList.remove( "on" );
           }
-        },
-        { tooltip: [ "Paint Mode", "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      paintToolsOptionsRow.appendChild( paintModeButton );
-    }
-    //the blend button
-    {
-      const blendMode = document.createElement( "div" );
-      //brushSelectBrowseButton.classList.add( "asset-browser-button" );
-      blendMode.classList.add( "paint-tools-options-blend-mode", "round-toggle", "on" );
-      UI.registerElement(
-        blendMode,
+          UI.registerElement(
+            paintModeButton,
+            {
+              onclick: activatePaintModePaint,
+              updateContext: () => {
+                if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 0 && 
+                    uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha === 0 )
+                  paintModeButton.classList.add( "on" );
+                else paintModeButton.classList.remove( "on" );
+              }
+            },
+            {
+              tooltip: [ "Paint Mode", "below", "to-right-of-center" ], zIndex:10000,
+              bindings: {
+                "Set Paint Mode - Paint": activatePaintModePaint
+              }
+            }
+          );
+          paintAndMaskOptionsRow.appendChild( paintModeButton );
+        }
+        //the blend button
         {
-          ondrag: () => {
+          const blendMode = document.createElement( "div" );
+          //brushSelectBrowseButton.classList.add( "asset-browser-button" );
+          blendMode.classList.add( "paint-tools-options-blend-mode", "round-toggle", "on" );
+          const activatePaintModeBlend = () => {
             //uiSettings.toolsSettings.paint.setMode( "blend" );
             uiSettings.toolsSettings.paint.setMode( "brush" );
             uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 0;
             uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha = 1;
-          },
-          updateContext: () => {
-            if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 0 && 
-                uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha === 1 )
-              blendMode.classList.add( "on" );
-            else blendMode.classList.remove( "on" );
           }
-        },
-        { tooltip: [ "Blend Mode", "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      paintToolsOptionsRow.appendChild( blendMode );
-    }
-    //the erase button
-    {
-      const eraseMode = document.createElement( "div" );
-      //brushSelectBrowseButton.classList.add( "asset-browser-button" );
-      eraseMode.classList.add( "paint-tools-options-erase-mode", "round-toggle", "on" );
-      UI.registerElement(
-        eraseMode,
+          UI.registerElement(
+            blendMode,
+            {
+              onclick: activatePaintModeBlend,
+              updateContext: () => {
+                if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 0 && 
+                    uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha === 1 )
+                  blendMode.classList.add( "on" );
+                else blendMode.classList.remove( "on" );
+              }
+            },
+            {
+              tooltip: [ "Blend Mode", "below", "to-right-of-center" ], zIndex:10000,
+              bindings: {
+                "Set Paint Mode - Blend": activatePaintModeBlend
+              }
+            }
+          );
+          paintAndMaskOptionsRow.appendChild( blendMode );
+        }
+        //the erase button
         {
-          ondrag: () => {
+          const eraseMode = document.createElement( "div" );
+          //brushSelectBrowseButton.classList.add( "asset-browser-button" );
+          eraseMode.classList.add( "paint-tools-options-erase-mode", "round-toggle", "on" );
+          const activatePaintModeErase = () => {
             //uiSettings.toolsSettings.paint.setMode( "erase" );
             uiSettings.toolsSettings.paint.setMode( "brush" );
             uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 1;
             uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha = 0;
-          },
-          updateContext: () => {
-            if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 1 && 
-                uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha === 0 )
-              eraseMode.classList.add( "on" );
-            else eraseMode.classList.remove( "on" );
           }
-        },
-        { tooltip: [ "Erase Mode", "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      paintToolsOptionsRow.appendChild( eraseMode );
-    }
-    //the retractable size slider
-    {
-      const retractableSizeSlider = document.createElement( "div" );
-      retractableSizeSlider.classList.add( "paint-tools-options-retractable-slider", "animated" );
-      const previewCore = retractableSizeSlider.appendChild( document.createElement( "div" ) );
-      previewCore.classList.add( "paint-tools-options-brush-size-preview-core" );
-      const previewNumber = retractableSizeSlider.appendChild( document.createElement( "div" ) );
-      previewNumber.classList.add( "paint-tools-options-preview-number", "animated" );
-      previewNumber.style.opacity = 0;
-      //TODO size preview?
-      const updateBrushSizePreview = ( brushSize = null ) => {
-        retractableSizeSlider.classList.remove( "hovering" );
-        const settings = uiSettings.toolsSettings.paint.modeSettings.all;
-        if( ! brushSize ) {
-          brushSize = settings.brushSize;
-        }
-        //update preview number
-        let number = (parseInt( brushSize * 10 ) / 10).toString();
-        if( number.indexOf( "." ) === -1 ) number += ".0";
-        previewNumber.textContent = number + "px";
-        //get size percentage
-        const percent = parseInt( 100 * ( brushSize - settings.minBrushSize ) / ( settings.maxBrushSize - settings.minBrushSize ) );
-        previewCore.style.width = percent + "%";
-        previewCore.style.height = percent + "%";
-      }
-      updateBrushSizePreview();
-      let startingBrushSize,
-        adjustmentScale;
-      UI.registerElement(
-        retractableSizeSlider,
-        {
-          ondrag: ({ rect, start, current, ending, starting, element }) => {
-            const settings = uiSettings.toolsSettings.paint.modeSettings.all;
-            if( starting ) {
-              previewNumber.style.opacity = 1;
-              retractableSizeSlider.querySelector( ".tooltip" ).style.opacity = 0;
-              startingBrushSize = settings.brushSize;
-              adjustmentScale = ( settings.maxBrushSize - settings.minBrushSize ) / 300; //300 pixel screen-traverse
+          UI.registerElement(
+            eraseMode,
+            {
+              onclick: activatePaintModeErase,
+              updateContext: () => {
+                if( uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount === 1 && 
+                    uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha === 0 )
+                  eraseMode.classList.add( "on" );
+                else eraseMode.classList.remove( "on" );
+              }
+            },
+            {
+              tooltip: [ "Erase Mode", "below", "to-right-of-center" ], zIndex:10000,
+              bindings: {
+                "Set Paint Mode - Erase": activatePaintModeErase
+              }
             }
-            const dx =  current.x - start.x;
-            const adjustment = dx * adjustmentScale;
-            let brushSize = startingBrushSize + adjustment;
+          );
+          paintAndMaskOptionsRow.appendChild( eraseMode );
+        }
+        //the retractable size slider
+        {
+          const retractableSizeSlider = document.createElement( "div" );
+          retractableSizeSlider.classList.add( "paint-tools-options-retractable-slider", "animated" );
+          const previewCore = retractableSizeSlider.appendChild( document.createElement( "div" ) );
+          previewCore.classList.add( "paint-tools-options-brush-size-preview-core" );
+          const previewNumber = retractableSizeSlider.appendChild( document.createElement( "div" ) );
+          previewNumber.classList.add( "paint-tools-options-preview-number", "animated" );
+          previewNumber.style.opacity = 0;
+          //TODO size preview?
+          const updateBrushSizePreview = ( brushSize = null ) => {
+            retractableSizeSlider.classList.remove( "hovering" );
+            const settings = uiSettings.toolsSettings.paint.modeSettings.all;
+            if( ! brushSize ) {
+              brushSize = settings.brushSize;
+            }
+            //update preview number
+            let number = (parseInt( brushSize * 10 ) / 10).toString();
+            if( number.indexOf( "." ) === -1 ) number += ".0";
+            previewNumber.textContent = number + "px";
+            //get size percentage
+            const percent = parseInt( 100 * ( brushSize - settings.minBrushSize ) / ( settings.maxBrushSize - settings.minBrushSize ) );
+            previewCore.style.width = percent + "%";
+            previewCore.style.height = percent + "%";
+          }
+    
+          let adjustBrushSizePreviewNotificationTimer;
+          const adjustBrushSize = scaleFactor => {
+            const settings = uiSettings.toolsSettings.paint.modeSettings.all;
+            const range = ( settings.maxBrushSize - settings.minBrushSize );
+            let brushSize = settings.brushSize;
+            brushSize += scaleFactor * range;
             brushSize = Math.max( settings.minBrushSize, Math.min( settings.maxBrushSize, brushSize ) );
             settings.brushSize = parseInt( brushSize );
             updateBrushSizePreview( brushSize );
-            if( ending ) {
-              previewNumber.style.opacity = 0;
-              retractableSizeSlider.querySelector( ".tooltip" ).style = "";
+            previewNumber.style.opacity = 1;
+            clearTimeout( adjustBrushSizePreviewNotificationTimer );
+            adjustBrushSizePreviewNotificationTimer = setTimeout( ()=>previewNumber.style.opacity = 0, UI.animationMS * 3 );
+          }
+          updateBrushSizePreview();
+          let startingBrushSize,
+            adjustmentScale;
+          UI.registerElement(
+            retractableSizeSlider,
+            {
+              ondrag: ({ rect, start, current, ending, starting, element }) => {
+                const settings = uiSettings.toolsSettings.paint.modeSettings.all;
+                if( starting ) {
+                  previewNumber.style.opacity = 1;
+                  retractableSizeSlider.querySelector( ".tooltip" ).style.opacity = 0;
+                  startingBrushSize = settings.brushSize;
+                  adjustmentScale = ( settings.maxBrushSize - settings.minBrushSize ) / 300; //300 pixel screen-traverse
+                }
+                const dx =  current.x - start.x;
+                const adjustment = dx * adjustmentScale;
+                let brushSize = startingBrushSize + adjustment;
+                brushSize = Math.max( settings.minBrushSize, Math.min( settings.maxBrushSize, brushSize ) );
+                settings.brushSize = parseInt( brushSize );
+                updateBrushSizePreview( brushSize );
+                if( ending ) {
+                  previewNumber.style.opacity = 0;
+                  retractableSizeSlider.querySelector( ".tooltip" ).style = "";
+                }
+              },
+              updateContext: () => updateBrushSizePreview()
+            },
+            {
+              tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Brush Size <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000,
+              bindings: {
+                "Increase Brush Size": () => {
+                  adjustBrushSize( 0.05 );
+                },
+                "Decrease Brush Size": () => {
+                  adjustBrushSize( -0.05 );
+                }
+              }
             }
-          },
-          updateContext: () => updateBrushSizePreview()
-        },
-        { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Brush Size <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      paintToolsOptionsRow.appendChild( retractableSizeSlider );
-    }
-    //the retractable softness slider
-    {
-      const retractableSoftnessSlider = document.createElement( "div" );
-      retractableSoftnessSlider.classList.add( "paint-tools-options-retractable-slider", "animated" );
-      const previewCore = retractableSoftnessSlider.appendChild( document.createElement( "div" ) );
-      previewCore.classList.add( "paint-tools-options-brush-softness-preview-core" );
-      const previewNumber = retractableSoftnessSlider.appendChild( document.createElement( "div" ) );
-      previewNumber.classList.add( "paint-tools-options-preview-number", "animated" );
-      previewNumber.style.opacity = 0;
-      //TODO size preview?
-      const updateBrushSoftnessPreview = ( brushSoftness = null ) => {
-        retractableSoftnessSlider.classList.remove( "hovering" );
-        const settings = uiSettings.toolsSettings.paint.modeSettings.all;
-        if( ! brushSoftness ) {
-          brushSoftness = settings.brushBlur;
+          );
+          paintAndMaskOptionsRow.appendChild( retractableSizeSlider );
         }
-        //get size percentage
-        const rate = ( brushSoftness - settings.minBrushBlur ) / ( settings.maxBrushBlur - settings.minBrushBlur );
-        const percent = parseInt( 100 * rate );
-        //update preview number
-        previewNumber.textContent = percent + "%";
-        //update preview
-        previewCore.style.filter = "blur( " + rate*0.5 + "rem )";
-      }
-      updateBrushSoftnessPreview();
-      let startingBrushSoftness,
-        adjustmentScale;
-      UI.registerElement(
-        retractableSoftnessSlider,
+        //the retractable softness slider
         {
-          ondrag: ({ rect, start, current, ending, starting, element }) => {
+          const retractableSoftnessSlider = document.createElement( "div" );
+          retractableSoftnessSlider.classList.add( "paint-tools-options-retractable-slider", "animated" );
+          const previewCore = retractableSoftnessSlider.appendChild( document.createElement( "div" ) );
+          previewCore.classList.add( "paint-tools-options-brush-softness-preview-core" );
+          const previewNumber = retractableSoftnessSlider.appendChild( document.createElement( "div" ) );
+          previewNumber.classList.add( "paint-tools-options-preview-number", "animated" );
+          previewNumber.style.opacity = 0;
+          //TODO size preview?
+          const updateBrushSoftnessPreview = ( brushSoftness = null ) => {
+            retractableSoftnessSlider.classList.remove( "hovering" );
             const settings = uiSettings.toolsSettings.paint.modeSettings.all;
-            if( starting ) {
-              previewNumber.style.opacity = 1;
-              retractableSoftnessSlider.querySelector( ".tooltip" ).style.opacity = 0;
-              startingBrushSoftness = settings.brushBlur;
-              adjustmentScale = ( settings.maxBrushBlur - settings.minBrushBlur ) / 300; //300 pixel screen-traverse
+            if( ! brushSoftness ) {
+              brushSoftness = settings.brushBlur;
             }
-            const dx =  current.x - start.x;
-            const adjustment = dx * adjustmentScale;
-            let brushSoftness = startingBrushSoftness + adjustment;
-            brushSoftness = Math.max( settings.minBrushBlur, Math.min( settings.maxBrushBlur, brushSoftness ) );
-            settings.brushBlur = brushSoftness;
-            updateBrushSoftnessPreview( brushSoftness );
-            if( ending ) {
-              previewNumber.style.opacity = 0;
-              retractableSoftnessSlider.querySelector( ".tooltip" ).style = "";
-            }
-          },
-          updateContext: () => updateBrushSoftnessPreview()
-        },
-        { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Brush Softness <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      paintToolsOptionsRow.appendChild( retractableSoftnessSlider );
-    }
-    //the retractable opacity slider
-    {
-      const retractableOpacitySlider = document.createElement( "div" );
-      retractableOpacitySlider.classList.add( "paint-tools-options-retractable-slider", "paint-tools-options-retractable-opacity-slider", "animated" );
-      const previewCore = retractableOpacitySlider.appendChild( document.createElement( "div" ) );
-      previewCore.classList.add( "paint-tools-options-brush-opacity-preview-core" );
-      const previewNumber = retractableOpacitySlider.appendChild( document.createElement( "div" ) );
-      previewNumber.classList.add( "paint-tools-options-preview-number", "animated" );
-      previewNumber.style.opacity = 0;
-      //TODO size preview?
-      const updateBrushOpacityPreview = ( brushOpacity = null ) => {
-        retractableOpacitySlider.classList.remove( "hovering" );
-        const settings = uiSettings.toolsSettings.paint.modeSettings.all;
-        if( ! brushOpacity ) {
-          brushOpacity = settings.brushOpacity;
+            //get size percentage
+            const rate = ( brushSoftness - settings.minBrushBlur ) / ( settings.maxBrushBlur - settings.minBrushBlur );
+            const percent = parseInt( 100 * rate );
+            //update preview number
+            previewNumber.textContent = percent + "%";
+            //update preview
+            previewCore.style.filter = "blur( " + rate*0.5 + "rem )";
+          }
+          updateBrushSoftnessPreview();
+          let startingBrushSoftness,
+            adjustmentScale;
+          UI.registerElement(
+            retractableSoftnessSlider,
+            {
+              ondrag: ({ rect, start, current, ending, starting, element }) => {
+                const settings = uiSettings.toolsSettings.paint.modeSettings.all;
+                if( starting ) {
+                  previewNumber.style.opacity = 1;
+                  retractableSoftnessSlider.querySelector( ".tooltip" ).style.opacity = 0;
+                  startingBrushSoftness = settings.brushBlur;
+                  adjustmentScale = ( settings.maxBrushBlur - settings.minBrushBlur ) / 300; //300 pixel screen-traverse
+                }
+                const dx =  current.x - start.x;
+                const adjustment = dx * adjustmentScale;
+                let brushSoftness = startingBrushSoftness + adjustment;
+                brushSoftness = Math.max( settings.minBrushBlur, Math.min( settings.maxBrushBlur, brushSoftness ) );
+                settings.brushBlur = brushSoftness;
+                updateBrushSoftnessPreview( brushSoftness );
+                if( ending ) {
+                  previewNumber.style.opacity = 0;
+                  retractableSoftnessSlider.querySelector( ".tooltip" ).style = "";
+                }
+              },
+              updateContext: () => updateBrushSoftnessPreview()
+            },
+            { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Brush Softness <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
+          );
+          paintAndMaskOptionsRow.appendChild( retractableSoftnessSlider );
         }
-        //update preview number
-        let number = (parseInt( brushOpacity * 10 ) / 10).toString();
-        if( number.indexOf( "." ) === -1 ) number += ".0";
-        //get size percentage
-        const rate = brushOpacity;
-        const percent = parseInt( 100 * rate );
-        previewNumber.textContent = percent + "%";
-        previewCore.style.opacity = rate;
-      }
-      updateBrushOpacityPreview();
-      let startingBrushOpacity,
-        adjustmentScale;
-      UI.registerElement(
-        retractableOpacitySlider,
+        //the retractable opacity slider
         {
-          ondrag: ({ rect, start, current, ending, starting, element }) => {
+          const retractableOpacitySlider = document.createElement( "div" );
+          retractableOpacitySlider.classList.add( "paint-tools-options-retractable-slider", "paint-tools-options-retractable-opacity-slider", "animated" );
+          const previewCore = retractableOpacitySlider.appendChild( document.createElement( "div" ) );
+          previewCore.classList.add( "paint-tools-options-brush-opacity-preview-core" );
+          const previewNumber = retractableOpacitySlider.appendChild( document.createElement( "div" ) );
+          previewNumber.classList.add( "paint-tools-options-preview-number", "animated" );
+          previewNumber.style.opacity = 0;
+          //TODO size preview?
+          const updateBrushOpacityPreview = ( brushOpacity = null ) => {
+            retractableOpacitySlider.classList.remove( "hovering" );
             const settings = uiSettings.toolsSettings.paint.modeSettings.all;
-            if( starting ) {
-              previewNumber.style.opacity = 1;
-              retractableOpacitySlider.querySelector( ".tooltip" ).style.opacity = 0;
-              startingBrushOpacity = settings.brushOpacity;
-              adjustmentScale = 1 / 300; //300 pixel screen-traverse
+            if( ! brushOpacity ) {
+              brushOpacity = settings.brushOpacity;
             }
-            const dx =  current.x - start.x;
-            const adjustment = dx * adjustmentScale;
-            let brushOpacity = startingBrushOpacity + adjustment;
-            brushOpacity = Math.max( 0, Math.min( 1, brushOpacity ) );
-            settings.brushOpacity = brushOpacity;
-            updateBrushOpacityPreview( brushOpacity );
-            if( ending ) {
-              previewNumber.style.opacity = 0;
-              retractableOpacitySlider.querySelector( ".tooltip" ).style = "";
+            //update preview number
+            let number = (parseInt( brushOpacity * 10 ) / 10).toString();
+            if( number.indexOf( "." ) === -1 ) number += ".0";
+            //get size percentage
+            const rate = brushOpacity;
+            const percent = parseInt( 100 * rate );
+            previewNumber.textContent = percent + "%";
+            previewCore.style.opacity = rate;
+          }
+          updateBrushOpacityPreview();
+          let startingBrushOpacity,
+            adjustmentScale;
+          UI.registerElement(
+            retractableOpacitySlider,
+            {
+              ondrag: ({ rect, start, current, ending, starting, element }) => {
+                const settings = uiSettings.toolsSettings.paint.modeSettings.all;
+                if( starting ) {
+                  previewNumber.style.opacity = 1;
+                  retractableOpacitySlider.querySelector( ".tooltip" ).style.opacity = 0;
+                  startingBrushOpacity = settings.brushOpacity;
+                  adjustmentScale = 1 / 300; //300 pixel screen-traverse
+                }
+                const dx =  current.x - start.x;
+                const adjustment = dx * adjustmentScale;
+                let brushOpacity = startingBrushOpacity + adjustment;
+                brushOpacity = Math.max( 0, Math.min( 1, brushOpacity ) );
+                settings.brushOpacity = brushOpacity;
+                updateBrushOpacityPreview( brushOpacity );
+                if( ending ) {
+                  previewNumber.style.opacity = 0;
+                  retractableOpacitySlider.querySelector( ".tooltip" ).style = "";
+                }
+              },
+              updateContext: () => updateBrushOpacityPreview()
+            },
+            { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Brush Opacity <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
+          );
+          paintAndMaskOptionsRow.appendChild( retractableOpacitySlider );
+        }
+    
+        //the retractable blend amount slider
+        if( false ){
+          const retractableBlendnessSlider = document.createElement( "div" );
+          retractableBlendnessSlider.classList.add( "paint-tools-options-retractable-slider", "paint-tools-options-retractable-blendness-slider", "animated" );
+          /* const previewCore = retractableBlendnessSlider.appendChild( document.createElement( "div" ) );
+          previewCore.classList.add( "paint-tools-options-brush-blendness-preview-core" ); */
+          const previewNumberBlend = retractableBlendnessSlider.appendChild( document.createElement( "div" ) );
+          previewNumberBlend.classList.add( "paint-tools-options-preview-number", "animated" );
+          previewNumberBlend.style.opacity = 0;
+          
+          const updateBrushBlendnessPreview = ( brushBlendness = null ) => {
+            retractableBlendnessSlider.classList.remove( "hovering" );
+            const settings = uiSettings.toolsSettings.paint.modeSettings;
+            if( ! brushBlendness ) {
+              brushBlendness = settings.blend.blendAlpha;
+            }
+            //update preview number
+            let number = (parseInt( brushBlendness * 10 ) / 10).toString();
+            if( number.indexOf( "." ) === -1 ) number += ".0";
+            //get size percentage
+            const rate = brushBlendness;
+            const percent = parseInt( 100 * rate );
+            previewNumberBlend.textContent = percent + "%";
+            //previewCore.style.opacity = rate;
+          }
+          updateBrushBlendnessPreview();
+          let startingBrushBlendness,
+            adjustmentScale;
+          UI.registerElement(
+            retractableBlendnessSlider,
+            {
+              ondrag: ({ rect, start, current, ending, starting, element }) => {
+                const settings = uiSettings.toolsSettings.paint.modeSettings.blend;
+                if( starting ) {
+                  previewNumberBlend.style.opacity = 1;
+                  retractableBlendnessSlider.querySelector( ".tooltip" ).style.opacity = 0;
+                  startingBrushBlendness = settings.blendAlpha;
+                  adjustmentScale = 1 / 300; //300 pixel screen-traverse
+                }
+                const dx =  current.x - start.x;
+                const adjustment = dx * adjustmentScale;
+                let brushBlendness = startingBrushBlendness + adjustment;
+                brushBlendness = Math.max( 0, Math.min( 1, brushBlendness ) );
+                settings.blendAlpha = brushBlendness;
+                updateBrushBlendnessPreview( brushBlendness );
+                if( ending ) {
+                  previewNumberBlend.style.opacity = 0;
+                  retractableBlendnessSlider.querySelector( ".tooltip" ).style = "";
+                }
+              },
+              updateContext: () => updateBrushBlendnessPreview()
+            },
+            { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Blend Amount <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
+          );
+          paintAndMaskOptionsRow.appendChild( retractableBlendnessSlider );
+        }
+    
+      }
+      
+      //the color adjust tool options
+      {
+        const colorAdjustToolOptionsRow = document.createElement( "div" );
+        colorAdjustToolOptionsRow.classList.add( "flex-row", "hidden", "animated" );
+        colorAdjustToolOptionsRow.id = "color-adjust-tools-options-row";
+        toolOptionsRow.appendChild( colorAdjustToolOptionsRow );
+        let adjustingLayer = null,
+          sourceImage = new Image(),
+          sourceURL = "",
+          sourceLoaded = false,
+          colorAdjustments = {
+            saturation: 0, //0=unsaturated, 1=no effect, >1 saturate
+            contrast: 0, //0=gray, 1=no effect, >1 contrast
+            brightness: 0, //0=black, 1=no effect, >1 brighten
+            hue: 0, //degrees or turns, 0=no effect
+            invert: 0, //0=no effect, 1=invert
+          };
+        UI.registerElement(
+          toolOptionsRow,
+          {
+            updateContext: () => {
+              if( uiSettings.activeTool === "color-adjust" && selectedLayer && selectedLayer.layerType === "paint" ) {
+                if( adjustingLayer !== selectedLayer ) {
+                  if( adjustingLayer !== null ) {
+                    //this is weird behavior
+                    //e.g., if you preview, then merge down, then undo... what happens? is it reasonable?
+                    resetPreview();
+                    adjustingLayer = null;
+                    sourceURL = "";
+                  }
+                  colorAdjustToolOptionsRow.classList.remove( "hidden" );
+                  adjustingLayer = selectedLayer;
+                  loadSourceImageFromLayer( adjustingLayer );
+                  Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
+                }
+              }
+              else {
+                if( adjustingLayer !== null ) {
+                  //roll back any changes if any filter is non-zero
+                  resetPreview();
+                  adjustingLayer = null;
+                  sourceURL = "";
+                }
+                if( uiSettings.activeTool === "color-adjust" ) {
+                  uiSettings.setActiveTool( null );
+                  adjustingLayer = null;
+                  sourceURL = "";
+                  sourceLoaded = false;
+                }
+                colorAdjustToolOptionsRow.classList.add( "hidden" );
+              }
             }
           },
-          updateContext: () => updateBrushOpacityPreview()
-        },
-        { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Brush Opacity <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      paintToolsOptionsRow.appendChild( retractableOpacitySlider );
+          {
+            zIndex: 1000,
+          }
+        );
+  
+        function loadSourceImageFromLayer( layer ) {
+          let registerSourceLoaded;
+          adjustingLayer = layer;
+          sourceLoaded = new Promise( r => registerSourceLoaded = r );
+          sourceImage.onload = registerSourceLoaded;
+          sourceURL = layer.canvas.toDataURL();
+          sourceImage.src = sourceURL;
+        }
+  
+        async function resetPreview() {
+          if( sourceLoaded === false ) return;
+          await sourceLoaded;
+          if( sourceLoaded === false ) return;
+          Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
+          colorAdjustToolOptionsRow.querySelectorAll( ".number-slider" ).forEach( s => s.setValue( 0 ) );
+          adjustingLayer.context.save();
+          adjustingLayer.context.filter = "none";
+          adjustingLayer.context.globalCompositeOperation = "copy";
+          adjustingLayer.context.globalAlpha = 1.0;
+          adjustingLayer.context.drawImage( sourceImage, 0, 0 );
+          adjustingLayer.context.restore();
+          flagLayerTextureChanged( adjustingLayer, null, false );
+        }
+        async function updateColorAdjustPreview() {
+          if( sourceLoaded === false ) return;
+          await sourceLoaded;
+          if( sourceLoaded === false ) return;
+          adjustingLayer.context.save();
+          adjustingLayer.context.filter = `saturate(${colorAdjustments.saturation+1}) contrast(${colorAdjustments.contrast+1}) brightness(${colorAdjustments.brightness+1}) hue-rotate(${colorAdjustments.hue}turn) invert(${colorAdjustments.invert})`;
+          adjustingLayer.context.globalCompositeOperation = "copy";
+          adjustingLayer.context.globalAlpha = 1.0;
+          adjustingLayer.context.drawImage( sourceImage, 0, 0 );
+          adjustingLayer.context.restore();
+          flagLayerTextureChanged( adjustingLayer, null, false );
+        }
+        async function finalizeColorAdjust() {
+          if( sourceLoaded === false ) return;
+          await sourceLoaded;
+          if( sourceLoaded === false ) return;
+  
+          adjustingLayer.context.save();
+          adjustingLayer.context.filter = `saturate(${colorAdjustments.saturation+1}) contrast(${colorAdjustments.contrast+1}) brightness(${colorAdjustments.brightness+1}) hue-rotate(${colorAdjustments.hue}turn) invert(${colorAdjustments.invert})`;
+          adjustingLayer.context.globalCompositeOperation = "copy";
+          adjustingLayer.context.globalAlpha = 1.0;
+          adjustingLayer.context.drawImage( sourceImage, 0, 0 );
+          const finalURL = adjustingLayer.canvas.toDataURL();
+          adjustingLayer.context.restore();
+          flagLayerTextureChanged( adjustingLayer, null, true );
+          
+          Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
+          colorAdjustToolOptionsRow.querySelectorAll( ".number-slider" ).forEach( s => s.setValue( 0 ) );
+  
+          //add undo record
+          const oldImg = new Image(),
+            newImg = new Image();
+          oldImg.src = sourceURL;
+          newImg.src = finalURL;
+  
+          const historyEntry = {
+            targetLayer: adjustingLayer,
+            oldImg,
+            newImg,
+            undo: () => {
+              historyEntry.targetLayer.context.save();
+              historyEntry.targetLayer.context.globalCompositeOperation = "copy";
+              historyEntry.targetLayer.context.globalAlpha = 1.0;
+              //while it is technically possible to miss timing here, it's probably nbd
+              historyEntry.targetLayer.context.drawImage( historyEntry.oldImg, 0, 0 );
+              historyEntry.targetLayer.context.restore();
+              flagLayerTextureChanged( historyEntry.targetLayer, null, true );
+            },
+            redo: () => {
+              historyEntry.targetLayer.context.save();
+              historyEntry.targetLayer.context.globalCompositeOperation = "copy";
+              historyEntry.targetLayer.context.globalAlpha = 1.0;
+              historyEntry.targetLayer.context.drawImage( historyEntry.newImg, 0, 0 );
+              historyEntry.targetLayer.context.restore();
+              flagLayerTextureChanged( historyEntry.targetLayer, null, true );
+            },
+          };
+          recordHistoryEntry( historyEntry );
+  
+          loadSourceImageFromLayer( adjustingLayer );
+          
+        }
+  
+        //the saturation slider
+        {
+          const saturationSlider = UI.make.numberSlider({
+            label: "Saturation", slideMode: "contain-range",
+            value: 0, min: -1, max: 1, step: 0.01,
+          });
+          saturationSlider.classList.add( "saturation-slider" );
+          saturationSlider.onupdate = v => ( colorAdjustments.saturation = v, updateColorAdjustPreview() );
+          colorAdjustToolOptionsRow.appendChild( saturationSlider );
+        }
+        
+        //the contrast slider
+        {
+          const contrastSlider = UI.make.numberSlider({
+            label: "Contrast", slideMode: "contain-range",
+            value: 0, min: -1, max: 1, step: 0.01,
+          });
+          contrastSlider.classList.add( "contrast-slider" );
+          contrastSlider.onupdate = v => ( colorAdjustments.contrast = v, updateColorAdjustPreview() );
+          colorAdjustToolOptionsRow.appendChild( contrastSlider );
+        }
+  
+        //the brightness slider
+        {
+          const brightnessSlider = UI.make.numberSlider({
+            label: "Brightness", slideMode: "contain-range",
+            value: 0, min: -1, max: 1, step: 0.01,
+          });
+          brightnessSlider.classList.add( "brightness-slider" );
+          brightnessSlider.onupdate = v => ( colorAdjustments.brightness = v, updateColorAdjustPreview() );
+          colorAdjustToolOptionsRow.appendChild( brightnessSlider );
+        }
+  
+        //the hue slider
+        {
+          const hueSlider = UI.make.numberSlider({
+            label: "Hue", slideMode: "contain-range",
+            value: 0, min: 0, max: 1, step: 0.01,
+          });
+          hueSlider.classList.add( "hue-slider" );
+          hueSlider.onupdate = v => ( colorAdjustments.hue = v, updateColorAdjustPreview() );
+          colorAdjustToolOptionsRow.appendChild( hueSlider );
+        }
+  
+        //the invert slider
+        {
+          const invertSlider = UI.make.numberSlider({
+            label: "Invert", slideMode: "contain-range",
+            value: 0, min: 0, max: 1, step: 0.01,
+          });
+          invertSlider.classList.add( "Invert-slider" );
+          invertSlider.onupdate = v => ( colorAdjustments.invert = v, updateColorAdjustPreview() );
+          colorAdjustToolOptionsRow.appendChild( invertSlider );
+        }
+        
+        //the apply button
+        {
+          const applyButton = document.createElement( "div" );
+          applyButton.classList.add( "asset-button-text", "round-toggle", "long", "on" );
+          const buttonText = document.createElement( "div" );
+          buttonText.classList.add( "button-text" );
+          buttonText.textContent = "Apply";
+          applyButton.appendChild( buttonText );
+          UI.registerElement(
+            applyButton,
+            {
+              onclick: () => {
+                finalizeColorAdjust();
+              },
+            },
+            { tooltip: [ "Apply Color Adjustments", "below", "to-left-of-center" ] }
+          );
+          colorAdjustToolOptionsRow.appendChild( applyButton );
+        }
+  
+      }
+  
+      //the flood fill tool options
+      {
+        const floodFillOptionsRow = document.createElement( "div" );
+        floodFillOptionsRow.classList.add( "flex-row", "hidden", "animated" );
+        floodFillOptionsRow.id = "flood-fill-tools-options-row";
+        toolOptionsRow.appendChild( floodFillOptionsRow );
+        UI.registerElement(
+          floodFillOptionsRow,
+          {
+            updateContext: () => {
+              if( uiSettings.activeTool === "flood-fill" ) {
+                if( selectedLayer?.layerType === "paint" ) {
+                  floodFillOptionsRow.classList.remove( "hidden" );
+                  /* const colorWell = document.querySelector( ".paint-tools-options-color-well" );
+                  colorWell.classList.remove( "hidden" );
+                  floodFillOptionsRow.appendChild( colorWell ); */
+                } else {
+                  uiSettings.setActiveTool( null );
+                  floodFillOptionsRow.classList.add( "hidden" );
+                }
+              }
+              else {
+                floodFillOptionsRow.classList.add( "hidden" );
+              }
+            }
+          },
+          {
+            zIndex: 1000,
+          }
+        );
+  
+        //uiSettings.toolsSettings["flood-fill"].erase = true | false
+        //the erase toggle
+        {
+          const eraseToggle = document.createElement( "div" );
+          //brushSelectBrowseButton.classList.add( "asset-browser-button" );
+          eraseToggle.classList.add( "flood-fill-options-erase-toggle", "round-toggle", "on" );
+          UI.registerElement(
+            eraseToggle,
+            {
+              onclick: () => {
+                let erasing = uiSettings.toolsSettings["flood-fill"].erase;
+                erasing = ! erasing;
+                uiSettings.toolsSettings["flood-fill"].erase = erasing;
+                if( erasing === true ) eraseToggle.classList.add( "on" );
+                if( erasing === false ) eraseToggle.classList.remove( "on" );
+              },
+              updateContext: () => {
+                if( uiSettings.toolsSettings["flood-fill"].erase === true ) eraseToggle.classList.add( "on" );
+                else eraseToggle.classList.remove( "on" );
+              }
+            },
+            { tooltip: [ "Flood Erase Mode", "below", "to-right-of-center" ], zIndex:10000, }
+          );
+          floodFillOptionsRow.appendChild( eraseToggle );
+        }
+        //vertical-spacer
+        //need a toggle for area vs. color
+        //uiSettings.toolsSettings["flood-fill"].floodTarget = "area" | "color"
+        {
+          const colorToggle = document.createElement( "div" );
+          //brushSelectBrowseButton.classList.add( "asset-browser-button" );
+          colorToggle.classList.add( "flood-fill-options-color-toggle", "round-toggle", "on" );
+          UI.registerElement(
+            colorToggle,
+            {
+              onclick: () => {
+                let current = uiSettings.toolsSettings["flood-fill"].floodTarget;
+  
+                if( current === "area" ) current = "color";
+                else current = "area";
+  
+                uiSettings.toolsSettings["flood-fill"].floodTarget = current;
+  
+                if( current === "area" ) colorToggle.classList.remove( "on" );
+                if( current === "color" ) colorToggle.classList.add( "on" );
+              },
+              updateContext: () => {
+                let current = uiSettings.toolsSettings["flood-fill"].floodTarget;
+                if( current === "area" ) colorToggle.classList.remove( "on" );
+                if( current === "color" ) colorToggle.classList.add( "on" );
+              }
+            },
+            { tooltip: [ "Flood Color Instead of Area", "below", "to-right-of-center" ], zIndex:10000, }
+          );
+          floodFillOptionsRow.appendChild( colorToggle );
+        }
+        //vertical-spacer
+        //slider for tolerance
+        {
+          const toleranceSlider = UI.make.numberSlider({
+            label: "Tolerance", slideMode: "contain-step",
+            value: uiSettings.toolsSettings["flood-fill"].tolerance, min: 0, max: 1, step: 0.01
+          });
+          toleranceSlider.classList.add( "flood-fill-options-tolerance-slider" );
+          toleranceSlider.onend = tolerance => uiSettings.toolsSettings["flood-fill"].tolerance = tolerance;
+          floodFillOptionsRow.appendChild( toleranceSlider ); 
+        }
+        //slider for padding
+        {
+          const paddingSlider = UI.make.numberSlider({
+            label: "Padding", slideMode: "contain-step",
+            value: uiSettings.toolsSettings["flood-fill"].padding, min: 0, max: 10, step: 0.1
+          });
+          paddingSlider.classList.add( "flood-fill-options-padding-slider" );
+          paddingSlider.onend = padding => uiSettings.toolsSettings["flood-fill"].padding = padding;
+          floodFillOptionsRow.appendChild( paddingSlider ); 
+        }
+  
+        //the colorwell is here, but it's swiped from the paint tools
+  
+      }
+  
     }
 
-    //the retractable blend amount slider
-    if( false ){
-      const retractableBlendnessSlider = document.createElement( "div" );
-      retractableBlendnessSlider.classList.add( "paint-tools-options-retractable-slider", "paint-tools-options-retractable-blendness-slider", "animated" );
-      /* const previewCore = retractableBlendnessSlider.appendChild( document.createElement( "div" ) );
-      previewCore.classList.add( "paint-tools-options-brush-blendness-preview-core" ); */
-      const previewNumberBlend = retractableBlendnessSlider.appendChild( document.createElement( "div" ) );
-      previewNumberBlend.classList.add( "paint-tools-options-preview-number", "animated" );
-      previewNumberBlend.style.opacity = 0;
-      
-      const updateBrushBlendnessPreview = ( brushBlendness = null ) => {
-        retractableBlendnessSlider.classList.remove( "hovering" );
-        const settings = uiSettings.toolsSettings.paint.modeSettings;
-        if( ! brushBlendness ) {
-          brushBlendness = settings.blend.blendAlpha;
-        }
-        //update preview number
-        let number = (parseInt( brushBlendness * 10 ) / 10).toString();
-        if( number.indexOf( "." ) === -1 ) number += ".0";
-        //get size percentage
-        const rate = brushBlendness;
-        const percent = parseInt( 100 * rate );
-        previewNumberBlend.textContent = percent + "%";
-        //previewCore.style.opacity = rate;
-      }
-      updateBrushBlendnessPreview();
-      let startingBrushBlendness,
-        adjustmentScale;
-      UI.registerElement(
-        retractableBlendnessSlider,
-        {
-          ondrag: ({ rect, start, current, ending, starting, element }) => {
-            const settings = uiSettings.toolsSettings.paint.modeSettings.blend;
-            if( starting ) {
-              previewNumberBlend.style.opacity = 1;
-              retractableBlendnessSlider.querySelector( ".tooltip" ).style.opacity = 0;
-              startingBrushBlendness = settings.blendAlpha;
-              adjustmentScale = 1 / 300; //300 pixel screen-traverse
-            }
-            const dx =  current.x - start.x;
-            const adjustment = dx * adjustmentScale;
-            let brushBlendness = startingBrushBlendness + adjustment;
-            brushBlendness = Math.max( 0, Math.min( 1, brushBlendness ) );
-            settings.blendAlpha = brushBlendness;
-            updateBrushBlendnessPreview( brushBlendness );
-            if( ending ) {
-              previewNumberBlend.style.opacity = 0;
-              retractableBlendnessSlider.querySelector( ".tooltip" ).style = "";
-            }
-          },
-          updateContext: () => updateBrushBlendnessPreview()
-        },
-        { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust Blend Amount <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      paintToolsOptionsRow.appendChild( retractableBlendnessSlider );
+    //a vertical spacer divider
+    {
+      const verticalSpacer = document.createElement( "div" );
+      verticalSpacer.classList.add( "vertical-spacer" );
+      canvasControlsOptionsRow.appendChild( verticalSpacer );
     }
 
     //the colorwell
@@ -4704,13 +5480,17 @@ function setupUI() {
           onclick: () => {
             colorWell.style.backgroundColor = uiSettings.toolsSettings.paint.modeSettings.brush.colorModes.hsl.getColorStyle();
             document.querySelector( "#color-wheel" )?.toggleVisibility?.();
+          },
+          updateContext: () => {
+            if( ["paint","flood-fill"].includes( uiSettings.activeTool ) ) colorWell.classList.remove( "hidden" );
+            else colorWell.classList.add( "hidden" );
           }
         },
         {
           tooltip: [ "Change Color", "below", "to-left-of-center" ], zIndex:10000,
         }
       );
-      paintToolsOptionsRow.appendChild( colorWell );
+      canvasControlsOptionsRow.appendChild( colorWell );
     }
   }
 
@@ -4721,404 +5501,374 @@ function setupUI() {
     transformToolOptionsRow.classList.add( "flex-row", "hidden", "animated" );
     transformToolOptionsRow.id = "transform-tools-options-row";
     uiContainer.appendChild( transformToolOptionsRow );
-    let currentLayer = null;
+    const currentTransformInfos = [];
+
+    //I want to click the tool and see my layer's angle, scale, dims, and center{xy}
+    //I want to touch-transform and see those change live
+    //That means I need some way of reacting to the transform event
+    //I'll expose a function and call it from the layer transform updater
+
+    //When we're trxing multiple layers, the crop function is unavailable
+    //That also means the on-screen handles are not shown?
+    //No, for readability, we need to see the on-screen handles.
+    //That also means we need an onscreen gizmo for zoom/pan. But corner is no-go. Hmm.
+
+    const updateView = ( updateCurrent = true ) => {
+      if( uiSettings.activeTool !== "transform" || currentTransformInfos.length === 0 ) {
+        return;
+      }
+      //called by updateCycle() on layer transforming
+      //update all the values shown on our sliders.
+      //if we only have one layer, update our crop handles
+
+      //update all our values via computation
+      if( updateCurrent === true )
+        currentTransformInfos.forEach( info => updateLayerTransformInfoWithCurrent( info ) );
+
+      console.log( "updating." );
+
+      //get our aggregate info
+      const aggregateInfo = getAggregateTransformInfo();
+      //update our sliders
+      transformToolOptionsRow.querySelector(".rotation-slider").setValue( parseInt( (aggregateInfo.angle / (2*Math.PI)) * 360 ) );
+      transformToolOptionsRow.querySelector(".scale-slider").setValue( aggregateInfo.scale );
+      transformToolOptionsRow.querySelector(".x-slider").setValue( aggregateInfo.center.x );
+      transformToolOptionsRow.querySelector(".y-slider").setValue( aggregateInfo.center.y );
+      if( currentTransformInfos.length === 1 ) {
+        transformToolOptionsRow.querySelector(".width-slider").setValue( currentTransformInfos[0].layer.w );
+        transformToolOptionsRow.querySelector(".height-slider").setValue( currentTransformInfos[0].layer.h );
+      }
+    }
+    
+    const loadLayers = layers => {
+      currentTransformInfos.length = 0;
+      for( const layer of layers ) {
+        currentTransformInfos.push( getInitialLayerTransformInfo( layer ) );
+      }
+      updateView( false );
+    }
+    const applyCropAndRecordUndo = ( width, height, x=null, y=null ) => {
+      //crop happens on dragging and releasing a handle.
+      const layer = currentTransformInfos[0].layer;
+      cropLayerSizeAndRecordUndo( layer, width, height, x, y );
+    }
+
+    //The apply rotation and apply scale functions do not record undo.
+    //Instead, we use them to update a live preview during the slider drag.
+    //On the slider release (or number text entry etc.), we call recordTransformUndo()
+    const applyRotationToLayersFromInitial = rotation => {
+      //for every point in all our layers:
+      //  take it as a vector from the center
+      //  rotate by rotation
+      //  store the new point
+      const { center, angle } = getAggregateTransformInfo( true );
+      const { x, y } = center;
+      const angleChange = ( ( rotation / 360 ) * Math.PI * 2 ) - angle;
+      for( const {layer,initial} of currentTransformInfos ) {
+        for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
+          const destinationPoint = layer[ pointName ],
+            sourcePoint = initial[ pointName ];
+          const dx = sourcePoint[0] - x,
+            dy = sourcePoint[1] - y,
+            initialAngle = Math.atan2( dy, dx ),
+            l = Math.sqrt( dx**2 + dy**2 );
+          destinationPoint[ 0 ] = x + l * Math.cos( initialAngle + angleChange );
+          destinationPoint[ 1 ] = y + l * Math.sin( initialAngle + angleChange );
+        }
+      }
+    }
+    const applyScaleToLayersFromInitial = scale => {
+      //for every point in all our layers:
+      //  take it as a vector from the center
+      //  scale by scale
+      //  store the new point
+      const { x, y } = getAggregateTransformInfo( true ).center;
+      for( const {layer, initial} of currentTransformInfos ) {
+        for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
+          const destinationPoint = layer[ pointName ],
+            sourcePoint = initial[ pointName ];
+          const dx = sourcePoint[0] - x,
+            dy = sourcePoint[1] - y;
+          destinationPoint[ 0 ] = x + dx * scale;
+          destinationPoint[ 1 ] = y + dy * scale;
+        }
+      }
+    }
+
+    const recordTransformUndo = () => {
+      //transform undo happens when one of our sliders (angle or scale) is released
+      const layerStates = [];
+      for( const {layer,initial} of currentTransformInfos ) {
+        layerStates.push({
+          layer,
+          oldPoints: initial,
+          newPoints: {
+            topLeft: [...layer.topLeft],
+            bottomLeft: [ ...layer.bottomLeft ],
+            topRight: [...layer.topRight],
+            bottomRight: [...layer.bottomRight]
+          }
+        })
+      }
+      const historyEntry = {
+        layerStates,
+        undo: () => {
+          for( const {layer,oldPoints} of layerStates ) {
+            for( const point of ["topLeft","bottomLeft","topRight","bottomRight"] )
+              layer[point] = [...oldPoints[point]];
+          }
+        },
+        redo: () => {
+          for( const {layer,newPoints} of layerStates ) {
+            for( const point of ["topLeft","bottomLeft","topRight","bottomRight"] )
+              layer[point] = [...newPoints[point]];
+          }
+        }
+      }
+      recordHistoryEntry( historyEntry );
+    }
+    const getAggregateTransformInfo = ( fromInitial = false ) => {
+      let center = {x:0,y:0},
+        points = {topLeft:null,bottomLeft: null,topRight: null,bottomRight: null},
+        scale = currentTransformInfos[0].scale,
+        angle = currentTransformInfos[0].angle;
+      if( currentTransformInfos.length > 1 ) {
+        scale = layerTransform.zoom || 1;
+        angle = ( layerTransform.angle + layerTransform.initialAngleOffset ) || 0;
+      }
+      const pointCountScale = 1 / (currentTransformInfos.length * 4);
+      if( uiSettings.toolsSettings.transform.current ) getLayerTransform();
+      for( const {layer,initial} of currentTransformInfos ) {
+        //we want the live info from the layer, not our initial static info
+        for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
+          const source = fromInitial ? initial : layer;
+          const [x,y] = ( uiSettings.toolsSettings.transform.current ) ? transformLayerPoint( source[pointName] ) : source[ pointName ];
+          //we're overwriting the temporary variable "points".
+          //We'll only use it in the case of 1 layer selected
+          points[ pointName ] = {x,y};
+          center.x += x * pointCountScale;
+          center.y += y * pointCountScale;
+        }
+      }
+      return { center, points, scale, angle };
+    }
+    const updateLayerTransformInfoWithCurrent = ( layerInfo ) => {
+      //getLayerTransform(); //call this elsewhere for batching
+      for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
+        layerInfo.current[ pointName ] = [ ...transformLayerPoint( layerInfo.layer[ pointName ] ) ];
+      }
+      const { topRight, topLeft, bottomRight, bottomLeft } = layerInfo.current;
+      const topEdge = [topRight[0]-topLeft[0],topRight[1]-topLeft[1]],
+        topEdgeLength = Math.sqrt( topEdge[0]**2 + topEdge[1]**2 ),
+        scale = topEdgeLength / layerInfo.layer.w,
+        angle = Math.atan2( topEdge[1], topEdge[0] );
+      const center = {
+        x:(topLeft[0] + topRight[0] + bottomLeft[0] + bottomRight[0]) / 4,
+        y:(topLeft[1] + topRight[1] + bottomLeft[1] + bottomRight[1]) / 4,
+      }
+      layerInfo.scale = scale;
+      layerInfo.angle = angle;
+      layerInfo.center = center;
+    }
+    const getInitialLayerTransformInfo = layer => {
+      const topLeft = [...layer.topLeft], bottomRight = [...layer.bottomRight],
+        topRight = [...layer.topRight], bottomLeft = [...layer.bottomLeft];
+      const layerInfo = {
+        layer,
+        initial: { topLeft, bottomRight, topRight, bottomLeft },
+        current: {},
+        scale: null, angle: null, center: null
+      }
+      updateLayerTransformInfoWithCurrent( layerInfo );
+      return layerInfo;
+    }
+
+
     UI.registerElement(
       transformToolOptionsRow,
       {
         updateContext: () => {
-          if( uiSettings.activeTool === "transform" && selectedLayer ) {
-            if( selectedLayer.layerType === "generative" ) {
-              if( currentLayer !== selectedLayer ) {
-                clearDataCache( selectedLayer );
-                currentLayer = selectedLayer;
-              }
-              //update the tools
-              transformToolOptionsRow.querySelector( ".width-slider" ).loadLayer( selectedLayer );
-              transformToolOptionsRow.querySelector( ".width-slider" ).classList.remove( "hidden" );
-              transformToolOptionsRow.querySelector( ".height-slider" ).loadLayer( selectedLayer );
-              transformToolOptionsRow.querySelector( ".height-slider" ).classList.remove( "hidden" );
+
+          //Three basic functions: Update the slider previews, Transform layers w/ sliders, and Record Undos from sliders
+          //1. On update (in updateCycle), call an exposed "updateSliderValues" function
+          //2. On slider live-update, update the layer(s) tl/br/tr/bl points while saving its originals
+          //3. On slider release/apply, record an undo event with pre-slide state and current state
+          //4. On layer selection change, update the slider values (no undo/etc here)
+
+          if( uiSettings.activeTool === "transform" ) {
+            transformToolOptionsRow.classList.remove( "hidden" );
+
+            //find out what layers are currently our transform targets
+            let selectedLayersTarget = [...uiSettings.toolsSettings.transform.transformingLayers];
+            if( selectedLayersTarget.length === 0 ) {
+              //means ready to transform, but not yet transforming batch of layers
+              selectedLayersTarget = [ ...batchedLayers] ;
             }
-            if( selectedLayer.layerType !== "generative" ) {
+            if( selectedLayersTarget.length === 0 ) {
+              //means ready to transform, but not yet transforming single layer
+              if( selectedLayer.layerType === "group" ) {
+                const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
+                for( const layer of groupChildren ) {
+                  if( layer.layerType === "group" ) continue;
+                  selectedLayersTarget.push( layer );
+                }
+              }
+              else {
+                selectedLayersTarget.push( selectedLayer );
+              }
+            }
+
+            if( selectedLayersTarget.length === 0 ) {
+              //nothing to transform, hide our tools
+              transformToolOptionsRow.querySelector( ".rotation-slider" ).classList.add( "hidden" );
+              transformToolOptionsRow.querySelector( ".scale-slider" ).classList.add( "hidden" );
+              transformToolOptionsRow.querySelector( ".x-slider" ).classList.add( "hidden" );
+              transformToolOptionsRow.querySelector( ".y-slider" ).classList.add( "hidden" );
               transformToolOptionsRow.querySelector( ".width-slider" ).classList.add( "hidden" );
               transformToolOptionsRow.querySelector( ".height-slider" ).classList.add( "hidden" );
+              //hide the crop handles too
             }
-            transformToolOptionsRow.classList.remove( "hidden" );
+            if( selectedLayersTarget.length === 1 ) {
+              //show all our tools
+              transformToolOptionsRow.querySelector( ".rotation-slider" ).classList.remove( "hidden" );
+              transformToolOptionsRow.querySelector( ".scale-slider" ).classList.remove( "hidden" );
+              transformToolOptionsRow.querySelector( ".x-slider" ).classList.remove( "hidden" );
+              transformToolOptionsRow.querySelector( ".y-slider" ).classList.remove( "hidden" );
+              transformToolOptionsRow.querySelector( ".width-slider" ).classList.remove( "hidden" );
+              transformToolOptionsRow.querySelector( ".height-slider" ).classList.remove( "hidden" );
+              //show the crop handles
+            }
+            if( selectedLayersTarget.length > 1 ) {
+              //show just the rotation and scale tools
+              transformToolOptionsRow.querySelector( ".rotation-slider" ).classList.remove( "hidden" );
+              transformToolOptionsRow.querySelector( ".scale-slider" ).classList.remove( "hidden" );
+              transformToolOptionsRow.querySelector( ".x-slider" ).classList.remove( "hidden" );
+              transformToolOptionsRow.querySelector( ".y-slider" ).classList.remove( "hidden" );
+              transformToolOptionsRow.querySelector( ".width-slider" ).classList.add( "hidden" );
+              transformToolOptionsRow.querySelector( ".height-slider" ).classList.add( "hidden" );
+              //hide the crop handles too
+            }
+  
+            //check if our selection has changed
+            let foundChange = false;
+            for( const layer of selectedLayersTarget ) {
+              if( ! currentTransformInfos.find( t => t.layer === layer ) ) {
+                foundChange = true;
+                break;
+              }
+            }
+            if( foundChange === false ) {
+              for( const {layer} of currentTransformInfos ) {
+                if( selectedLayersTarget.indexOf( layer ) === -1 ) {
+                  foundChange = true;
+                  break;
+                }
+              }
+            }
+            
+            //load the updated selection (this will clear datacaches)
+            if( foundChange === true )
+              loadLayers( selectedLayersTarget );
           }
           else {
-            if( uiSettings.activeTool === "transform" ) {
-              uiSettings.setActiveTool( null );
-            }
             transformToolOptionsRow.classList.add( "hidden" );
           }
-        }
+        },
+        updateView,
       },
       {
         zIndex: 1000,
       }
     );
 
+    //the rotation behavior makes sense as a real angle.
+    //the rotation slider
+    {
+      const rotationSlider = UI.make.numberSlider({
+        label: "Rotation", slideMode: "contain-step",
+        value: 0, min: 0, max: 360, step: 1, wrap: true,
+        bindingsName: " Layer Rotation",
+        onupdate: rotation => applyRotationToLayersFromInitial( rotation ),
+        onend: rotation => {
+          applyRotationToLayersFromInitial( rotation );
+          recordTransformUndo();
+          loadLayers( currentTransformInfos.map( info => info.layer ) );
+        }
+      });
+      rotationSlider.classList.add( "rotation-slider" );
+      transformToolOptionsRow.appendChild( rotationSlider );
+    }
+
+    //the scale behavior makes sense when you consider canvas dims 100%
+    //what's the layer's leg-length vs. its pixel dims?
+    //the problem is the min/max don't make sense
+    //the scale slider
+    {
+      const scaleSlider = UI.make.numberSlider({
+        label: "Scale", slideMode: "contain-step",
+        value: 1, min: 0.01, max: 2, step: .01,
+        bindingsName: " Layer Scale",
+        onupdate: scale => applyScaleToLayersFromInitial( scale ),
+        onend: scale => {
+          applyScaleToLayersFromInitial( scale );
+          recordTransformUndo();
+          loadLayers( currentTransformInfos.map( info => info.layer ) );
+        }
+      });
+      scaleSlider.classList.add( "scale-slider" );
+      transformToolOptionsRow.appendChild( scaleSlider );
+    }
+
+    //the x slider
+    {
+      const xSlider = UI.make.numberSlider({
+        label: "X", slideMode: "contain-step",
+        value: 0, min: -1000, max: 1000, step: 1,
+        bindingsName: " Layer X Position",
+      });
+      xSlider.classList.add( "x-slider" );
+      transformToolOptionsRow.appendChild( xSlider );
+    }
+    //the y slider
+    {
+      const ySlider = UI.make.numberSlider({
+        label: "Y", slideMode: "contain-step",
+        value: 0, min: -1000, max: 1000, step: 1,
+        bindingsName: " Layer Y Position",
+      });
+      ySlider.classList.add( "y-slider" );
+      transformToolOptionsRow.appendChild( ySlider );
+    }
+    console.error( "Add transform crop handles." );
+
+    //cropping is done just with handles, not with sliders... for now at least
 
     //the width slider
     {
       const widthSlider = UI.make.numberSlider({
         label: "Width", slideMode: "contain-step",
-        value: 512, min: 0, max: 4096, step: 1
+        value: 512, min: 0, max: 4096, step: 1,
+        onend: width => {
+          const layer = currentTransformInfos[0].layer;
+          cropLayerSizeAndRecordUndo( layer, width, layer.h );
+        }
       });
       widthSlider.classList.add( "width-slider" );
-      widthSlider.loadLayer = layer => {
-        widthSlider.setValue( layer.w );
-        widthSlider.onend = width => cropLayerSize( layer, width, layer.h );
-      }
       transformToolOptionsRow.appendChild( widthSlider );
     }
     //the height slider
     {
       const heightSlider = UI.make.numberSlider({
         label: "Height", slideMode: "contain-step",
-        value: 512, min: 0, max: 4096, step: 1
+        value: 512, min: 0, max: 4096, step: 1,
+        onend: width => {
+          const layer = currentTransformInfos[0].layer;
+          cropLayerSizeAndRecordUndo( layer, width, layer.h );
+        }
       });
       heightSlider.classList.add( "height-slider" );
-      heightSlider.loadLayer = layer => {
-        heightSlider.setValue( layer.h );
-        heightSlider.onend = height => cropLayerSize( layer, layer.w, height );
-      }
       transformToolOptionsRow.appendChild( heightSlider );
     }
-
-  }
-
-  //the color adjust tool options
-  {
-    
-    const colorAdjustToolOptionsRow = document.createElement( "div" );
-    colorAdjustToolOptionsRow.classList.add( "flex-row", "hidden", "animated" );
-    colorAdjustToolOptionsRow.id = "color-adjust-tools-options-row";
-    uiContainer.appendChild( colorAdjustToolOptionsRow );
-    let adjustingLayer = null,
-      sourceImage = new Image(),
-      sourceURL = "",
-      sourceLoaded = false,
-      colorAdjustments = {
-        saturation: 0, //0=unsaturated, 1=no effect, >1 saturate
-        contrast: 0, //0=gray, 1=no effect, >1 contrast
-        brightness: 0, //0=black, 1=no effect, >1 brighten
-        hue: 0, //degrees or turns, 0=no effect
-        invert: 0, //0=no effect, 1=invert
-      };
-    UI.registerElement(
-      colorAdjustToolOptionsRow,
-      {
-        updateContext: () => {
-          if( uiSettings.activeTool === "color-adjust" && selectedLayer && selectedLayer.layerType === "paint" ) {
-            if( adjustingLayer !== selectedLayer ) {
-              if( adjustingLayer !== null ) {
-                //this is weird behavior
-                //e.g., if you preview, then merge down, then undo... what happens? is it reasonable?
-                resetPreview();
-                adjustingLayer = null;
-                sourceURL = "";
-              }
-              colorAdjustToolOptionsRow.classList.remove( "hidden" );
-              adjustingLayer = selectedLayer;
-              loadSourceImageFromLayer( adjustingLayer );
-              Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
-            }
-          }
-          else {
-            if( adjustingLayer !== null ) {
-              //roll back any changes if any filter is non-zero
-              resetPreview();
-              adjustingLayer = null;
-              sourceURL = "";
-            }
-            if( uiSettings.activeTool === "color-adjust" ) {
-              uiSettings.setActiveTool( null );
-              adjustingLayer = null;
-              sourceURL = "";
-              sourceLoaded = false;
-            }
-            colorAdjustToolOptionsRow.classList.add( "hidden" );
-          }
-        }
-      },
-      {
-        zIndex: 1000,
-      }
-    );
-
-    function loadSourceImageFromLayer( layer ) {
-      let registerSourceLoaded;
-      adjustingLayer = layer;
-      sourceLoaded = new Promise( r => registerSourceLoaded = r );
-      sourceImage.onload = registerSourceLoaded;
-      sourceURL = layer.canvas.toDataURL();
-      sourceImage.src = sourceURL;
-    }
-
-    async function resetPreview() {
-      if( sourceLoaded === false ) return;
-      await sourceLoaded;
-      if( sourceLoaded === false ) return;
-      Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
-      colorAdjustToolOptionsRow.querySelectorAll( ".number-slider" ).forEach( s => s.setValue( 0 ) );
-      adjustingLayer.context.save();
-      adjustingLayer.context.filter = "none";
-      adjustingLayer.context.globalCompositeOperation = "copy";
-      adjustingLayer.context.globalAlpha = 1.0;
-      adjustingLayer.context.drawImage( sourceImage, 0, 0 );
-      adjustingLayer.context.restore();
-      flagLayerTextureChanged( adjustingLayer, null, false );
-    }
-    async function updateColorAdjustPreview() {
-      if( sourceLoaded === false ) return;
-      await sourceLoaded;
-      if( sourceLoaded === false ) return;
-      adjustingLayer.context.save();
-      adjustingLayer.context.filter = `saturate(${colorAdjustments.saturation+1}) contrast(${colorAdjustments.contrast+1}) brightness(${colorAdjustments.brightness+1}) hue-rotate(${colorAdjustments.hue}turn) invert(${colorAdjustments.invert})`;
-      adjustingLayer.context.globalCompositeOperation = "copy";
-      adjustingLayer.context.globalAlpha = 1.0;
-      adjustingLayer.context.drawImage( sourceImage, 0, 0 );
-      adjustingLayer.context.restore();
-      flagLayerTextureChanged( adjustingLayer, null, false );
-    }
-    async function finalizeColorAdjust() {
-      if( sourceLoaded === false ) return;
-      await sourceLoaded;
-      if( sourceLoaded === false ) return;
-
-      adjustingLayer.context.save();
-      adjustingLayer.context.filter = `saturate(${colorAdjustments.saturation+1}) contrast(${colorAdjustments.contrast+1}) brightness(${colorAdjustments.brightness+1}) hue-rotate(${colorAdjustments.hue}turn) invert(${colorAdjustments.invert})`;
-      adjustingLayer.context.globalCompositeOperation = "copy";
-      adjustingLayer.context.globalAlpha = 1.0;
-      adjustingLayer.context.drawImage( sourceImage, 0, 0 );
-      const finalURL = adjustingLayer.canvas.toDataURL();
-      adjustingLayer.context.restore();
-      flagLayerTextureChanged( adjustingLayer, null, true );
-      
-      Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
-      colorAdjustToolOptionsRow.querySelectorAll( ".number-slider" ).forEach( s => s.setValue( 0 ) );
-
-      //add undo record
-      const oldImg = new Image(),
-        newImg = new Image();
-      oldImg.src = sourceURL;
-      newImg.src = finalURL;
-
-      const historyEntry = {
-        targetLayer: adjustingLayer,
-        oldImg,
-        newImg,
-        undo: () => {
-          historyEntry.targetLayer.context.save();
-          historyEntry.targetLayer.context.globalCompositeOperation = "copy";
-          historyEntry.targetLayer.context.globalAlpha = 1.0;
-          //while it is technically possible to miss timing here, it's probably nbd
-          historyEntry.targetLayer.context.drawImage( historyEntry.oldImg, 0, 0 );
-          historyEntry.targetLayer.context.restore();
-          flagLayerTextureChanged( historyEntry.targetLayer, null, true );
-        },
-        redo: () => {
-          historyEntry.targetLayer.context.save();
-          historyEntry.targetLayer.context.globalCompositeOperation = "copy";
-          historyEntry.targetLayer.context.globalAlpha = 1.0;
-          historyEntry.targetLayer.context.drawImage( historyEntry.newImg, 0, 0 );
-          historyEntry.targetLayer.context.restore();
-          flagLayerTextureChanged( historyEntry.targetLayer, null, true );
-        },
-      };
-      recordHistoryEntry( historyEntry );
-
-      loadSourceImageFromLayer( adjustingLayer );
-      
-    }
-
-    //the saturation slider
-    {
-      const saturationSlider = UI.make.numberSlider({
-        label: "Saturation", slideMode: "contain-range",
-        value: 0, min: -1, max: 1, step: 0.01,
-      });
-      saturationSlider.classList.add( "saturation-slider" );
-      saturationSlider.onupdate = v => ( colorAdjustments.saturation = v, updateColorAdjustPreview() );
-      colorAdjustToolOptionsRow.appendChild( saturationSlider );
-    }
-    
-    //the contrast slider
-    {
-      const contrastSlider = UI.make.numberSlider({
-        label: "Contrast", slideMode: "contain-range",
-        value: 0, min: -1, max: 1, step: 0.01,
-      });
-      contrastSlider.classList.add( "contrast-slider" );
-      contrastSlider.onupdate = v => ( colorAdjustments.contrast = v, updateColorAdjustPreview() );
-      colorAdjustToolOptionsRow.appendChild( contrastSlider );
-    }
-
-    //the brightness slider
-    {
-      const brightnessSlider = UI.make.numberSlider({
-        label: "Brightness", slideMode: "contain-range",
-        value: 0, min: -1, max: 1, step: 0.01,
-      });
-      brightnessSlider.classList.add( "brightness-slider" );
-      brightnessSlider.onupdate = v => ( colorAdjustments.brightness = v, updateColorAdjustPreview() );
-      colorAdjustToolOptionsRow.appendChild( brightnessSlider );
-    }
-
-    //the hue slider
-    {
-      const hueSlider = UI.make.numberSlider({
-        label: "Hue", slideMode: "contain-range",
-        value: 0, min: 0, max: 1, step: 0.01,
-      });
-      hueSlider.classList.add( "hue-slider" );
-      hueSlider.onupdate = v => ( colorAdjustments.hue = v, updateColorAdjustPreview() );
-      colorAdjustToolOptionsRow.appendChild( hueSlider );
-    }
-
-    //the invert slider
-    {
-      const invertSlider = UI.make.numberSlider({
-        label: "Invert", slideMode: "contain-range",
-        value: 0, min: 0, max: 1, step: 0.01,
-      });
-      invertSlider.classList.add( "Invert-slider" );
-      invertSlider.onupdate = v => ( colorAdjustments.invert = v, updateColorAdjustPreview() );
-      colorAdjustToolOptionsRow.appendChild( invertSlider );
-    }
-    
-    //the apply button
-    {
-      const applyButton = document.createElement( "div" );
-      applyButton.classList.add( "asset-button-text", "round-toggle", "long", "on" );
-      const buttonText = document.createElement( "div" );
-      buttonText.classList.add( "button-text" );
-      buttonText.textContent = "Apply";
-      applyButton.appendChild( buttonText );
-      UI.registerElement(
-        applyButton,
-        {
-          onclick: () => {
-            finalizeColorAdjust();
-          },
-        },
-        { tooltip: [ "Apply Color Adjustments", "below", "to-left-of-center" ] }
-      );
-      colorAdjustToolOptionsRow.appendChild( applyButton );
-    }
-
-  }
-
-  //the flood fill tool options
-  {
-    const floodFillOptionsRow = document.createElement( "div" );
-    floodFillOptionsRow.classList.add( "flex-row", "hidden", "animated" );
-    floodFillOptionsRow.id = "flood-fill-tools-options-row";
-    uiContainer.appendChild( floodFillOptionsRow );
-    UI.registerElement(
-      floodFillOptionsRow,
-      {
-        updateContext: () => {
-          if( uiSettings.activeTool === "flood-fill" ) {
-            if( selectedLayer?.layerType === "paint" ) {
-              floodFillOptionsRow.classList.remove( "hidden" );
-              const colorWell = document.querySelector( ".paint-tools-options-color-well" );
-              colorWell.classList.remove( "hidden" );
-              floodFillOptionsRow.appendChild( colorWell );
-            } else {
-              uiSettings.setActiveTool( null );
-              floodFillOptionsRow.classList.add( "hidden" );
-            }
-          }
-          else {
-            floodFillOptionsRow.classList.add( "hidden" );
-          }
-        }
-      },
-      {
-        zIndex: 1000,
-      }
-    );
-
-    //uiSettings.toolsSettings["flood-fill"].erase = true | false
-    //the erase toggle
-    {
-      const eraseToggle = document.createElement( "div" );
-      //brushSelectBrowseButton.classList.add( "asset-browser-button" );
-      eraseToggle.classList.add( "flood-fill-options-erase-toggle", "round-toggle", "on" );
-      UI.registerElement(
-        eraseToggle,
-        {
-          onclick: () => {
-            let erasing = uiSettings.toolsSettings["flood-fill"].erase;
-            erasing = ! erasing;
-            uiSettings.toolsSettings["flood-fill"].erase = erasing;
-            if( erasing === true ) eraseToggle.classList.add( "on" );
-            if( erasing === false ) eraseToggle.classList.remove( "on" );
-          },
-          updateContext: () => {
-            if( uiSettings.toolsSettings["flood-fill"].erase === true ) eraseToggle.classList.add( "on" );
-            else eraseToggle.classList.remove( "on" );
-          }
-        },
-        { tooltip: [ "Flood Erase Mode", "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      floodFillOptionsRow.appendChild( eraseToggle );
-    }
-    //vertical-spacer
-    //need a toggle for area vs. color
-    //uiSettings.toolsSettings["flood-fill"].floodTarget = "area" | "color"
-    {
-      const colorToggle = document.createElement( "div" );
-      //brushSelectBrowseButton.classList.add( "asset-browser-button" );
-      colorToggle.classList.add( "flood-fill-options-color-toggle", "round-toggle", "on" );
-      UI.registerElement(
-        colorToggle,
-        {
-          onclick: () => {
-            let current = uiSettings.toolsSettings["flood-fill"].floodTarget;
-
-            if( current === "area" ) current = "color";
-            else current = "area";
-
-            uiSettings.toolsSettings["flood-fill"].floodTarget = current;
-
-            if( current === "area" ) colorToggle.classList.remove( "on" );
-            if( current === "color" ) colorToggle.classList.add( "on" );
-          },
-          updateContext: () => {
-            let current = uiSettings.toolsSettings["flood-fill"].floodTarget;
-            if( current === "area" ) colorToggle.classList.remove( "on" );
-            if( current === "color" ) colorToggle.classList.add( "on" );
-          }
-        },
-        { tooltip: [ "Flood Color Instead of Area", "below", "to-right-of-center" ], zIndex:10000, }
-      );
-      floodFillOptionsRow.appendChild( colorToggle );
-    }
-    //vertical-spacer
-    //slider for tolerance
-    {
-      const toleranceSlider = UI.make.numberSlider({
-        label: "Tolerance", slideMode: "contain-step",
-        value: uiSettings.toolsSettings["flood-fill"].tolerance, min: 0, max: 1, step: 0.01
-      });
-      toleranceSlider.classList.add( "flood-fill-options-tolerance-slider" );
-      toleranceSlider.onend = tolerance => uiSettings.toolsSettings["flood-fill"].tolerance = tolerance;
-      floodFillOptionsRow.appendChild( toleranceSlider ); 
-    }
-    //slider for padding
-    {
-      const paddingSlider = UI.make.numberSlider({
-        label: "Padding", slideMode: "contain-step",
-        value: uiSettings.toolsSettings["flood-fill"].padding, min: 0, max: 10, step: 0.1
-      });
-      paddingSlider.classList.add( "flood-fill-options-padding-slider" );
-      paddingSlider.onend = padding => uiSettings.toolsSettings["flood-fill"].padding = padding;
-      floodFillOptionsRow.appendChild( paddingSlider ); 
-    }
-
-    //the colorwell is here, but it's swiped from the paint tools
 
   }
 
@@ -5686,7 +6436,7 @@ function setupUI() {
                 //Generation results can't be undone
                 const image = result[ "generated-image" ];
                 if( image.width !== selectedLayer.w || image.height !== selectedLayer.h )
-                  cropLayerSize( selectedLayer, image.width, image.height );
+                  cropLayerSizeAndRecordUndo( selectedLayer, image.width, image.height );
                 selectedLayer.context.drawImage( result[ "generated-image" ], 0, 0 );
                 const frame = makeLayerFrame( selectedLayer );
                 selectedLayer.currentFrameIndex = selectedLayer.frames.push( frame ) - 1;
@@ -5697,7 +6447,7 @@ function setupUI() {
               else if( result[ "generated-images" ] ) {
                 for( const image of result[ "generated-images" ] ) {
                   if( image.width !== selectedLayer.w || image.height !== selectedLayer.h )
-                    cropLayerSize( selectedLayer, image.width, image.height );
+                    cropLayerSizeAndRecordUndo( selectedLayer, image.width, image.height );
                   selectedLayer.context.drawImage( result[ "generated-image" ], 0, 0 );
                   const frame = makeLayerFrame( selectedLayer );
                   selectedLayer.currentFrameIndex = selectedLayer.frames.push( frame ) - 1;
@@ -6542,12 +7292,29 @@ function setupUI() {
   const debugInfoElement = uiContainer.appendChild( document.createElement( "div" ) );
   debugInfoElement.id = "console";
 
+  //the generation history AKA framesline
+  {
+    //only one layer influences at a time
+    //it's a row of dots
+    //one selected dot has a marquee with options
+    const framesline = document.createElement( "div" );
+    framesline.id = "framesline";
+  }
+
+  //the timeline
+  {
+    //duplicate of full layers stack???
+    //isn't it just one scrolling line with droppable cell targets?
+    const timeline = document.createElement( "div" );
+    timeline.id = "timeline";
+  }
+
   //undo/redo
   {
-    const undoRedoRow = document.createElement( "div" );
-    undoRedoRow.classList.add( "flex-row" );
-    undoRedoRow.id = "undo-redo-row";
-    uiContainer.appendChild( undoRedoRow );
+    const bottomLeftRow = document.createElement( "div" );
+    bottomLeftRow.classList.add( "flex-row" );
+    bottomLeftRow.id = "bottom-left-row";
+    uiContainer.appendChild( bottomLeftRow );
     //undo button
     {
       const undoButton = document.createElement( "div" );
@@ -6570,7 +7337,7 @@ function setupUI() {
         },
         { tooltip: [ "Undo", "above", "to-right-of-center" ] }
       );
-      undoRedoRow.appendChild( undoButton );
+      bottomLeftRow.appendChild( undoButton );
     }
     //redo button
     {
@@ -6594,7 +7361,87 @@ function setupUI() {
         },
         { tooltip: [ "Redo", "above", "to-right-of-center" ] }
       );
-      undoRedoRow.appendChild( redoButton );
+      bottomLeftRow.appendChild( redoButton );
+    }
+    //gen history button
+    {
+      const genHistoryButton = document.createElement( "div" );
+      genHistoryButton.classList.add( "round-toggle", "unavailable", "unimplemented", "animated" );
+      genHistoryButton.id = "gen-history-button";
+      UI.registerElement(
+        genHistoryButton,
+        {
+          onclick: ()=>{
+            if( animationTimelineButton.classList.contains( "unimplemented" ) ) return;
+            const framesline = document.querySelector( "#framesline" )
+            if( framesline.classList.contains( "hidden" ) ) {
+              framesline.remove( "hidden" );
+              UI.addContext( "generation-history-visible" );
+            }
+            else {
+              framesline.add( "hidden" );
+              UI.deleteContext( "generation-history-visible" );
+            }},
+          updateContext: context => {
+            if( genHistoryButton.classList.contains( "unimplemented" ) ) {
+              genHistoryButton.classList.add( "unavailable" );
+              genHistoryButton.classList.remove( "on" );
+              genHistoryButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Generation History" + ((selectedLayer?.layerType==="generative") ? "" : " [Select generative layer to view]");
+              return;
+            }
+
+            if( selectedLayer?.layerType === "generative" ) {
+              genHistoryButton.classList.remove( "unavailable" );
+              if( context.has( "generation-history-visible" ) )
+                genHistoryButton.classList.add( "on" );
+              else genHistoryButton.classList.remove( "on" );
+            }
+            else {
+              genHistoryButton.classList.remove( "on" );
+              genHistoryButton.classList.add( "unavailable" );
+            }
+          }
+        },
+        { tooltip: [ "!Unimplemented! Generation History", "above", "to-right-of-center" ] }
+      );
+      bottomLeftRow.appendChild( genHistoryButton );
+    }
+    //animation timeline button
+    {
+      const animationTimelineButton = document.createElement( "div" );
+      animationTimelineButton.classList.add( "round-toggle", "unavailable", "unimplemented", "animated" );
+      animationTimelineButton.id = "animation-timeline-button";
+      UI.registerElement(
+        animationTimelineButton,
+        {
+          onclick: ()=>{
+            if( animationTimelineButton.classList.contains( "unimplemented" ) ) return;
+            const timeline = document.querySelector( "#timeline" )
+            if( timeline.classList.contains( "hidden" ) ) {
+              timeline.remove( "hidden" );
+              UI.addContext( "animation-timeline-visible" );
+            }
+            else {
+              timeline.add( "hidden" );
+              UI.deleteContext( "animation-timeline-visible" );
+            }
+          },
+          updateContext: context => {
+            if( animationTimelineButton.classList.contains( "unimplemented" ) ) {
+              animationTimelineButton.classList.add( "unavailable" );
+              animationTimelineButton.classList.remove( "on" );
+              animationTimelineButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Animation Timeline";
+              return;
+            }
+            animationTimelineButton.classList.remove( "unavailable" );
+            if( context.has( "animation-timeline-visible" ) )
+              animationTimelineButton.classList.add( "on" );
+            else animationTimelineButton.classList.remove( "on" );
+          }
+        },
+        { tooltip: [ "!Unimplemented! Animation Timeline", "above", "to-right-of-center" ] }
+      );
+      bottomLeftRow.appendChild( animationTimelineButton );
     }
   }
 
@@ -6665,8 +7512,8 @@ function setupUI() {
         },
       }, { zIndex: 10000 } );
 
+      //the generative layer add button
       {
-        //add the generative layer add button
         const addGenerativeLayerButton = addLayersPanel.appendChild( document.createElement( "div" ) );
         addGenerativeLayerButton.classList.add( "rounded-line-button", "animated" );
         addGenerativeLayerButton.appendChild( new Image() ).src = "icon/magic.png";
@@ -6691,8 +7538,8 @@ function setupUI() {
       //add a spacer
       addLayersPanel.appendChild( document.createElement( "div" ) ).className = "spacer";
 
+      //the paint layer add button
       {
-        //add the paint layer add button
         const addPaintLayerButton = addLayersPanel.appendChild( document.createElement( "div" ) );
         addPaintLayerButton.classList.add( "rounded-line-button", "animated" );
         addPaintLayerButton.appendChild( new Image() ).src = "icon/brush.png";
@@ -6717,8 +7564,35 @@ function setupUI() {
       //add a spacer
       addLayersPanel.appendChild( document.createElement( "div" ) ).className = "spacer";
 
+      //add vector layer button
       {
-        //add add text layer button
+        const addVectorLayerButton = addLayersPanel.appendChild( document.createElement( "div" ) );
+        addVectorLayerButton.classList.add( "rounded-line-button", "animated", "unimplemented" );
+        addVectorLayerButton.appendChild( new Image() ).src = "icon/path.png";
+        addVectorLayerButton.appendChild( document.createElement("span") ).textContent = "Add Vector Layer";
+        UI.registerElement( addVectorLayerButton, {
+          onclick: () => {
+            addVectorLayerButton.classList.add( "pushed" );
+            setTimeout( () => addVectorLayerButton.classList.remove( "pushed" ), UI.animationMS );
+            //addCanvasLayer( "vector" );
+            UI.deleteContext( "add-layers-panel-visible" );
+            console.error( "Vector layer unimplemented." );
+          },
+          updateContext: context => {
+            if( context.has( "add-layers-panel-visible" ) ) addVectorLayerButton.uiActive = true;
+            else addVectorLayerButton.uiActive = false;
+          }
+        }, { 
+          tooltip: [ "!Unimplemented! Add Vector Layer", "to-left", "vertical-center" ],
+          zIndex: 11000,
+        } );
+      }
+
+      //add a spacer
+      addLayersPanel.appendChild( document.createElement( "div" ) ).className = "spacer";
+
+      //add text layer button
+      {
         const addTextLayerButton = addLayersPanel.appendChild( document.createElement( "div" ) );
         addTextLayerButton.classList.add( "rounded-line-button", "animated", "unimplemented" );
         addTextLayerButton.appendChild( new Image() ).src = "icon/text.png";
@@ -6744,8 +7618,8 @@ function setupUI() {
       //add a spacer
       addLayersPanel.appendChild( document.createElement( "div" ) ).className = "spacer";
 
+      //add pose layer button
       {
-        //add add pose layer button
         const addPoseLayerButton = addLayersPanel.appendChild( document.createElement( "div" ) );
         addPoseLayerButton.classList.add( "rounded-line-button", "animated" );
         addPoseLayerButton.appendChild( new Image() ).src = "icon/rig.png";
@@ -6770,8 +7644,8 @@ function setupUI() {
       //add a spacer
       addLayersPanel.appendChild( document.createElement( "div" ) ).className = "spacer";
 
+      //the import image button
       {
-        //add the import image button
         const importImageButton = addLayersPanel.appendChild( document.createElement( "div" ) );
         importImageButton.classList.add( "rounded-line-button", "animated" );
         importImageButton.appendChild( new Image() ).src = "icon/picture.png";
@@ -7813,6 +8687,8 @@ function saveJSON() {
       nodeUplinks,
 
       rig,
+      textInfo,
+      vectors,
 
       w, h,
       topLeft, topRight, bottomLeft, bottomRight,
@@ -7833,6 +8709,8 @@ function saveJSON() {
       opacity,
 
       rig,
+      textInfo,
+      vectors,
 
       generativeSettings,
       generativeControls,
@@ -7982,6 +8860,8 @@ function loadJSON() {
             nodeUplinks,
 
             rig,
+            textInfo,
+            vectors,
             
             w, h,
             topLeft, topRight, bottomLeft, bottomRight,
@@ -8009,6 +8889,8 @@ function loadJSON() {
           newLayer.nodeUplinks = new Set( nodeUplinks );
 
           newLayer.rig = rig;
+          newLayer.textInfo = textInfo;
+          newLayer.vectors = vectors;
 
           newLayer.w = w;
           newLayer.h = h;
@@ -8177,8 +9059,9 @@ const UI = {
       }
     },
     numberSlider: ( {
-      label="", value=0, min=0, max=1, step=0.1, slideMode="contain-range",
-      onstart=()=>{}, onupdate=()=>{}, onend=()=>{}
+      label="", value=0, min=0, max=1, step=0.1, slideMode="contain-range", wrap=false,
+      onstart=()=>{}, onupdate=()=>{}, onend=()=>{},
+      bindingsName="",
     } ) => {
 
       const sliderElement = document.createElement( "div" );
@@ -8217,6 +9100,9 @@ const UI = {
 
       let startingNumber, adjustmentScale;
 
+      if( bindingsName )
+        console.error( "Number slider keyboard bindings unimplemented." );
+
       UI.registerElement(
         sliderElement,
         {
@@ -8253,7 +9139,11 @@ const UI = {
             if( isClick === false ) {
               const adjustment = dx * adjustmentScale;
               let number = startingNumber + adjustment;
-              number = Math.max( min, Math.min( max, number ) );
+              if( wrap === false ) number = Math.max( min, Math.min( max, number ) );
+              if( wrap === true ) {
+                while( number < min ) number += Math.abs( max - min );
+                while( number > max ) number -= Math.abs( max - min );
+              }
               number = parseInt( number / step ) * step;
               value = number;
               numberPreview.showValue();
@@ -8265,14 +9155,22 @@ const UI = {
                 if( px < 0.25 ) {
                   //clicked left of input, decrement
                   value -= step;
-                  value = Math.max( min, Math.min( max, value ) );
+                  if( wrap === false ) number = Math.max( min, Math.min( max, number ) );
+                  if( wrap === true ) {
+                    while( number < min ) number += Math.abs( max - min );
+                    while( number > max ) number -= Math.abs( max - min );
+                  }
                   numberPreview.showValue();
                   sliderElement.onend( value );
                 }
                 else if( px > 0.75 ) {
                   //clicked right of input, increment
                   value += step;
-                  value = Math.max( min, Math.min( max, value ) );
+                  if( wrap === false ) number = Math.max( min, Math.min( max, number ) );
+                  if( wrap === true ) {
+                    while( number < min ) number += Math.abs( max - min );
+                    while( number > max ) number -= Math.abs( max - min );
+                  }
                   numberPreview.showValue();
                   sliderElement.onend( value );
                 }
@@ -8282,7 +9180,11 @@ const UI = {
                     value,min,max,step,
                     onapply: v => {
                       value = v;
-                      value = Math.max( min, Math.min( max, value ) );
+                      if( wrap === false ) value = Math.max( min, Math.min( max, value ) );
+                      if( wrap === true ) {
+                        while( value < min ) value += Math.abs( max - min );
+                        while( value > max ) value -= Math.abs( max - min );
+                      }
                       numberPreview.showValue();
                       sliderElement.onend( value );
                     }
@@ -8305,6 +9207,8 @@ const UI = {
         { tooltip: [ '<img src="icon/arrow-left.png"> Drag to Adjust ' + label + ' <img src="icon/arrow-right.png">', "below", "to-right-of-center" ], zIndex:10000, }
       );
 
+      sliderElement.increase = () => console.error( "Slider increase unimplemented." );
+      sliderElement.decrease = () => console.error( "Slider decrease unimplemented." );
       sliderElement.setLabel = label => {
         sliderElement.querySelector( ".number-slider-label" ).textContent = label;
         sliderElement.querySelector( ".tooltip" ).innerHTML = '<img src="icon/arrow-left.png"> Drag to Adjust ' + label + ' <img src="icon/arrow-right.png">';
@@ -8619,26 +9523,46 @@ const startHandler = p => {
             //check if one of our points is inside the selected layer, and disable transform if not
             if( uiSettings.activeTool === "transform" ) {
               const point = [cursor.current.x,cursor.current.y,1];
-              let pointInSelectedLayer = testPointsInLayer( selectedLayer, [point], true );
-    
-              if( pointInSelectedLayer ) {
+
+              //collect transforming layers
+              const layersToTransform = [];
+              if( batchedLayers.size ) {
+                const transformableChildren = [];
+                for( const layer of batchedLayers ) {
+                  if( layer.layerType === "group" ) continue;
+                  transformableChildren.push( layer );
+                }
+                layersToTransform.push( ...transformableChildren );
+              }
+              else if( selectedLayer?.layerType === "group" ) {
+                const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
+                const transformableChildren = [];
+                for( const layer of groupChildren ) {
+                  if( layer.layerType === "group" ) continue;
+                  transformableChildren.push( layer );
+                }
+                layersToTransform.push( ...transformableChildren );
+              }
+              else if( selectedLayer ) {
+                layersToTransform.push( selectedLayer );
+              }
+
+              console.log( layersToTransform, batchedLayers.size )
+
+              let foundPointInSelectedLayer = false;
+              for( const layer of layersToTransform ) {
+                if( testPointsInLayer( layer, [point], true ) ) {
+                  foundPointInSelectedLayer = true;
+                  break;
+                }
+              }
+
+              if( foundPointInSelectedLayer ) {
                 //activate transform
                 uiSettings.toolsSettings.transform.current = true;
-
-                //collect transforming layers
                 uiSettings.toolsSettings.transform.transformingLayers.length = 0;
-                if( selectedLayer.layerType === "group" ) {
-                  const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
-                  const transformableChildren = [];
-                  for( const layer of groupChildren ) {
-                    if( layer.layerType === "group" ) continue;
-                    transformableChildren.push( layer );
-                  }
-                  uiSettings.toolsSettings.transform.transformingLayers.push( ...transformableChildren );
-                }
-                else {
-                  uiSettings.toolsSettings.transform.transformingLayers.push( selectedLayer );
-                }
+                uiSettings.toolsSettings.transform.transformingLayers.push( ...layersToTransform );
+
 
                 //get layer(s) center
                 if( cursor.mode === "rotate" || cursor.mode === "zoom" ) {
@@ -8723,6 +9647,14 @@ const startHandler = p => {
           if( pointInSelectedLayer ) {
             uiSettings.toolsSettings.transform.current = true;
             uiSettings.toolsSettings.transform.transformingLayers.length = 0;
+            if( batchedLayers.size ) {
+              const transformableChildren = [];
+              for( const layer of batchedLayers ) {
+                if( layer.layerType === "group" ) continue;
+                transformableChildren.push( layer );
+              }
+              uiSettings.toolsSettings.transform.transformingLayers.push( ...transformableChildren );
+            }
             if( selectedLayer.layerType === "group" ) {
               const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
               const transformableChildren = [];
@@ -8989,6 +9921,7 @@ function updateCycle( t ) {
         layerTransform.pan.x = cursor.current.x - cursor.origin.x;
         layerTransform.pan.y = cursor.current.y - cursor.origin.y;
         mat( 1 , 0 , layerTransform.pan.x , layerTransform.pan.y , layerTransformMatrices.moving );
+        UI.updateView();
       }
   
       if( cursor.mode === "zoom" ) {
@@ -9001,6 +9934,7 @@ function updateCycle( t ) {
         const d = Math.sqrt( dx**2 + dy**2 );
         layerTransform.zoom = d / layerTransform.initialZoomLength;
         mat( layerTransform.zoom , 0 , 0 , 0 , layerTransformMatrices.moving );
+        UI.updateView();
       }
   
       if( cursor.mode === "rotate" ) {
@@ -9013,6 +9947,7 @@ function updateCycle( t ) {
   
         layerTransform.angle = Math.atan2( dy , dx ) + layerTransform.initialAngleOffset;
         mat( 1 , layerTransform.angle , 0 , 0 , layerTransformMatrices.moving );
+        UI.updateView();
       }
     }
     else {
@@ -10468,7 +11403,7 @@ function finalizeLayerTransform() {
   layerTransform.initialAngleOffset = 0;
   layerTransform.initialZoomLength = 0;
 
-  if( selectedLayer.layerType === "group" )
+  if( selectedLayer?.layerType === "group" )
     updateLayerGroupCoordinates( selectedLayer );
   
   const historyEntry = {
