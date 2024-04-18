@@ -2,7 +2,7 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (V0.1-Alpha)
+# ParrotLUX (Version: 2024.04.18-1-alpha)
 A Painting App for Open-Source AI
 
 This app is currently in Alpha version. Expect bugs and missing features. Tuturials and documentation will be added soon.
@@ -19,6 +19,23 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 (*Pen pressure is unavailable on Windows.)
 
 (It may also work on MacOS and iOS. Untested.)
+
+# New Features in Version 2024.04.18-1-alpha
+
+## Stable Diffusion 3 Support
+
+<p align="center" width="100%"><img src="img/2024.04.18-alpha-1.jpg"></p>
+<p align="center" width="100%">Via the StabilityAI API. Includes img2img and txt2img. APIKey required. <i>(Install APIKey in settings.)</i></p>
+
+## Tightened User Interface and New Icons
+
+<p align="center" width="100%"><img src="img/2024.04.18-alpha-2.jpg"></p>
+<p align="center" width="100%">The user interface now fits on smaller screens without zooming out. Brush select now has an icon. All canvas tools have moved to one place. Erase, blend, and mask now have easy-to-read icons. <i>(Bugs with number sliders, element sizes, and phone-screen-sized overflows to be fixed ASAP.)></i></p>
+
+## Select Multiple Layers
+
+<p align="center" width="100%"><img src="img/2024.04.18-alpha-3.jpg"></p>
+<p align="center" width="100%">Use the checkbox in the lower-right. Drag multiple layers to groups, transform multiple layers, paint on multiple layers, and color adjust multiple layers at once. <i>(This feature has tons of known bugs to be fixed ASAP.)</i></p>
 
 # Installation
 

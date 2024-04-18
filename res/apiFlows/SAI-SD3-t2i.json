@@ -1,0 +1,150 @@
+{
+  "apiFlowName": "SAI SD3 txt2img",
+  "apiFlowType": "generative",
+  "outputs": [
+    {
+      "outputName": "generated-image",
+      "outputType": "image",
+      "outputResultPath": [
+        "sai-sd3",
+        "generated-image"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "Prompt",
+      "controlType": "text",
+      "controlValue": "Awesome artwork of a wizard on the top of a mountain. He's creating the big text \"Stable Diffusion 3 API\" with magic, magic text, at dawn, sunrise. The text is made out of magical energy.",
+      "controlPath": [
+        "sai-sd3",
+        "api",
+        "prompt"
+      ]
+    },
+    {
+      "controlName": "Model",
+      "controlType": "enum",
+      "controlOptions": [
+        {
+          "name": "SD3",
+          "value": "sd3"
+        },
+        {
+          "name": "SD3 Turbo",
+          "value": "sd3-turbo"
+        }
+      ],
+      "controlValue": "sd3-turbo",
+      "controlPath": [
+        "sai-sd3",
+        "api",
+        "model"
+      ]
+    },
+    {
+      "controlName": "Aspect",
+      "controlType": "enum",
+      "controlOptions": [
+        {
+          "name": "1:1",
+          "value": "1:1"
+        },
+        {
+          "name": "16:9",
+          "value": "16:9"
+        },
+        {
+          "name": "21:9",
+          "value": "21:9"
+        },
+        {
+          "name": "2:3",
+          "value": "2:3"
+        },
+        {
+          "name": "3:2",
+          "value": "3:2"
+        },
+        {
+          "name": "4:5",
+          "value": "4:5"
+        },
+        {
+          "name": "5:4",
+          "value": "5:4"
+        },
+        {
+          "name": "9:16",
+          "value": "9:16"
+        },
+        {
+          "name": "9:21",
+          "value": "9:21"
+        }
+      ],
+      "controlValue": "1:1",
+      "controlPath": [
+        "sai-sd3",
+        "api",
+        "aspect_ratio"
+      ]
+    },
+    {
+      "controlName": "SAIAPIKey",
+      "controlType": "apiFlowVariable",
+      "variableKey": "StabilityAI-APIKey",
+      "controlValue": "demo-apikey",
+      "controlPath": [
+        "controlValue"
+      ]
+    },
+    {
+      "controlName": "SAIAPIKey-Compose",
+      "controlType": "string-compose",
+      "composePaths": [
+        "Bearer ",
+        [
+          "SAIAPIKey",
+          "controlValue"
+        ]
+      ],
+      "controlPath": [
+        "sai-sd3",
+        "headers",
+        "authorization"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "sai-sd3",
+      "results": [
+        {
+          "resultName": "generated-image",
+          "resultType": "base64-image",
+          "resultPath": [
+            "image"
+          ]
+        }
+      ],
+      "host": "api.stability.ai",
+      "apiPath": "/v2beta/stable-image/generate/sd3",
+      "method": "POST",
+      "dataFormat": "FORM",
+      "convertDataImages": true,
+      "protocol": "https",
+      "api": {
+        "prompt": "Awesome artwork of a wizard on the top of a mountain. He's creating the big text \"Stable Diffusion 3 API\" with magic, magic text, at dawn, sunrise.",
+        "aspect_ratio": "1:1",
+        "mode": "text-to-image",
+        "model": "sd3-turbo",
+        "output_format": "png"
+      },
+      "headers": {
+        "authorization": "Bearer sk-7UKQFAk0SOP1y0r9Urs10w4kSKBbLH30MzIYHs1IUb0ozPob",
+        "Accept": "application/json"
+      }
+    }
+  ]
+}

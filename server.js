@@ -1,7 +1,5 @@
 "use strict";
 
-const {Readable} = require('stream');
-
 const { networkInterfaces, type } = require("os");
 
 const nets = networkInterfaces();
@@ -28,6 +26,7 @@ let displayAddress = ipAddress;
 ipAddress = "0.0.0.0";
 
 const http = require( 'http' );
+const https = require( 'https' );
 //const fs = require( 'fs/promises' ); //not available by default on linux??? IDK nodejs... :-/
 const fss = require( "fs" );
 const host = ipAddress;
@@ -171,6 +170,21 @@ const server = http.createServer(
         }
         if( method === 'POST' ) {
             //console.log( "incoming POST connection: " , method , url , headers );
+            if( url === '/test-log' ) {
+                let body = [];
+                request.on( "data", d => body.push( d ) );
+                request.on( "end", () => {
+                    const bodyString = body.join("");
+                    console.log( "Got incoming example post request: " );
+                    console.log( request.headers );
+                    console.log( bodyString );
+                    response.writeHead( 200 , {
+                        'Content-Type': 'application/json',
+                        //'Content-Length': Buffer.byteLength( responseString ) //added this on a whim, might break stuff!
+                    } );
+                    response.end( '{"success":"Logged request to console."}' );
+                } );
+            }
             if( url === '/api' ) {
                 let body = [];
                 request.on( "data", d => body.push( d ) )
@@ -201,6 +215,7 @@ const server = http.createServer(
                             path: json.path,
                             method: json.method === "POST" ? 'POST' : 'GET',
                         }
+                        if( ! json.port ) delete requestOptions.port;
 
                         if( json.method === "POST" && json.dataFormat === "JSON" ) {
                             requestOptions.headers = {
@@ -212,8 +227,6 @@ const server = http.createServer(
                         let responseData = [];
 
                         if( requestOptions.method === "POST" ) {
-                            //console.log( "POSTing to URL, ", `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}` );
-    
                             let postBinary;
                             if( json.dataFormat === "FORM" ) {
                                 /* 
@@ -260,6 +273,16 @@ const server = http.createServer(
                                             //alternatively: buffers.push( Buffer.from( `\n--${boundary}` ) );
 
                                         }
+                                        else if( typeof value === "string" ) {
+                                            const multipartDataLine = `\r\nContent-Disposition: form-data; name="${key}"\r\nContent-Type: text/plain;charset=utf-8\r\n\r\n${value}`;
+                                            buffers.push( Buffer.from( multipartDataLine ) );
+                                            buffers.push( Buffer.from( `\r\n--${boundary}`) );
+                                        }
+                                        else if( typeof value === "number" ) {
+                                            const multipartDataLine = `\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${value}`;
+                                            buffers.push( Buffer.from( multipartDataLine ) );
+                                            buffers.push( Buffer.from( `\r\n--${boundary}`) );
+                                        }
                                     }
                                 }
 
@@ -276,6 +299,10 @@ const server = http.createServer(
                                     "Content-Type": "multipart/form-data; boundary=" + boundary,
                                     //"Content-Type": "multipart/form-data"
                                     "Content-Length": streamableBuffer.length
+                                };
+
+                                for( const headerKey in json.headerData ) {
+                                    requestOptions.headers[ headerKey ] = json.headerData[ headerKey ];
                                 }
 
                                 //console.log( "Headers: ", requestOptions.headers )
@@ -286,8 +313,12 @@ const server = http.createServer(
 
                             }
 
-                            const postRequest = http.request(
-                                `http://${requestOptions.host}${requestOptions.port ? `:${json.port}` : ""}${json.path}`,
+                            console.log( json );
+                            console.log( `${( json.protocol === "https" ? "https" : "http" )}://${requestOptions.host}${requestOptions.port ? `:${json.port}` : ""}${json.path}` );
+                            console.log( requestOptions );
+
+                            const postRequest = ( json.protocol === "https" ? https : http ).request(
+                                `${( json.protocol === "https" ? "https" : "http" )}://${requestOptions.host}${requestOptions.port ? `:${json.port}` : ""}${json.path}`,
                                 requestOptions,
                                 forwardedResponse => {
                                     //forwardedResponse.setEncoding( "utf8" );
@@ -324,13 +355,12 @@ const server = http.createServer(
                         
                         if( requestOptions.method === "GET" ) {
                             //console.log( "GETing with options ", JSON.stringify( postOptions ) );
-                            //console.log( "GETing to URL, ", `http://${requestOptions.host}${request.port ? `:${json.port}` : ""}${json.path}` );
     
                             let getRequest;
 
                             try {
-                                getRequest = http.request(
-                                    `http://${requestOptions.host}${requestOptions.port ? `:${json.port}` : ""}${json.path}`,
+                                getRequest = ( json.protocol === "https" ? https : http ).request(
+                                    `${( json.protocol === "https" ? "https" : "http" )}://${requestOptions.host}${requestOptions.port ? `:${json.port}` : ""}${json.path}`,
                                     requestOptions,
                                     forwardedResponse => {
                                         //forwardedResponse.setEncoding( "utf8" );

@@ -3503,6 +3503,11 @@ let uiSettings = {
       "value": 6789,
       "permissions": ["Local Brushes Loader",],
     },
+    {
+      "key": "StabilityAI-APIKey",
+      "value": "",
+      "permissions": ["SAI SD3 txt2img","SAI SD3 img2img",],
+    },
   ],
 
   lastUsedAssets: {},
@@ -4792,6 +4797,7 @@ function setupUI() {
             uiSettings.toolsSettings.paint.setMode( "brush" );
             uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 0;
             uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha = 0;
+            UI.updateContext();
           }
           UI.registerElement(
             paintModeButton,
@@ -4823,6 +4829,7 @@ function setupUI() {
             uiSettings.toolsSettings.paint.setMode( "brush" );
             uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 0;
             uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha = 1;
+            UI.updateContext();
           }
           UI.registerElement(
             blendMode,
@@ -4854,6 +4861,7 @@ function setupUI() {
             uiSettings.toolsSettings.paint.setMode( "brush" );
             uiSettings.toolsSettings.paint.modeSettings.erase.eraseAmount = 1;
             uiSettings.toolsSettings.paint.modeSettings.blend.blendAlpha = 0;
+            UI.updateContext();
           }
           UI.registerElement(
             eraseMode,
@@ -6571,6 +6579,9 @@ function setupUI() {
         }
         apiKeysPanel.onclick = apiKeysPanel.removeBlur;
         apiKeysPanel.showApiKeys = () => {
+          //assuming we've just updated, persist
+          conserveSettings();
+          
           apiKeysPanel.innerHTML = "";
           //the add button
           {
@@ -8221,7 +8232,7 @@ function setupUIGenerativeControls( apiFlowName ) {
     //selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
 
     //make the element from the type
-    if( controlScheme.controlType === "asset" ) {
+    if( controlScheme.controlType === "asset" || controlScheme.controlType === "enum" ) {
       const assetSelectorButton = document.createElement( "div" );
       assetSelectorButton.classList.add( "asset-button-text", "round-toggle", "long", "on" );
       const controlElementLabel = document.createElement( "div" );
@@ -8230,17 +8241,25 @@ function setupUIGenerativeControls( apiFlowName ) {
       assetSelectorButton.appendChild( controlElementLabel );
       const buttonText = document.createElement( "div" );
       buttonText.classList.add( "button-text" );
-      buttonText.textContent = "↓ " + controlScheme.controlValue;
+      if( controlScheme.controlType === "enum" ) {
+        const selectedOption = controlScheme.controlOptions.find( o => o.value === controlScheme.controlValue );
+        buttonText.textContent = "↓ " + ( selectedOption.name || controlScheme.controlValue );
+      }
+      if( controlScheme.controlType === "asset" ) {
+        buttonText.textContent = "↓ " + controlScheme.controlValue;
+      }
       assetSelectorButton.appendChild( buttonText );
       //check if we have this asset library
-      if( ! assetsLibrary.hasOwnProperty( controlScheme.assetName ) ) {
-        //download the asset if we can
-        const assetAPI = apiFlows.find( a => ( (!a.isDemo) && a.apiFlowType === "asset" && a.assetLibraries.includes( controlScheme.assetName )) );
-        if( assetAPI ) {
-          if( apiExecutionQueue.find( q => q[ 0 ] === assetAPI.apiFlowName ) ) {
-            //already scheduled, hopefully will resolve before this button is clicked
-          } else {
-            executeAPICall( assetAPI.apiFlowName, {} );
+      if( controlScheme.controlType === "asset" ) {
+        if( ! assetsLibrary.hasOwnProperty( controlScheme.assetName ) ) {
+          //download the asset if we can
+          const assetAPI = apiFlows.find( a => ( (!a.isDemo) && a.apiFlowType === "asset" && a.assetLibraries.includes( controlScheme.assetName )) );
+          if( assetAPI ) {
+            if( apiExecutionQueue.find( q => q[ 0 ] === assetAPI.apiFlowName ) ) {
+              //already scheduled, hopefully will resolve before this button is clicked
+            } else {
+              executeAPICall( assetAPI.apiFlowName, {} );
+            }
           }
         }
       }
@@ -8250,10 +8269,13 @@ function setupUIGenerativeControls( apiFlowName ) {
           onclick: () => {
             const callback = asset => {
               buttonText.textContent = "↓ " + asset.name;
-              controlScheme.controlValue = asset.name;
-              updateControlValue( apiFlowName, controlScheme.controlName, asset.name );
-              //selectedLayer.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
-              //uiSettings.generativeControls[ apiFlowName ][ controlScheme.controlName ] = controlScheme.controlValue;
+              let selectedValue;
+              if( controlScheme.controlType === "asset" ) selectedValue = asset.name;
+              if( controlScheme.controlType === "enum" ) selectedValue = asset.value;
+              controlScheme.controlValue = selectedValue;
+              updateControlValue( apiFlowName, controlScheme.controlName, selectedValue );
+              
+              //update any of our down-stream controls that base their behavior on this asset
               const assetBasisControls = apiFlow.controls.filter( c => !!c.assetBasis );
               for( const basedControl of assetBasisControls ) {
                 for( const basis of basedControl.assetBasis ) {
@@ -8307,10 +8329,19 @@ function setupUIGenerativeControls( apiFlowName ) {
                 }
               }
             }
-            openAssetBrowser( assetsLibrary[ controlScheme.assetName ] || [], callback, controlScheme.assetName );
+            let assetsList = [], assetName;
+            if( controlScheme.controlType === "asset" ) {
+              assetsList = assetsLibrary[ controlScheme.assetName ] || [];
+              assetName = controlScheme.assetName;
+            }
+            if( controlScheme.controlType === "enum" ) {
+              assetsList = controlScheme.controlOptions;
+              assetName = controlScheme.controlName;
+            }
+            openAssetBrowser(  assetsList, callback, controlScheme.assetName );
           }
         },
-        { tooltip: [ "Select " + controlScheme.assetName, "below", "to-right-of-center" ], zIndex:10000, },
+        { tooltip: [ "Select " + ( controlScheme.assetName || controlScheme.controlName ), "below", "to-right-of-center" ], zIndex:10000, },
       );
       setupUIGenerativeControls.registeredControls.push( assetSelectorButton );
       controlsPanel.appendChild( assetSelectorButton );
@@ -11631,7 +11662,7 @@ const wait = delay => new Promise( land => setTimeout( land, delay ) );
 
 const apiExecutionQueue = [];
 
-const verboseAPICall = false;
+const verboseAPICall = true;
 async function executeAPICall( name, controlValues ) {
 
   if( verboseAPICall ) console.log( "Executing API call: ", name );
@@ -11882,8 +11913,12 @@ async function executeAPICall( name, controlValues ) {
             port: apiCall.port, //port: '7860',
             dataFormat: apiCall.dataFormat,
             convertDataImages: !!apiCall.convertDataImages,
-            apiData: apiCall.api
+            protocol: apiCall.protocol,
+            apiData: apiCall.api,
+            headerData: apiCall.headers
           }
+          if( ! apiCall.port ) delete postData.port;
+          if( ! apiCall.protocol ) delete postData.protocol;
           xhr.open( "POST", "/api" );
           if( resultSchemeExpectingRawFile ) xhr.responseType = "blob";
           //apiCall.api has been modified from controlValues, and is ready to send
