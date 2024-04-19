@@ -121,7 +121,7 @@
         "output_format": "png"
       },
       "headers": {
-        "authorization": "Bearer sk-7UKQFAk0SOP1y0r9Urs10w4kSKBbLH30MzIYHs1IUb0ozPob",
+        "authorization": "",
         "Accept": "application/json"
       }
     }

@@ -383,6 +383,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
   if( newLayer.layerType === "paint" ) newLayer.layerName = "Paint " + newLayer.layerName;
   if( newLayer.layerType === "generative" ) newLayer.layerName = "Gen " + newLayer.layerName;
   if( newLayer.layerType === "group" ) newLayer.layerName = newLayer.layerName.replace( "Layer", "Group" );
+  if( newLayer.layerType === "vector" ) newLayer.layerName = "Vector " + newLayer.layerName;
   if( newLayer.layerType === "text" ) newLayer.layerName = "Text " + newLayer.layerName;
   if( newLayer.layerType === "pose" ) newLayer.layerName = "Pose " + newLayer.layerName;
 
@@ -977,14 +978,17 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
               //(They can be flattened to paint layers though.)
 
               //sample this layer onto the lower layer
-              let previewLayer = getPreviewLayer();
-              sampleLayerInLayer( newLayer, lowerLayer, previewLayer );
+              //let previewLayer = getPreviewLayer();
+              //sampleLayerInLayer( newLayer, lowerLayer, previewLayer );
+              renderLayersIntoPointRect( lowerLayer, [ lowerLayer, newLayer ], [], 0, lowerLayer, [0,0,0,0], false, false );
 
               //merge the sampled area onto the lower layer
-              lowerLayer.context.save();
-              lowerLayer.context.globalAlpha = newLayer.opacity;
-              lowerLayer.context.drawImage( previewLayer.canvas, 0, 0 );
-              lowerLayer.context.restore();
+              if( false ) {
+                lowerLayer.context.save();
+                lowerLayer.context.globalAlpha = newLayer.opacity;
+                lowerLayer.context.drawImage( previewLayer.canvas, 0, 0 );
+                lowerLayer.context.restore();
+              }
               //flag the lower layer for GPU upload
               flagLayerTextureChanged( lowerLayer, null, false );
               //delete this upper layer from the stack
@@ -1086,6 +1090,90 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         { tooltip: [ "Merge Layer Down", "above", "to-left-of-center" ], zIndex:1000 }
       )
       layerButton.appendChild( mergeButton );
+    }
+
+    //the flatten button
+    {
+      const flattenButton = document.createElement( "div" );
+      flattenButton.classList.add( "layer-flatten-group-button", "layer-ui-button", "animated" );
+      UI.registerElement(
+        flattenButton,
+        {
+          onclick: () => {
+
+            console.error( "Group flatten is not dealing with frames!" );
+
+            updateLayerGroupComposite( newLayer );
+
+            const allFlattenedLayers = collectGroupedLayersAsFlatList( newLayer.layerId );
+
+            //get the layer indices
+            const flattenedLayersAndIndices = [];
+            for( let i=allFlattenedLayers.length-1; i>=0; i-- ) {
+              const layer = allFlattenedLayers[i];
+              const index = layersStack.layers.indexOf( layer );
+              flattenedLayersAndIndices.push( [layer,index] );
+            }
+
+            //sort from highest to lowest index for extraction from list
+            flattenedLayersAndIndices.sort( (a,b)=>b[1]-a[1] );
+            //extract our flattened layers from the list
+            for( const [,index] of flattenedLayersAndIndices )
+              layersStack.layers.splice( index, 1 );
+
+            //change our group to a paint layer
+            newLayer.layerType = "paint";
+
+            //add the layer preview
+            layerButton.appendChild( newLayer.canvas );
+
+            const historyEntry = {
+              flattenedGroupLayer: newLayer,
+              flattenedLayersAndIndices,
+              undo: () => {
+                //sort all extracted layers from lowest to highest index
+                historyEntry.flattenedLayersAndIndices.sort( (a,b)=>a[1]-b[1] );
+                //reinsert all flattened layers
+                for( const [layer,index] of historyEntry.flattenedLayersAndIndices )
+                  layersStack.layers.splice( index, 0, layer );
+                //change back to a group layer
+                historyEntry.flattenedGroupLayer.layerType = "group";
+                reorganizeLayerButtons();
+                UI.updateContext();
+                //remove the layer preview
+                historyEntry.flattenedGroupLayer.layerButton.removeChild( historyEntry.flattenedGroupLayer.canvas );
+              },
+              redo: () => {
+                //sort all extracted layers from lowest to highest index
+                historyEntry.flattenedLayersAndIndices.sort( (a,b)=>b[1]-a[1] );
+                //reinsert all flattened layers
+                for( const [,index] of historyEntry.flattenedLayersAndIndices )
+                  layersStack.layers.splice( index, 1 );
+                //change back to a paint layer
+                historyEntry.flattenedGroupLayer.layerType = "paint";
+                reorganizeLayerButtons();
+                UI.updateContext();
+                //add the layer preview
+                historyEntry.flattenedGroupLayer.layerButton.appendChild( historyEntry.flattenedGroupLayer.canvas );
+              }
+            }
+            recordHistoryEntry( historyEntry );
+
+            reorganizeLayerButtons();
+            UI.updateContext();
+          },
+          updateContext: () => {
+            let isVisible = true;
+            if( ! layerButton.classList.contains( "active" ) ) isVisible = false;
+            if( newLayer.layerType !== "group" ) isVisible = false;
+            if( isVisible === false ) flattenButton.classList.add( "hidden" );
+            else flattenButton.classList.remove( "hidden" );
+          }
+        },
+        { tooltip: [ "Flatten Group to Paint Layer", "above", "to-left-of-center" ], zIndex:1000 }
+      );
+      
+      layerButton.appendChild( flattenButton );
     }
 
     //add the convert to paint layer button
@@ -1977,34 +2065,36 @@ function composeLayersGPU( destinationLayer, layers, zoomScale=1, ignoreVisibili
   destinationLayer.canvas.height = height;
   destinationLayer.w = width;
   destinationLayer.h = height;
+
+  destinationLayer.topLeft = [minX,minY,1];
+  destinationLayer.topRight = [maxX,minY,1];
+  destinationLayer.bottomLeft = [minX,maxY,1];
+  destinationLayer.bottomRight = [maxX,maxY,1];
   
   //simple transform, load manually
-  const saveTransformMatrix = [ ..._transform ];
-  _transform.length = 0;
-  _transform.push(
-    zoomScale, 0, -minX,
-    0, zoomScale, -minY,
-    0, 0, 1
-  );
+  //const saveTransformMatrix = [ ..._transform ];
+  //_transform.length = 0;
+  //_transform.push(zoomScale, 0, -minX, 0, zoomScale, -minY, 0, 0, 1 );
 
   //render to the texture
-  renderLayers( visibleLayers, [], 0, destinationLayer, [0,0,0,0], false, false );
+  //renderLayers( visibleLayers, [], 0, destinationLayer, [0,0,0,0], false, false );
+  renderLayersIntoPointRect( destinationLayer, visibleLayers, [], 0, destinationLayer, [0,0,0,0], false, false );
 
   //restore our transform (probably not necessary, we trash this every cycle)
-  _transform.length = 0;
-  _transform.push( ...saveTransformMatrix );
-
-  console.log( "Width/height: ", width, height );
+  //_transform.length = 0;
+  //_transform.push( ...saveTransformMatrix );
 
   //prep our array
-  const composedData = new Uint8Array( width * height * 4 );
-  gl.readPixels( 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, composedData );
-
-  //transfer to the destination canvas
-  const writeCompose = destinationLayer.context.createImageData( width, height );
-  writeCompose.data.set( composedData );
-  destinationLayer.context.putImageData( writeCompose, 0, 0 );
+  //(pixels pulled in render function)
+  if( false ) {
+    const composedData = new Uint8Array( width * height * 4 );
+    gl.readPixels( 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, composedData );
   
+    //transfer to the destination canvas
+    const writeCompose = destinationLayer.context.createImageData( width, height );
+    writeCompose.data.set( composedData );
+    destinationLayer.context.putImageData( writeCompose, 0, 0 );  
+  }
 }
 
 function composeLayers( destinationLayer, layers, pixelScale=1, ignoreVisibility=false ) {
@@ -2641,7 +2731,11 @@ function Loop( t ) {
 
       getTransform();
 
-      renderLayers( visibleLayers, selectedGroupLayers, floatTime, null, [ 0.25,0.25,0.25, 1 ], true );
+      const screenPointRect = getScreenPointRect();
+
+      //renderLayers( visibleLayers, selectedGroupLayers, floatTime, null, [ 0.25,0.25,0.25, 1 ], true );
+      //renderLayersIntoPointRect( screenPointRect, visibleLayers, selectedGroupLayers, floatTime, null, [ 0.25,0.25,0.25, 1 ], true );
+      renderLayersIntoPointRect( screenPointRect, visibleLayers, selectedGroupLayers, floatTime, null, [ 0,0,0,0 ], true );
 
       //get the eyedropper color
       if( airInput.active ) {
@@ -2650,6 +2744,444 @@ function Loop( t ) {
       }
 
     }
+
+}
+
+function getScreenPointRect() {
+
+  if( ! getScreenPointRect.pointRect ) {
+    getScreenPointRect.pointRect = {
+      topLeft: [0,0,1],
+      topRight: [0,0,1],
+      bottomLeft: [0,0,1],
+      bottomRight: [0,0,1],
+    }
+  }
+
+  //get our inversion
+  _originMatrix[ 2 ] = -view.origin.x;
+  _originMatrix[ 5 ] = -view.origin.y;
+  _positionMatrix[ 2 ] = view.origin.x;
+  _positionMatrix[ 5 ] = view.origin.y;
+
+  mul3x3( viewMatrices.current , _originMatrix , _inverter );
+  mul3x3( _inverter , viewMatrices.moving , _inverter );
+  mul3x3( _inverter , _positionMatrix , _inverter );
+  inv( _inverter , _inverter );
+
+  const pointRect = getScreenPointRect.pointRect;
+  const w = gnv.width, h = gnv.height;
+
+  mul3x1( _inverter, [0,0,1], pointRect.topLeft );
+  mul3x1( _inverter, [w,0,1], pointRect.topRight );
+  mul3x1( _inverter, [0,h,1], pointRect.bottomLeft );
+  mul3x1( _inverter, [w,h,1], pointRect.bottomRight );
+
+  return pointRect;
+
+}
+
+function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleBorders, floatTime, targetLayer = null, backgroundRGBA = [0,0,0,0], showBorders = true, flipY = true ) {
+
+  //we need basically the code from samplelayerinlayer
+  //for every layer, we need to cast it to pointRect's space
+  //from there, we can calculate rotation and scale, but in this case that casting is all we need.
+  
+  //Note that the scale of our pointRect is independent of the canvas dims of our targetLayer (or screen)
+
+  //get our rectLayer's coordinate space
+  const origin = { x:pointRect.topLeft[0], y:pointRect.topLeft[1] },
+    xLeg = { x:pointRect.topRight[0] - origin.x, y: pointRect.topRight[1] - origin.y },
+    xLegLengthInverse = 1 / Math.sqrt( xLeg.x**2 + xLeg.y**2 ),
+    normalizedXLeg = { x:xLeg.x * xLegLengthInverse, y:xLeg.y * xLegLengthInverse },
+    yLeg = { x:pointRect.bottomLeft[0] - origin.x, y: pointRect.bottomLeft[1] - origin.y },
+    yLegLengthInverse = 1 / Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
+    normalizedYLeg = { x:yLeg.x * yLegLengthInverse, y:yLeg.y * yLegLengthInverse };
+  //console.log( origin.x, origin.y, xLeg.x, xLeg.y, xLegLengthInverse, normalizedXLeg.x, normalizedXLeg.y, yLeg.x, yLeg.y, yLegLengthInverse, normalizedYLeg.x, normalizedYLeg.y );
+
+  if( ! renderLayers.framebuffer ) {
+    renderLayers.readPixelsDest = new Uint8ClampedArray( 4 );
+    renderLayers.midFramebuffer = gl.createFramebuffer();
+    renderLayers.framebuffer = gl.createFramebuffer();
+    if( targetLayer === null ) {
+      renderLayers.width = gnv.width;
+      renderLayers.height = gnv.height;
+    } else {
+      renderLayers.width = targetLayer.w;
+      renderLayers.height = targetLayer.h;
+    }
+
+    {
+      renderLayers.blankTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.blankTexture );
+      const blankData = new Uint8ClampedArray( 4 * 4 );
+      blankData.fill( 255 );
+      gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, blankData );
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+    {
+      renderLayers.colorTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.colorTexture );
+      const blankData = new Uint8ClampedArray( 4 * 4 );
+      blankData.fill( 255 );
+      gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, blankData );
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+    {
+      renderLayers.backTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+     
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      // attach the texture as the first color attachment
+      //const attachmentPoint = gl.COLOR_ATTACHMENT0;
+      //gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
+  
+    }
+
+    //renderLayers.depthTexture = gl.createTexture();
+    
+    {
+      renderLayers.midTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+     
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+  }
+
+  gl.useProgram( glState.program );
+
+  //resize the back texture
+  let targetWidth = gnv.width,
+    targetHeight = gnv.height;
+  if( targetLayer !== null ) {
+    targetWidth = targetLayer.w;
+    targetHeight = targetLayer.h;
+  }
+  if( renderLayers.width !== targetWidth || renderLayers.height !== targetHeight ) {
+    renderLayers.width = targetWidth;
+    renderLayers.height = targetHeight;
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  }
+
+  
+  //No depth bound! :-O
+  //gl.bindTexture( gl.TEXTURE_2D, renderLayers.depthTexture );
+  //gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, renderLayers.depthTexture, level);
+
+  //clear both buffers
+  {
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+    // attach the back texture as the first color attachment
+    gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
+    const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
+    gl.viewport( 0, 0, targetWidth, targetHeight );
+    gl.clearColor( ...backgroundRGBA );
+    gl.clear( gl.COLOR_BUFFER_BIT );
+  }
+  {
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+    // attach the back texture as the first color attachment
+    gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.midFramebuffer );
+    const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.midTexture, level);
+    gl.viewport( 0, 0, targetWidth, targetHeight );
+    gl.clearColor( ...backgroundRGBA );
+    gl.clear( gl.COLOR_BUFFER_BIT );
+  }
+  
+  gl.disable( gl.DEPTH_TEST );
+  gl.disable( gl.BLEND );
+
+  gl.bindVertexArray(glState.vao);
+
+  let drewToMidTexture = false;
+  for( const layer of visibleLayers ) {
+
+    drewToMidTexture = !drewToMidTexture;
+
+    if( drewToMidTexture === false ) {
+      const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+      // attach the back texture as the first color attachment
+      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
+      gl.viewport( 0, 0, targetWidth, targetHeight );
+    }
+    if( drewToMidTexture === true ) {
+      const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+      // attach the back texture as the first color attachment
+      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.midFramebuffer );
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.midTexture, level);
+      gl.viewport( 0, 0, targetWidth, targetHeight );
+    }
+
+
+    const castPoints = {};
+    for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+      let [x,y] = layer[ pointName ];
+      //translate from origin
+      x -= origin.x; y -= origin.y;
+      //project on normals
+      let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
+      let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
+      //unnormalize
+      xProjection *= targetWidth * xLegLengthInverse;
+      yProjection *= targetHeight * yLegLengthInverse;
+      castPoints[ pointName ] = [ xProjection, yProjection, 1 ];
+    }
+
+    let xy = castPoints.topLeft,
+      xy2 = castPoints.topRight,
+      xy3 = castPoints.bottomLeft,
+      xy4 = castPoints.bottomRight;
+
+    if( uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && uiSettings.toolsSettings.transform.transformingLayers.includes( layer ) && ( cursor.mode !== "none" || pointers.count === 2 ) ) {
+      getLayerTransform();
+      let [x,y] = transformLayerPoint( xy ),
+        [x2,y2] = transformLayerPoint( xy2 ),
+        [x3,y3] = transformLayerPoint( xy3 ),
+        [x4,y4] = transformLayerPoint( xy4 );
+      xy = [x,y,1]; xy2 = [x2,y2,1]; xy3 = [x3,y3,1]; xy4 = [x4,y4,1];
+      layer.transform.transformingPoints.topLeft = [...xy];
+      layer.transform.transformingPoints.topRight = [...xy2];
+      layer.transform.transformingPoints.bottomLeft = [...xy3];
+      layer.transform.transformingPoints.bottomRight = [...xy4];
+    } 
+
+    //get the layer's physical size on-display
+    //(Not used until later, but must calculate before gl-transforming points)
+    let layerSizePixels;
+    {
+      const dx = xy2[0] - xy[0], dy = xy2[1] - xy[1];
+      layerSizePixels = Math.sqrt( dx**2 + dy**2 );
+    }
+
+    //convert that screenspace to GL space
+    const glOriginX = targetWidth/2, glOriginY = targetHeight/2;
+    for( const p of [xy,xy2,xy3,xy4] ) {
+      p[0] -= glOriginX; p[1] -= glOriginY;
+      p[0] /= glOriginX;
+      //We're flipping the y coordinate! OpenGL NDC space defines the bottom of the screen as -1 y, and the top as +1 y (center 0).
+      if( flipY === true ) p[1] /= -glOriginY;
+      else p[1] /= glOriginY;
+    }
+
+    //update the vertex data
+    //top-left triangle
+    glState.vertices[0] = xy[0]; glState.vertices[1] = xy[1];
+    glState.vertices[4] = xy2[0]; glState.vertices[5] = xy2[1];
+    glState.vertices[8] = xy3[0]; glState.vertices[9] = xy3[1];
+    //bottom-right triangle
+    glState.vertices[12] = xy2[0]; glState.vertices[13] = xy2[1];
+    glState.vertices[16] = xy4[0]; glState.vertices[17] = xy4[1];
+    glState.vertices[20] = xy3[0]; glState.vertices[21] = xy3[1];
+    //push the updated vertex data to the GPU
+    gl.bindBuffer( gl.ARRAY_BUFFER, glState.vertexBuffer );
+    gl.bufferData( gl.ARRAY_BUFFER, glState.vertices, gl.STREAM_DRAW );
+
+    //do I need to re-enable the vertex array??? Let's assume so, then try coding this out later
+    gl.enableVertexAttribArray( glState.xyuvInputIndex );
+    {
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( glState.xyuvInputIndex, size, dType, normalize, stride, offset );
+    }
+
+    //let's bind the layer's texture
+    gl.activeTexture( gl.TEXTURE0 + 0 );
+    gl.bindTexture( gl.TEXTURE_2D, layer.glTexture );
+    if( layer.layerType !== "group" && layer.textureChanged ) {
+      //let's re-upload the layer's texture when it's changed
+      const mipLevel = 0,
+      internalFormat = gl.RGBA,
+      //internalFormat = gl.RGBA16F,
+      srcFormat = gl.RGBA,
+      srcType = gl.UNSIGNED_BYTE;
+      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.canvas );
+      layer.textureChanged = false;
+    }
+    //point the layer's source image at texture 0
+    gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
+
+    //bind the layer's mask
+    gl.activeTexture( gl.TEXTURE0 + 1 );
+    gl.bindTexture( gl.TEXTURE_2D, layer.glMask );
+    if( layer.layerType !== "group" && layer.maskChanged ) {
+      //re-upload the layer's mask when it's changed
+      const mipLevel = 0,
+      internalFormat = gl.RGBA,
+      //internalFormat = gl.RGBA16F,
+      srcFormat = gl.RGBA,
+      srcType = gl.UNSIGNED_BYTE;
+      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, layer.maskCanvas );
+      layer.maskChanged = false;
+    }
+    //point the mask at texture 1
+    gl.uniform1i( gl.getUniformLocation( glState.program, "imgMask" ), 1 );
+
+    //bind the previous render result as the canvas
+    gl.activeTexture( gl.TEXTURE0 + 2 );
+    if( drewToMidTexture === false ) { gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture ); }
+    if( drewToMidTexture === true ) { gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture ); }
+    //point canvas at texture 2
+    gl.uniform1i( gl.getUniformLocation( glState.program, "canvas" ), 2 );
+
+
+    //set the layer's alpha
+    gl.uniform1f( glState.alphaInputIndex, getLayerOpacity( layer ) );
+    let maskVisibility = 0.0;
+    if( layer === selectedLayer && uiSettings.activeTool === "mask" && layer.maskInitialized )
+      maskVisibility = 0.5;
+    gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
+    gl.uniform1f( glState.timeIndex, floatTime );
+
+    let borderIsVisible = layer === selectedLayer;
+
+    //disable border while transform group to avoid recalculating coordinates every cycle (and visuals are confusing anyway)
+    if( layer.layerType === "group" && uiSettings.activeTool === "transform" && uiSettings.toolsSettings.transform.current === true && ( cursor.mode !== "none" || pointers.count === 2 ) )
+      borderIsVisible = false;
+
+    if( borderIsVisible === false && layersWithVisibleBorders.includes( layer ) )
+      borderIsVisible = true;
+
+    if( showBorders === false )
+      borderIsVisible = false;
+
+    gl.uniform1f( glState.borderVisibilityIndex, borderIsVisible ? 0.33 : 0.0 );
+    gl.uniform1f( glState.borderWidthIndex, 2.0 / layerSizePixels ); //2 pixel border width
+
+    {
+      //and draw our triangles
+      const primitiveType = gl.TRIANGLES,
+        structStartOffset = 0,
+        structCount = 6;
+      gl.drawArrays( primitiveType, structStartOffset, structCount );
+    }
+    
+    //blit from the current framebuffer to whichever texture we're not using
+    if( drewToMidTexture === false ) {
+      gl.bindFramebuffer( gl.READ_FRAMEBUFFER, renderLayers.framebuffer );
+      gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, renderLayers.midFramebuffer );
+      gl.blitFramebuffer( 0,0,targetWidth,targetHeight, 0,0,targetWidth,targetHeight, gl.COLOR_BUFFER_BIT, gl.NEAREST );
+    }
+    if( drewToMidTexture === true ) {
+      gl.bindFramebuffer( gl.READ_FRAMEBUFFER, renderLayers.midFramebuffer );
+      gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, renderLayers.framebuffer );
+      gl.blitFramebuffer( 0,0,targetWidth,targetHeight, 0,0,targetWidth,targetHeight, gl.COLOR_BUFFER_BIT, gl.NEAREST );
+    }
+
+  }
+
+
+  //draw the backtexture to the screen as if it was a layer
+  {
+    if( targetLayer === null ) {
+      //render to the screen canvas
+      gl.bindFramebuffer( gl.FRAMEBUFFER, null );
+    }
+    else {
+      const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
+      gl.bindTexture( gl.TEXTURE_2D, targetLayer.glTexture );
+      //resize (and clear) the target layer's texture
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, targetWidth, targetHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      // render to the target layer's texture
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, targetLayer.glTexture, level);
+      gl.viewport( 0, 0, targetWidth, targetHeight );
+    }
+    gl.viewport( 0, 0, targetWidth, targetHeight );
+    gl.clearColor( ...backgroundRGBA ); //never seen tho
+    gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+    gl.disable( gl.DEPTH_TEST );
+    gl.disable( gl.BLEND );
+  
+    //update the vertex data
+    //top-left triangle
+    glState.vertices[0] = -1; glState.vertices[1] = -1;
+    glState.vertices[4] = 1; glState.vertices[5] = -1;
+    glState.vertices[8] = -1; glState.vertices[9] = 1;
+    //bottom-right triangle
+    glState.vertices[12] = 1; glState.vertices[13] = -1;
+    glState.vertices[16] = 1; glState.vertices[17] = 1;
+    glState.vertices[20] = -1; glState.vertices[21] = 1;
+    //push the updated vertex data to the GPU
+    gl.bindBuffer( gl.ARRAY_BUFFER, glState.vertexBuffer );
+    gl.bufferData( gl.ARRAY_BUFFER, glState.vertices, gl.STREAM_DRAW );
+
+    gl.enableVertexAttribArray( glState.xyuvInputIndex );
+    {
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( glState.xyuvInputIndex, size, dType, normalize, stride, offset );
+    }
+
+    //bind the backtexture as the layer's source
+    gl.activeTexture( gl.TEXTURE0 + 0 );
+    if( drewToMidTexture === false ) gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+    if( drewToMidTexture === true ) gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+    //point the layer's source image at texture 0
+    gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
+
+    //blank the mask (solid alpha)
+    gl.activeTexture( gl.TEXTURE0 + 1 );
+    gl.bindTexture( gl.TEXTURE_2D, renderLayers.blankTexture );
+    gl.uniform1i( gl.getUniformLocation( glState.program, "imgMask" ), 1 );
+
+    //blank or color the undercanvas (this is the base-mix color)
+    {
+      gl.activeTexture( gl.TEXTURE0 + 2 );
+      gl.bindTexture( gl.TEXTURE_2D, renderLayers.colorTexture );
+      const colorData = new Uint8ClampedArray( [ ...backgroundRGBA, ...backgroundRGBA, ...backgroundRGBA, ...backgroundRGBA ] );
+      gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, colorData );
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.uniform1i( gl.getUniformLocation( glState.program, "canvas" ), 2 );
+    }
+
+    //set the layer's alpha
+    gl.uniform1f( glState.alphaInputIndex, 1.0 );
+    gl.uniform1f( glState.alphaMaskIndex, 0.0 );
+    gl.uniform1f( glState.timeIndex, 0.0 );
+    gl.uniform1f( glState.borderVisibilityIndex, 0.0 );
+    gl.uniform1f( glState.borderWidthIndex, 2.0 / targetWidth ); //2 pixel border width (avoid div by zero can change IDK)
+
+    {
+      //and draw our screen-triangle
+      const primitiveType = gl.TRIANGLES, structStartOffset = 0, structCount = 6;
+      gl.drawArrays( primitiveType, structStartOffset, structCount );
+    }
+
+  }
+
+  //bring the pixel data back to the CPU if necessary
+  if( targetLayer !== null ) {
+    const newData = targetLayer.context.createImageData( targetWidth, targetHeight );
+    gl.readPixels( 0, 0, targetWidth, targetHeight, gl.RGBA, gl.UNSIGNED_BYTE, newData.data );
+    targetLayer.context.putImageData( newData, 0, 0 );
+  }
 
 }
 
@@ -3169,6 +3701,66 @@ function setupGL( testImageTexture ) {
       gl_Position = vec4(xyuv.xy,0.5,1);
     }`;
   const fragmentShaderSource = `#version 300 es
+    precision highp float;
+    
+    uniform sampler2D img;
+    uniform sampler2D imgMask;
+    uniform sampler2D canvas;
+
+    uniform float alpha;
+    uniform float mask;
+    uniform float time;
+    uniform float borderVisibility;
+    uniform float borderWidth;
+    in vec2 xy;
+    in vec2 uv;
+    out vec4 outColor;
+    
+    void main() {
+
+      vec4 canvasLookup = texture( canvas, ( xy + 1.0 ) * 0.5 );
+
+      vec4 lookup = texture( img, uv );
+      vec4 maskLookup = texture( imgMask, uv );
+      lookup.a *= alpha * maskLookup.a;
+
+      float borderShade = abs( mod( ( ( time - ( uv.x + uv.y ) ) * 0.1 / borderWidth ), 2.0 ) - 1.0 );
+
+      float onBorder = float( uv.x < borderWidth || uv.x > (1.0-borderWidth) || uv.y < borderWidth || uv.y > (1.0-borderWidth) );
+
+      vec4 mainColor = mix( lookup, vec4( vec3(borderShade), 1.0 ), onBorder * borderVisibility );
+      vec4 maskColor = vec4( mix( vec3( 1.0 ), vec3( borderShade ), 0.5 ), mask * maskLookup.a );
+
+      //draw the mask under our mainColor, and with the mask 50% opacity, still see the layer beneath
+      vec4 compositeColor = vec4( mix( mix( maskColor.rgb, mainColor.rgb, ( 1.0 - maskColor.a ) ), mainColor.rgb, mainColor.a ), clamp( mainColor.a + maskColor.a, 0.0, 1.0 ) );
+
+      if( compositeColor.a == 0.0 && canvasLookup.a == 0.0 ) discard;
+
+      //float totalAlpha = clamp( compositeColor.a + canvasLookup.a, 0.0, 1.0 );
+      float totalAlpha = clamp( compositeColor.a + canvasLookup.a, 0.0, 1.0 );
+      float compositeWeight = compositeColor.a / totalAlpha;
+      float canvasWeight = ( totalAlpha - compositeColor.a ) / totalAlpha;
+
+      outColor = vec4(
+        sqrt( ( compositeWeight * pow( compositeColor.r, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.r, 2.0 ) ) ),
+        sqrt( ( compositeWeight * pow( compositeColor.g, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.g, 2.0 ) ) ),
+        sqrt( ( compositeWeight * pow( compositeColor.b, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.b, 2.0 ) ) ),
+        totalAlpha
+      );
+
+      //totalAlpha = clamp( mainColor.a + canvasLookup.a, 0.0, 1.0 );
+      /* compositeWeight = 0.0;
+      canvasWeight = 1.0 - mainColor.a;
+      outColor = vec4(
+        sqrt( ( compositeWeight * pow( mainColor.r, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.r, 2.0 ) ) ),
+        sqrt( ( compositeWeight * pow( mainColor.g, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.g, 2.0 ) ) ),
+        sqrt( ( compositeWeight * pow( mainColor.b, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.b, 2.0 ) ) ),
+        1.0
+      ); */
+
+    }`;
+
+    const old_fragmentShaderSource = `#version 300 es
     precision highp float;
     
     uniform sampler2D img;
@@ -5533,8 +6125,6 @@ function setupUI() {
       if( updateCurrent === true )
         currentTransformInfos.forEach( info => updateLayerTransformInfoWithCurrent( info ) );
 
-      console.log( "updating." );
-
       //get our aggregate info
       const aggregateInfo = getAggregateTransformInfo();
       //update our sliders
@@ -5704,6 +6294,14 @@ function setupUI() {
           //4. On layer selection change, update the slider values (no undo/etc here)
 
           if( uiSettings.activeTool === "transform" ) {
+
+            //check if we have any selected layers, disable the tool if not
+            if( ! selectedLayer && batchedLayers.size === 0 ) {
+              uiSettings.setActiveTool( null );
+              transformToolOptionsRow.classList.add( "hidden" );
+              return;
+            }
+
             transformToolOptionsRow.classList.remove( "hidden" );
 
             //find out what layers are currently our transform targets
@@ -8839,6 +9437,7 @@ function loadJSON() {
         cloneObjectForJSON( uiSettingsSave, uiSettings, nonSavedSettingsPaths );
         uiSettings.nodeSnappingDistance = Math.min( innerWidth, innerHeight ) * 0.04; //~50px on a 1080p screen
         loadBrushTipsImages();
+        uiSettings.setActiveTool( null );
       
         //if we opened over an existing file, we have to clear everything up
         for( const layer of layersStack.layers ) {
@@ -9578,8 +10177,6 @@ const startHandler = p => {
                 layersToTransform.push( selectedLayer );
               }
 
-              console.log( layersToTransform, batchedLayers.size )
-
               let foundPointInSelectedLayer = false;
               for( const layer of layersToTransform ) {
                 if( testPointsInLayer( layer, [point], true ) ) {
@@ -10272,9 +10869,9 @@ function setupPaintGPU2() {
   
     //D 2 scenarios:
     if( blendAlpha == 0.0 && destLookup.a > 0.0 ) {
-      float totalOpacity = destLookup.a + paint.a;
-      float paintWeight = paint.a;
-      float destWeight = 1.0 - paintWeight;
+      float totalOpacity = clamp( destLookup.a + paint.a, 0.0, 1.0 );
+      float paintWeight = paint.a / totalOpacity;
+      float destWeight = ( totalOpacity - paint.a ) / totalOpacity;
       outColor = vec4(
           sqrt( ( paintWeight * pow( paint.r, 2.0 ) ) + ( destWeight * pow( destLookup.r, 2.0 ) ) ),
           sqrt( ( paintWeight * pow( paint.g, 2.0 ) ) + ( destWeight * pow( destLookup.g, 2.0 ) ) ),
@@ -10305,6 +10902,26 @@ function setupPaintGPU2() {
     }
   
     //F 1 scenario:
+    /* if( blendAlpha == 1.0 && destLookup.a > 0.0 && blendLookupA > 0.0 ) {
+      //float totalOpacity = clamp( destLookup.a + blendLookupA, 0.0, 1.0 );
+      //float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a ); //new code, untested
+
+      float totalOpacity = clamp( destLookup.a + ( blendLookupA * paint.a ), 0.0, 1.0 );
+      float blendWeight = ( blendLookupA * paint.a ) / totalOpacity;
+      float destWeight = ( totalOpacity - ( blendLookupA * paint.a ) ) / totalOpacity;
+
+      //float destWeight = 1.0 - blendWeight;
+
+      outColor = vec4(
+          sqrt( ( blendWeight * pow( blendLookup.r, 2.0 ) ) + ( destWeight * pow( destLookup.r, 2.0 ) ) ),
+          sqrt( ( blendWeight * pow( blendLookup.g, 2.0 ) ) + ( destWeight * pow( destLookup.g, 2.0 ) ) ),
+          sqrt( ( blendWeight * pow( blendLookup.b, 2.0 ) ) + ( destWeight * pow( destLookup.b, 2.0 ) ) ),
+          totalOpacity
+      );
+
+      gl_FragDepth = blendLookupA;
+      return;
+    } */
     if( blendAlpha == 1.0 && destLookup.a > 0.0 && blendLookupA > 0.0 ) {
       //float totalOpacity = clamp( destLookup.a + blendLookupA, 0.0, 1.0 );
       float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a ); //new code, untested
@@ -10747,7 +11364,7 @@ function beginPaintGPU2( layer ) {
     for( let i=0, j=blur; i<=j; i++ )
       btx.drawImage( brushTipImage, i+Math.random()*3-1.5, i+Math.random()*3-1.5, iw-2*i, ih-2*i );
     btx.restore();
-    document.body.appendChild( brushTipCanvas );
+    //document.body.appendChild( brushTipCanvas );
     //brushTipCanvas.style = "position:absolute; left:20px; width:100px; border:1px solid red; background-color:white;";
   }
   gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.brushTipTexture );
@@ -11246,17 +11863,17 @@ function finalizePaintGPU2( layer ) {
   const oldData = affectedContext.getImageData( modRect.x, modRect.y, modRect.w, modRect.h );
 
   //make our readbuffer... I wonder if I could read straight to a dataimage. Hmm.
-  const readBuffer = new Uint8Array( modRect.w * modRect.h * 4 );
+  //const readBuffer = new Uint8Array( modRect.w * modRect.h * 4 );
   //why isn't this y-reversed??? The main canvas framebuffer is reversed when I sample for the color picker... :-/
   //gl.readPixels( modRect.x, layer.h - modRect.y, modRect.w, modRect.h, gl.RGBA, gl.UNSIGNED_BYTE, readBuffer );
-  gl.readPixels( modRect.x, modRect.y, modRect.w, modRect.h, gl.RGBA, gl.UNSIGNED_BYTE, readBuffer );
+  const newData = affectedContext.createImageData( modRect.w, modRect.h );
+  gl.readPixels( modRect.x, modRect.y, modRect.w, modRect.h, gl.RGBA, gl.UNSIGNED_BYTE, newData.data );
+  affectedContext.putImageData( newData, modRect.x, modRect.y );
 
   //transfer to an imagedata
-  const newData = affectedContext.createImageData( modRect.w, modRect.h );
-  newData.data.set( readBuffer );
+  //newData.data.set( readBuffer );
 
   //put the new imagedata onto the texture (since it's still just on the GPU)
-  affectedContext.putImageData( newData, modRect.x, modRect.y );
 
   //call flag texture changed because this triggers upstream changes
   if( uiSettings.activeTool === "mask" ) {
@@ -11360,7 +11977,6 @@ function finalizeLayerTransform() {
   const transformRecords = [];
 
   getTransform();
-
   //get our global space coordinates inverter
   _originMatrix[ 2 ] = -view.origin.x;
   _originMatrix[ 5 ] = -view.origin.y;
@@ -11372,6 +11988,8 @@ function finalizeLayerTransform() {
   mul3x3( _inverter , _positionMatrix , _inverter );
   //get inverse view
   inv( _inverter , _inverter );
+
+  getLayerTransform();
 
   for( const layerToTransform of layersToTransform ) {
     const transformRecord = {
@@ -11662,7 +12280,7 @@ const wait = delay => new Promise( land => setTimeout( land, delay ) );
 
 const apiExecutionQueue = [];
 
-const verboseAPICall = true;
+const verboseAPICall = false;
 async function executeAPICall( name, controlValues ) {
 
   if( verboseAPICall ) console.log( "Executing API call: ", name );

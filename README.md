@@ -20,6 +20,13 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 
 (It may also work on MacOS and iOS. Untested.)
 
+# New Features in Version 2024.04.19-1-alpha
+
+## Flatten Layer Group
+
+<p align="center" width="100%"><img src="img/2024.04.19-alpha-1.jpg"></p>
+<p align="center" width="100%">Flatten Layer Group creates a new, large paint layer containing all flattened layers, while preserving their relative positions on the canvas without clipping. You can find the Flatten Group button in the lower-right corner of the layer's button. <i>(Not yet compatible with multi-frame layers.)</i></p>
+
 # New Features in Version 2024.04.18-1-alpha
 
 ## Stable Diffusion 3 Support
