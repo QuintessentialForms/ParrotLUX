@@ -2807,8 +2807,8 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
       renderLayers.width = gnv.width;
       renderLayers.height = gnv.height;
     } else {
-      renderLayers.width = targetLayer.w;
-      renderLayers.height = targetLayer.h;
+      renderLayers.width = targetLayer.canvas.width;
+      renderLayers.height = targetLayer.canvas.height;
     }
 
     {
@@ -2872,8 +2872,8 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
   let targetWidth = gnv.width,
     targetHeight = gnv.height;
   if( targetLayer !== null ) {
-    targetWidth = targetLayer.w;
-    targetHeight = targetLayer.h;
+    targetWidth = targetLayer.canvas.width;
+    targetHeight = targetLayer.canvas.height;
   }
   if( renderLayers.width !== targetWidth || renderLayers.height !== targetHeight ) {
     renderLayers.width = targetWidth;
@@ -6453,7 +6453,7 @@ function setupUI() {
     {
       const widthSlider = UI.make.numberSlider({
         label: "Width", slideMode: "contain-step",
-        value: 512, min: 0, max: 4096, step: 1,
+        value: 512, min: 1, max: Infinity, step: 1,
         onend: width => {
           const layer = currentTransformInfos[0].layer;
           cropLayerSizeAndRecordUndo( layer, width, layer.h );
@@ -6466,10 +6466,10 @@ function setupUI() {
     {
       const heightSlider = UI.make.numberSlider({
         label: "Height", slideMode: "contain-step",
-        value: 512, min: 0, max: 4096, step: 1,
-        onend: width => {
+        value: 512, min: 1, max: Infinity, step: 1,
+        onend: height => {
           const layer = currentTransformInfos[0].layer;
-          cropLayerSizeAndRecordUndo( layer, width, layer.h );
+          cropLayerSizeAndRecordUndo( layer, layer.w, height );
         }
       });
       heightSlider.classList.add( "height-slider" );
@@ -9625,8 +9625,10 @@ const UI = {
         numberInput = numberInputOverlay.querySelector( "input" );
       numberInputOverlay.setLabel( label );
       numberInput.value = value;
-      numberInput.min = min;
-      numberInput.max = max;
+      if( isFinite( min ) ) numberInput.min = min;
+      else numberInput.removeAttribute( "min" );
+      if( isFinite( max ) ) numberInput.max = max;
+      else numberInput.removeAttribute( "max" )
       numberInput.step = step;
       numberInputOverlay.onapply = onapply;
       numberInputOverlay.show();
@@ -9689,10 +9691,33 @@ const UI = {
       }
     },
     numberSlider: ( {
-      label="", value=0, min=0, max=1, step=0.1, slideMode="contain-range", wrap=false,
+      label="", value=0, min=0, max=1, step=0.1, slideMode="contain-range", wrap=false, unclamped = false,
       onstart=()=>{}, onupdate=()=>{}, onend=()=>{},
       bindingsName="",
     } ) => {
+
+      const checkInfiniteBoundExists = () => Math.abs(min) === Infinity || Math.abs(max) === Infinity;
+
+      value *= 1;
+      min *= 1;
+      max *= 1;
+      step = Math.abs( step * 1 );
+      if( isNaN( value ) ) value = 0;
+      if( Math.abs( value ) === Infinity ) value = 0;
+      if( isNaN( min ) ) min = 0;
+      if( isNaN( max ) ) max = 1;
+      if( isNaN( step ) ) step = 1;
+      if( Math.abs( step ) === Infinity ) step = 1;
+
+      if( step === 0 ) step = 1;
+      if( unclamped === false && ! checkInfiniteBoundExists() ) {
+        if( max <= min ) max = min + step * 2;
+        while( value < min ) value += ( max - min );
+        while( value > max ) value -= ( max - min );
+      } else {
+        //can't contain non-finite range, after all
+        slideMode = "contain-step";
+      }
 
       const sliderElement = document.createElement( "div" );
 
@@ -9760,8 +9785,8 @@ const UI = {
               sliderElement.onstart( value );
               sliderElement.querySelector( ".tooltip" ).style.opacity = 0;
               startingNumber = value;
-              if( slideMode === "contain-range" ) adjustmentScale = ( max - min ) / 300; //300 pixel screen-traverse
-              if( slideMode === "contain-step" ) adjustmentScale = step / 3; //1 step per every 3 pixels
+              if( slideMode === "contain-range" && unclamped === false && ! checkInfiniteBoundExists() ) adjustmentScale = ( max - min ) / 300; //300 pixel screen-traverse
+              else adjustmentScale = step / 3; //1 step per every 3 pixels
             }
 
             if( isClick === false ) sliderElement.onupdate( value );
@@ -9769,10 +9794,15 @@ const UI = {
             if( isClick === false ) {
               const adjustment = dx * adjustmentScale;
               let number = startingNumber + adjustment;
-              if( wrap === false ) number = Math.max( min, Math.min( max, number ) );
-              if( wrap === true ) {
-                while( number < min ) number += Math.abs( max - min );
-                while( number > max ) number -= Math.abs( max - min );
+              if( unclamped === false ) {
+                if( wrap === false ) value = Math.max( min, Math.min( max, value ) ); //fine even for infinite bounds... more or less; Infinity is not valid JSON
+                if( wrap === true ) {
+                  if( max === min ) value = max;
+                  else {
+                    while( value < min ) value += Math.abs( max - min );
+                    while( value > max ) value -= Math.abs( max - min );
+                  }
+                }
               }
               number = parseInt( number / step ) * step;
               value = number;
@@ -9784,23 +9814,13 @@ const UI = {
               if( isClick === true ) {
                 if( px < 0.25 ) {
                   //clicked left of input, decrement
-                  value -= step;
-                  if( wrap === false ) number = Math.max( min, Math.min( max, number ) );
-                  if( wrap === true ) {
-                    while( number < min ) number += Math.abs( max - min );
-                    while( number > max ) number -= Math.abs( max - min );
-                  }
+                  sliderElement.setValue( value - step );
                   numberPreview.showValue();
                   sliderElement.onend( value );
                 }
                 else if( px > 0.75 ) {
                   //clicked right of input, increment
-                  value += step;
-                  if( wrap === false ) number = Math.max( min, Math.min( max, number ) );
-                  if( wrap === true ) {
-                    while( number < min ) number += Math.abs( max - min );
-                    while( number > max ) number -= Math.abs( max - min );
-                  }
+                  sliderElement.setValue( value + step );
                   numberPreview.showValue();
                   sliderElement.onend( value );
                 }
@@ -9809,12 +9829,7 @@ const UI = {
                   UI.showOverlay.number( {
                     value,min,max,step,
                     onapply: v => {
-                      value = v;
-                      if( wrap === false ) value = Math.max( min, Math.min( max, value ) );
-                      if( wrap === true ) {
-                        while( value < min ) value += Math.abs( max - min );
-                        while( value > max ) value -= Math.abs( max - min );
-                      }
+                      sliderElement.setValue( v );
                       numberPreview.showValue();
                       sliderElement.onend( value );
                     }
@@ -9823,11 +9838,8 @@ const UI = {
               } else {
                 const adjustment = dx * adjustmentScale;
                 let number = startingNumber + adjustment;
-                number = Math.max( min, Math.min( max, number ) );
-                number = parseInt( number / step ) * step;
-                value = number;
+                sliderElement.setValue( number );
                 numberPreview.showValue();
-    
                 sliderElement.onend( value );
               }
             }
@@ -9844,13 +9856,37 @@ const UI = {
         sliderElement.querySelector( ".tooltip" ).innerHTML = '<img src="icon/arrow-left.png"> Drag to Adjust ' + label + ' <img src="icon/arrow-right.png">';
       }
       sliderElement.setValue = v => {
-        value = v;
+        v *= 1;
+        if( isNaN( v ) ) v = 0;
+        if( Math.abs( v ) === Infinity ) v = 0;
+        if( unclamped === false ) {
+          if( wrap === false ) v = Math.max( min, Math.min( max, v ) );
+          if( wrap === true ) {
+            while( v < min ) v += Math.abs( max - min );
+            while( v > max ) v -= Math.abs( max - min );
+          }
+        }
+        value = parseInt( v / step ) * step;
         numberPreview.showValue();
       }
-      sliderElement.setMin = m => min = m;
-      sliderElement.setMax = m => max = m;
-      sliderElement.setStep = s => {
-        step = s;
+      sliderElement.setMin = newMinimum => {
+        newMinimum *= 1;
+        if( isNaN( newMinimum ) ) return min = max + step;
+        if( newMinimum >= max ) max = newMinimum + step;
+        min = newMinimum;
+      }
+      sliderElement.setMax = newMaximum => {
+        newMaximum *= 1;
+        if( isNaN( newMaximum ) ) return max = min - step;
+        if( newMaximum <= min ) min = newMaximum - step;
+        max = newMaximum;
+      }
+      sliderElement.setStep = newStep => {
+        newStep *= 1;
+        if( ! newStep ) newStep = 1;
+        if( isNaN( newStep ) ) newStep = 1;
+        if( Math.abs( newStep ) === Infinity ) newStep = 1;
+        step = newStep;
         numberPreview.updateTrimLength();
       }
       sliderElement.setSlide = s => slideMode = s;
@@ -10348,7 +10384,7 @@ const moveHandler = ( p, pseudo = false ) => {
           cursor.current.y = y;
         }
         if( painter.active === true ) {
-            const point = [ x , y , 1, p.pressure, p.altitudeAngle || 1.5707963267948966, p.azimuthAngle || 0 ];
+            const point = [ x , y , 1, p.pressure, p.altitudeAngle || 1.5707963267948966, p.azimuthAngle || 0, x, y, 1 ];
             
             _originMatrix[ 2 ] = -view.origin.x;
             _originMatrix[ 5 ] = -view.origin.y;
@@ -11909,6 +11945,93 @@ function finalizePaintGPU2( layer ) {
   recordHistoryEntry( historyEntry );
 
 }
+
+
+/* 
+
+Selections explained:
+
+- stack of <image> rects{ topLeft, bottomLeft, topRight, bottomRight }
+- we can render that stack onscreen in various ways
+- paint function that takes painter's queue of points and does stuff
+- for any given layer, we can acquire a pixel buffer representing its selection mask
+
+*/
+
+const selectionsStack = {
+  //layers have { glTexture, <image>, topLeft,bottomLeft,topRight,bottomRight }
+  layers: [],
+  livePreviewLayer: {
+
+    topLeft:[0,0,1],
+    bottomLeft:[0,0,1],
+    topRight:[0,0,1],
+    bottomRight:[0,0,1],
+
+    canvas: document.createElement( "canvas" ),
+    context: null,
+    glTexture: null,
+    canvasBackData: null,
+
+  }
+}
+function setupSelectionCanvas() {
+  selectionsStack.context = selectionsStack.canvas.getContext( "2d" );
+}
+function beginPaintSelectionCanvas( booleanMode ) {
+  const layer = selectionsStack.livePreviewLayer;
+  const cnv = layer.canvas;
+  cnv.width = gnv.width;
+  cnv.height = gnv.height;
+  const screenPointRect = getScreenPointRect();
+
+  layer.topLeft = [...screenPointRect.topLeft];
+  layer.topRight = [...screenPointRect.topRight];
+  layer.bottomLeft = [...screenPointRect.bottomLeft];
+  layer.bottomRight = [...screenPointRect.bottomRight];
+
+  if( booleanMode === "add" || booleanMode === "subtract" ) {
+    //TODO replace this with fast (non-buffer-flipping, 1-draw-call) version
+    renderLayersIntoPointRect( layer, selectionsStack.layers, [], 0, layer, [0,0,0,0], false, true );
+    layer.canvasBackData = layer.context.getImageData( 0,0,cnv.width,cnv.height );
+  }
+
+}
+function paintSelectionCanvas( points, booleanMode, ) {
+
+  //booleanMode === "replace" | "add" | "subtract"
+
+  if( points.length < 3 ) return;
+
+  const ctx = selectionsStack.livePreviewLayer.context;
+  const { width, height } = selectionsStack.livePreviewLayer.canvas;
+  if( booleanMode === "replace" ) {
+    ctx.clearRect( 0,0,width,height );
+  }
+  //our points are in global coordinates (because I converted them)
+  //ok, point[6,7,8] is now an untransformed screen coordinate push
+  ctx.save();
+  if( booleanMode === "subtract" || booleanMode === "add" ) {
+    ctx.putImageData( selectionsStack.livePreviewLayer.canvasBackData, 0, 0 );
+  }
+  if( booleanMode === "subtract" ) {
+    ctx.globalCompositeOperation = "destination-out";
+  }
+  //just fill with white, will appearance in shader
+  ctx.fillStyle = "white";
+  ctx.beginPath();
+  ctx.moveTo( points[0][6],points[0][7] );
+  for( const p of points )
+    ctx.lineTo( p[6],p[7] );
+  ctx.fill();
+  ctx.restore();
+  
+}
+function finalizePaintSelectionCanvas() {
+  //record undo event
+  selectionsStack.livePreviewLayer.canvasBackData = null;
+}
+
 
 const viewMatrices = {
     current: [

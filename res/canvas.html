@@ -14,10 +14,12 @@ body {
     touch-action: none;
     height:100%;
     height:100vh;
-    background-color: rgb(64,64,64);
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     user-select: none;
     --animation-speed: 0.2s; /* also set in JS, as UI.animationMS */
+}
+#main {
+    background-color: rgb(64,64,64);
 }
 #main, #cnv, #ui, #node-drag-overlay, #gnv, #underlay {
     position: absolute;
@@ -41,11 +43,11 @@ body {
     --white:rgb(240,240,240);
     pointer-events: none;
     user-select: none;
-    --file-row-width:9.5rem;
-    --layers-row-width:6.5rem;
-    --generate-button-width:9.9rem;
     --button-size:2rem;
     --button-gap:0.25rem;
+    --file-row-width:calc( var(--button-gap) + ( 3 * ( var(--button-size) + var(--button-gap)  ) ) );
+    --layers-row-width:calc( var(--button-gap) + ( 2 * ( var(--button-size) + var(--button-gap) ) ) );
+    --generate-button-width:9.9rem; /* maybe modified in media rule later */
 }
 
 #underlay > .hidden {
@@ -337,12 +339,17 @@ body {
     text-overflow: ellipsis;
 }
 
+
+#multiline-text-input-overlay {
+    --text-input-width: min( max( calc( min(100vw,100vh) / 3 ), 20rem ), calc( 100vw - 1rem ) );
+    --text-input-height: min( 50vh, 5rem );
+}
 #multiline-text-input-overlay .overlay-text-input {
     position:absolute;
-    left:calc( 50vw - ( min( 100vw, 100vh ) / 6 ) );
+    left:calc( 50vw - ( var(--text-input-width) / 2 ) );
     top: 5rem;
-    width: calc( min( 100vw, 100vh ) / 3 );
-    height: calc( min( 100vw, 100vh ) / 6 );
+    width: var(--text-input-width);
+    height: var(--text-input-height);
     resize: none;
     box-sizing: border-box;
     margin:0;
@@ -355,6 +362,9 @@ body {
     outline:none;
     box-shadow: 0 0 1rem 0 var(--white);
 }
+#multiline-text-input-overlay .overlay-close-button {
+    left:calc( 50vw - ( var(--text-input-width) / 2 ) );
+}
 #multiline-text-input-overlay .overlay-apply-button:hover,
 #multiline-text-input-overlay .overlay-accept-button:hover {
     box-shadow: 0 0 1rem 0 var(--white);
@@ -362,8 +372,8 @@ body {
 #multiline-text-input-overlay .overlay-apply-button,
 #multiline-text-input-overlay .overlay-accept-button {
     position:absolute;
-    left:calc( ( 50vw + ( min( 100vw, 100vh ) / 6 ) ) - 6rem );
-    top: calc( ( min( 100vw, 100vh ) / 6 ) + 6rem );
+    left:calc( 50vw + ( ( var(--text-input-width) / 2 ) - 6rem ) );
+    top: calc( 6rem + var(--text-input-height) );
     width: 6rem;
     height: 3rem;
     border-radius: 1rem;
@@ -452,11 +462,11 @@ body {
 }
 
 #asset-browser-container {
-    --asset-list-height: 100vh;
+    --asset-layout-gap: 1rem;
+    --asset-list-height: calc( ( 100vh - 3rem ) - var(--asset-layout-gap ) );
     --asset-list-width: 50vw;
     --asset-preview-width: 50vw;
     --asset-search-height: 3rem;
-    --asset-layout-gap: 1rem;
     --asset-close-button-height: 3rem;
 }
 #asset-browser-container .overlay-close-button:hover {
@@ -633,7 +643,7 @@ body {
 #asset-browser-apply-button {
     position:absolute;
     right: var(--asset-layout-gap);
-    bottom: var(--asset-layout-gap);
+    top: calc( var(--asset-list-height) - ( var(--asset-close-button-height) + var(--asset-layout-gap)) );
     width: calc( var(--asset-close-button-height) * 2.0 );
     height: var(--asset-close-button-height);
     border-radius: 1rem;
@@ -782,7 +792,7 @@ body {
     transform: scale(0.9,0.9);
 }
 #generative-controls-row {
-    top:0.5rem;
+    top:var(--button-gap);
     position:absolute;
     left: var(--file-row-width);
     width:calc( 100vw - ( var(--layers-row-width) + var(--file-row-width) ) );
@@ -854,7 +864,8 @@ body {
 
 #generative-controls-panel {
     position: absolute;
-    left:2.5rem; top:0;
+    left:calc( var(--button-size) + ( 2 * var(--button-gap) ) );
+    top:0;
     width:calc( 100% - var(--file-row-width) ); /* modded from js to pose i2i nodes @ end of setupUIGenerativeControls() */
     position: relative;
     flex-shrink: 0;
@@ -863,7 +874,9 @@ body {
     flex-direction: row;
     justify-content: stretch;
     align-items: flex-start;
-    padding: 0 0.5rem; margin: 0;
+    padding: 0;
+    padding-right: var(--button-gap);
+    margin: 0;
     box-sizing: border-box;
     gap:var(--button-gap);
     flex-wrap: wrap;
@@ -873,11 +886,12 @@ body {
 #generate-button.pushed .generate-label { transform: scale(0.9,0.9); }
 #generate-button {
     flex-shrink: 0;
-    background-color: var(--white);
-    color: var(--dark);
+    background-color: var(--dark);
+    color: var(--white);
+    filter:invert(0.99);
     font-size: 1.167rem;
     letter-spacing: 1px;
-    border-radius: 1rem;
+    border-radius: calc( var(--button-size) * 0.4 );
     line-height: 0;
     text-align: center;
     display: flex;
@@ -889,9 +903,22 @@ body {
     width:var(--generate-button-width);
     height:var(--button-size);
     box-sizing: border-box;
-    padding:0; margin:0;;
+    padding:0; margin:0;
+    background-position: center;
+    background-size: contain;
+    background-repeat: no-repeat;
     /* font-family: Georgia, 'Times New Roman', Times, serif; */
 }
+@media (width < 800px) {
+    #ui {
+        --generate-button-width: var(--button-size);
+    }
+    #generate-button {
+        color: transparent;
+        background-image: url('icon/magic.png');
+    }
+}
+
 #generative-controls-panel div.hidden {
     display: none;
 }
@@ -931,7 +958,7 @@ body {
 #generative-controls-panel .text-input-control {
     position: relative;
     flex-grow:1;
-    min-width:10rem;
+    min-width:var(--button-size);
     height:var(--button-size);
     background-color: var(--mid);
     border:1px solid var(--high-mid);
@@ -1396,7 +1423,7 @@ body {
     position: relative;
     flex-grow:1;
     width: auto;
-    min-width:10rem;
+    min-width:var(--button-size);
     font-stretch: condensed;
     letter-spacing: -1px;
     padding:var(--button-gap) 0.67rem;
@@ -1406,7 +1433,7 @@ body {
     justify-content: flex-start;
     align-items: center;
     color: var(--white);
-    flex-basis: 15%;
+    flex-basis: max( 15%, 5rem );
     z-index: 8000;
 }
 .round-toggle .control-element-label {
@@ -1544,10 +1571,10 @@ body {
 
 .rounded-line-button {
     flex-grow: 1;
-    height: 2rem;
-    border-radius: 1rem;
+    height: var(--button-size);
+    border-radius: calc( var(--button-size) * 0.4 );
     width:100%;
-    padding: 0.25rem;
+    padding: var(--button-gap);
     display: flex;
     flex-direction: row;
     justify-content: stretch;
@@ -1883,7 +1910,7 @@ body {
     background-color: var(--mid);
     border:1px solid var(--high-mid);
     box-sizing: border-box;
-    border-radius: 1rem;
+    border-radius: calc( var(--button-size) * 0.4 );
     line-height: 0;
     display: flex;
     flex-direction: row;

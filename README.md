@@ -20,6 +20,17 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 
 (It may also work on MacOS and iOS. Untested.)
 
+# New Features in Version 2024.04.20-1-alpha
+
+## Bug Fixes
+
+<p align="center" width="100%">At least a few bugs have been fixed: Black background on fullscreen. Number-sliders not working right. <i>(Finally at least a couple bugs fixed!!!)</i></p>
+
+## Smartphone User Interface Improvements
+<p align="center" width="100%"><img width="45%" src="img/2024.04.20-alpha-1.jpg"> <img width="45%" src="img/2024.04.20-alpha-2.jpg"></p>
+<p align="center" width="100%">The user interface for portrait-orientation on phone-sized displays is now slightly more usable for text-to-image generation. <i>(Smartphone-display & non-stylus support still needs much more work. Only tablet-sized or larger displays with stylus and/or mouse are supported for now.)</i></p>
+
+
 # New Features in Version 2024.04.19-1-alpha
 
 ## Flatten Layer Group
