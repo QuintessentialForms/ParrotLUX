@@ -76,6 +76,12 @@ function recordHistoryEntry( entry ) {
     entry.cleanup?.();
   }
 }
+function popUndoEntry() {
+  history.pop(); 
+  if( history.length === 0 ) {
+    UI.deleteContext( "undo-available" );
+  };
+}
 function clearUndoHistory() {
   for( const entry of history )
     entry.cleanup?.();
@@ -3591,6 +3597,9 @@ async function setup() {
             console.error( "Failed to load default brushes? Result: ", result );
           }
         } );
+
+        setupUIGenerativeToolsPanel();
+
       }
     );
 
@@ -4078,12 +4087,12 @@ let uiSettings = {
     {
       "key": "A1111Host",
       "value": "localhost",
-      "permissions": ["A1111 ControlNet Preprocessors Asset Loader","A1111 VAEs Asset Loader","A1111 txt2img + ControlNet","A1111 txt2img","A1111 Samplers Asset Loader","A1111 ControlNet Preprocessor","A1111 Models Asset Loader","A1111 img2img + ControlNet","A1111 img2img","A1111 ControlNet Models Asset Loader",],
+      "permissions": ["A1111 ControlNet Preprocessors Asset Loader","A1111 VAEs Asset Loader","A1111 txt2img + ControlNet","A1111 txt2img","A1111 Samplers Asset Loader","A1111 ControlNet Preprocessor","A1111 Models Asset Loader","A1111 img2img + ControlNet","A1111 img2img","A1111 ControlNet Models Asset Loader","A1111 Layer to Pose","A1111 Layer to Lineart"],
     },
     {
       "key": "A1111Port",
       "value": 7860,
-      "permissions": ["A1111 ControlNet Preprocessors Asset Loader","A1111 VAEs Asset Loader","A1111 txt2img + ControlNet","A1111 txt2img","A1111 Samplers Asset Loader","A1111 ControlNet Preprocessor","A1111 Models Asset Loader","A1111 img2img + ControlNet","A1111 img2img","A1111 ControlNet Models Asset Loader",],
+      "permissions": ["A1111 ControlNet Preprocessors Asset Loader","A1111 VAEs Asset Loader","A1111 txt2img + ControlNet","A1111 txt2img","A1111 Samplers Asset Loader","A1111 ControlNet Preprocessor","A1111 Models Asset Loader","A1111 img2img + ControlNet","A1111 img2img","A1111 ControlNet Models Asset Loader","A1111 Layer to Pose","A1111 Layer to Lineart"],
     },
     {
       "key": "AppHost",
@@ -4692,6 +4701,82 @@ function setupUI() {
           }
         }
       )
+    }
+
+    //the AI tools button and panel
+    {
+      const aiToolsButton = document.createElement( "div" );
+      //aiToolsButton.classList.add( "tools-column-ai-tools-button", "round-toggle", "animated", "unavailable" );
+      aiToolsButton.classList.add( "tools-column-ai-tools-button", "round-toggle", "animated" );
+      toolsColumn.appendChild( aiToolsButton );
+      const openAIToolsPanel = () => {
+        if( ! aiToolsButton.classList.contains( "unavailable" ) ) {
+          if( UI.context.has( "add-ai-tools-panel-visible" ) ) {
+            UI.deleteContext( "add-ai-tools-panel-visible" );
+          } else {
+            UI.addContext( "add-ai-tools-panel-visible" );
+          }
+          aiToolsButton.classList.add( "pushed" );
+          setTimeout( () => aiToolsButton.classList.remove( "pushed" ), UI.animationMS );
+        }
+      }
+
+      UI.registerElement(
+        aiToolsButton,
+        {
+          onclick: openAIToolsPanel,
+          updateContext: () => {
+            const sourceLayer = selectedLayer || batchedLayers[0];
+            //if selectedlayer(s) contain non-paint, unavailable
+            if( sourceLayer?.layerType !== "paint" ) {
+              aiToolsButton.classList.add( "unavailable" );
+              aiToolsButton.classList.remove( "on" );
+              aiToolsButton.querySelector( ".tooltip" ).textContent = "AI Tools [Select paint layer to enable]";
+              UI.deleteContext( "add-ai-tools-panel-visible" );
+            } else {
+              aiToolsButton.classList.remove( "unavailable" );
+              aiToolsButton.querySelector( ".tooltip" ).textContent = "AI Tools";
+              //if panel is visible, add "on"
+              //if panel is not visible, remove "on"
+              if( UI.context.has( "add-ai-tools-panel-visible" ) ) {
+                aiToolsButton.classList.add( "on" );
+              } else {
+                aiToolsButton.classList.remove( "on" );
+              }
+            }
+          },
+        },
+        {
+          tooltip: [ "AI Tools", "to-right", "vertical-center" ],
+          //Not sure this should have a key binding?
+          //bindings: { "Open AI Tools Panel": openAIToolsPanel }
+        }
+      );
+      
+      //the AI tools hovering panel
+      {
+        const aiToolsPanel = document.createElement( "div" );
+        aiToolsPanel.classList.add( "animated" );
+        aiToolsPanel.id = "ai-tools-panel";
+        aiToolsButton.appendChild( aiToolsPanel );
+
+        //add the stylized summon marker arrow to the top-left
+        const summonMarker = document.createElement( "div" );
+        summonMarker.classList.add( "summon-marker" );
+        aiToolsPanel.appendChild( summonMarker );
+
+        UI.registerElement( aiToolsPanel, {
+          onclickout: () => {
+            UI.deleteContext( "add-ai-tools-panel-visible" );
+          },
+          updateContext: context => {
+            if( context.has( "add-ai-tools-panel-visible" ) ) aiToolsPanel.classList.remove( "hidden" );
+            else aiToolsPanel.classList.add( "hidden" );
+          },
+        }, { zIndex: 10000 } );
+
+      }
+
     }
 
     //the paint button
@@ -6939,8 +7024,10 @@ function setupUI() {
           onclick: () => {
             const assets = [];
             for( const apiFlow of apiFlows ) {
-              if( apiFlow.isDemo ) continue;
-              if( apiFlow.apiFlowType === "asset" ) continue;
+              //if( apiFlow.isDemo ) continue;
+              //if( apiFlow.apiFlowType === "asset" ) continue;
+              //if( apiFlow.apiFlowType === "generative-tool" ) continue;
+              if( apiFlow.apiFlowType !== "generative" ) continue;
               apiFlow.name = apiFlow.apiFlowName;
               //const asset = { name: apiFlow.apiFlowName }
               assets.push( apiFlow );
@@ -6982,53 +7069,7 @@ function setupUI() {
             }
 
             const apiFlow = apiFlows.find( flow => flow.apiFlowName === apiFlowName );
-            const controlValues = {};
-            for( const control of apiFlow.controls ) {
-              controlValues[ control.controlName ] = control.controlValue;
-              if( control.controlType === "randomInt" ) {
-                const r = Math.random();
-                controlValues[ control.controlName ] = parseInt((control.min + r*(control.max-control.min))/control.step) * control.step;
-              }
-              if( control.controlType === "layer-input" ) {
-                //The reason we don't set the .controlLayer:null on the control, is links change with selectedLayer
-                let layerInput = selectedLayer; //necessarily use selected layer, otherwise we can't control the resolution
-                const inputPath = [ ...control.layerPath ];
-                while( inputPath.length ) {
-                  layerInput = layerInput[ inputPath.shift() ];
-                }
-                control.controlValue = layerInput;
-                controlValues[ control.controlName ] = layerInput;
-              }
-              if( control.controlType === "duplicate" ) {
-                const controlSource = apiFlow.controls.find( c => c.controlName === control.controlSourceName );
-                if( ! controlSource ) console.error( "Duplicate control referenced non-existent source control name: ", control );
-                control.controlValue = controlSource.controlValue;
-              }
-              if( control.controlType === "image" ) {
-                let sourceLayer;
-                const imageInputs = document.querySelectorAll( ".image-input-control" );
-                for( const imageInput of imageInputs ) {
-                  if( imageInput.controlName === control.controlName && imageInput.uplinkLayer ) {
-                    sourceLayer = imageInput.uplinkLayer;
-                  }
-                }
-                if( ! sourceLayer ) {
-                  console.error( "Generate is pulling a random layer for img2img if there's nothing linked up. Need to show error code." );
-                  sourceLayer = layersStack.layers.find( l => l.layerType === "paint" );
-                }
-                if( sourceLayer.layerType === "group" && ! sourceLayer.groupCompositeUpToDate ) {
-                  //replace source layer with composite
-                  updateLayerGroupComposite( sourceLayer );
-                }
-                //cast source layer to generative layer's space
-                const previewLayer = layersStack.layers.find( l => l.layerType === "paint-preview" );
-                sampleLayerInLayer( sourceLayer, selectedLayer, previewLayer, "rgb(0,0,0)" );
-                const dataURL = previewLayer.canvas.toDataURL();
-                //controlValues[ control.controlName ] = dataURL.substring( dataURL.indexOf( "," ) + 1 );
-                controlValues[ control.controlName ] = dataURL;
-              }
-            }
-
+            const controlValues = populateAPIFlowControls( apiFlow );
             //for any values not provided, executeAPICall will retain the default values encoded in those controls, including "static" controltypes
 
             //do the generation
@@ -8780,6 +8821,178 @@ function updateControlValue( apiFlowName, controlName, controlValue ) {
   const apiFlowControl = apiFlow?.controls?.find?.( c => c.controlName === controlName );
   if( apiFlowControl ) apiFlowControl.controlValue = controlValue;
   
+}
+
+function populateAPIFlowControls( apiFlow, selectedLayerInput = false ) {
+
+  const controlValues = {};
+  for( const control of apiFlow.controls ) {
+    controlValues[ control.controlName ] = control.controlValue;
+    if( control.controlType === "randomInt" ) {
+      const r = Math.random();
+      controlValues[ control.controlName ] = parseInt((control.min + r*(control.max-control.min))/control.step) * control.step;
+    }
+    if( control.controlType === "layer-input" ) {
+      //The reason we don't set the .controlLayer:null on the control, is links change with selectedLayer
+      let layerInput = selectedLayer; //necessarily use selected layer, otherwise we can't control the resolution
+      const inputPath = [ ...control.layerPath ];
+      while( inputPath.length ) {
+        layerInput = layerInput[ inputPath.shift() ];
+      }
+      control.controlValue = layerInput;
+      controlValues[ control.controlName ] = layerInput;
+    }
+    if( control.controlType === "duplicate" ) {
+      const controlSource = apiFlow.controls.find( c => c.controlName === control.controlSourceName );
+      if( ! controlSource ) console.error( "Duplicate control referenced non-existent source control name: ", control );
+      else control.controlValue = controlSource.controlValue;
+    }
+    if( control.controlType === "image" ) {
+      let sourceLayer;
+      if( selectedLayerInput === false ) {
+        const imageInputs = document.querySelectorAll( ".image-input-control" );
+        for( const imageInput of imageInputs ) {
+          if( imageInput.controlName === control.controlName && imageInput.uplinkLayer ) {
+            sourceLayer = imageInput.uplinkLayer;
+          }
+        }
+        if( ! sourceLayer ) {
+          console.error( "Generate is pulling a random layer for img2img if there's nothing linked up. Need to show error code." );
+          sourceLayer = layersStack.layers.find( l => l.layerType === "paint" );
+        }
+        if( sourceLayer.layerType === "group" && ! sourceLayer.groupCompositeUpToDate ) {
+          //replace source layer with composite
+          updateLayerGroupComposite( sourceLayer );
+        }
+      }
+      if( selectedLayerInput === true ) {
+        sourceLayer = selectedLayer || batchedLayers[ 0 ];
+        if( ! sourceLayer || sourceLayer.layerType !== "paint" ) {
+          console.error( "Generative input control no source layer selected." );
+          return false;
+        }
+      }
+      //cast source layer to generative layer's space
+      const previewLayer = layersStack.layers.find( l => l.layerType === "paint-preview" );
+      sampleLayerInLayer( sourceLayer, selectedLayer, previewLayer, "rgb(0,0,0)" );
+      const dataURL = previewLayer.canvas.toDataURL();
+      controlValues[ control.controlName ] = dataURL;
+    }
+  }
+
+  return controlValues;
+}
+
+function setupUIGenerativeToolsPanel() {
+
+  const panel = document.querySelector( "#ai-tools-panel" );
+
+  const toolsList = apiFlows.filter( f => f.apiFlowType === "generative-tool" );
+
+  const panelHeight = toolsList.length * 2.5 + 1;
+  panel.style.height = panelHeight + "rem";
+  panel.style.top = `calc( 50% - ${panelHeight/2}rem )`;
+
+  for( const apiFlow of toolsList) {
+    const iconURL = apiFlow.icon;
+    const toolName = apiFlow.apiFlowName;
+
+    //the ai tool button
+    const toolButton = panel.appendChild( document.createElement( "div" ) );
+    toolButton.classList.add( "rounded-line-button", "animated" );
+    toolButton.appendChild( new Image() ).src = iconURL;
+    toolButton.appendChild( document.createElement("span") ).textContent = `${toolName}`;
+    UI.registerElement( toolButton, {
+      onclick: async () => {
+        toolButton.classList.add( "pushed" );
+        setTimeout( () => toolButton.classList.remove( "pushed" ), UI.animationMS );
+        UI.deleteContext( "add-ai-tools-panel-visible" );
+
+        const controlValues = populateAPIFlowControls( apiFlow, true );
+        if( controlValues === false ) {
+          UI.showOverlay.error( "Error: No paint layer selected." );
+          return;
+        }
+        UI.showOverlay.generating();
+        const result = await executeAPICall( toolName, controlValues );
+        UI.hideOverlay.generating();
+        if( result === false ) {
+          UI.showOverlay.error( 'Generation failed. Stuff to check:<ul style="font-size:0.825rem; text-align:left; margin:0; padding:1rem; padding-right:0;"><li>Are the generative controls right?</li><li>Are the image inputs connected?</li><li>Is Comfy/A1111 running?</li><li>Do you have all this API\'s nodes/extensions?</li><li>Do you have all your APIKeys configured right in settings?</li><li>If this is your custom APIFlow, check the dev tools for more info.</li></ul>' );
+        }
+        else if( result[ "generated-image" ] ) {
+          const image = result[ "generated-image" ];
+          const destLayer = selectedLayer || batchedLayers[ 0 ];
+          //I wonder if I need to worry about the coordinates here too though... Hmm.
+          const oldData = {
+            w:destLayer.w, h: destLayer.h,
+            topLeft: [...destLayer.topLeft],
+            bottomLeft: [...destLayer.bottomLeft],
+            topRight: [...destLayer.topRight],
+            bottomRight: [...destLayer.bottomRight],
+            data: destLayer.context.getImageData( 0, 0, destLayer.w, destLayer.h ), 
+          }
+
+          if( image.width !== destLayer.w || image.height !== destLayer.h )
+            cropLayerSizeAndRecordUndo( destLayer, image.width, image.height );
+          history.pop();
+          destLayer.context.drawImage( result[ "generated-image" ], 0, 0 );
+
+          const newData = {
+            w:destLayer.w, h: destLayer.h,
+            topLeft: [...destLayer.topLeft],
+            bottomLeft: [...destLayer.bottomLeft],
+            topRight: [...destLayer.topRight],
+            bottomRight: [...destLayer.bottomRight],
+            data: destLayer.context.getImageData( 0, 0, destLayer.w, destLayer.h ), 
+          }
+
+          const historyEntry = {
+            targetLayer: destLayer,
+            oldData,
+            newData,
+            setLayerData: data => {
+              historyEntry.targetLayer.w = data.w;
+              historyEntry.targetLayer.h = data.h;
+              historyEntry.targetLayer.topLeft = [...data.topLeft];
+              historyEntry.targetLayer.topRight = [...data.topRight];
+              historyEntry.targetLayer.bottomLeft = [...data.bottomLeft];
+              historyEntry.targetLayer.bottomRight = [...data.bottomRight];
+              historyEntry.targetLayer.context.putImageData( data.data, 0, 0 );
+              flagLayerTextureChanged( destLayer, null, true );
+            },
+            undo: () => {
+              historyEntry.setLayerData( historyEntry.oldData );
+            },
+            redo: () => {
+              historyEntry.setLayerData( historyEntry.newData );
+            }
+          }
+
+          recordHistoryEntry( historyEntry );
+
+          if( false ) {
+            const frame = makeLayerFrame( destLayer );
+            destLayer.currentFrameIndex = destLayer.frames.push( frame ) - 1;
+            frame.timeIndex = destLayer.currentFrameIndex;
+            updateLayerFrame( destLayer, frame, true );
+          }
+          //flagLayerTextureChanged( destLayer, null, false );
+          flagLayerTextureChanged( destLayer, null, true );
+        }
+
+      },
+      updateContext: context => {
+        if( context.has( "add-ai-tools-panel-visible" ) ) toolButton.uiActive = true;
+        else toolButton.uiActive = false;
+      }
+    }, { 
+      tooltip: [ `${toolName}`, "to-right", "vertical-center" ],
+      zIndex: 11000
+    } );
+
+    panel.appendChild( toolButton );
+
+  }
 }
 
 function setupUIGenerativeControls( apiFlowName ) {

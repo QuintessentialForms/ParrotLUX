@@ -1,0 +1,101 @@
+{
+  "apiFlowName": "A1111 Layer to Lineart",
+  "apiFlowType": "generative-tool",
+  "icon": "data:image/png;base64,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",
+  "outputs": [
+    {
+      "outputName": "generated-image",
+      "outputType": "image",
+      "outputResultPath": [
+        "cn",
+        "generated-image"
+      ]
+    }
+  ],
+  "controls": [
+    {
+      "controlName": "Preprocessor Module",
+      "controlType": "static",
+      "controlValue": "lineart_anime_denoise",
+      "controlPath": [
+        "cn",
+        "api",
+        "controlnet_module"
+      ]
+    },
+    {
+      "controlName": "resolution",
+      "controlLabel": "Resolution",
+      "controlType": "layer-input",
+      "layerPath": [ "w" ],
+      "controlValue": 1024,
+      "controlPath": [
+        "cn",
+        "api",
+        "controlnet_processor_res"
+      ]
+    },
+    {
+      "controlName": "tool-input",
+      "controlHint": "CN",
+      "controlType": "image",
+      "controlValue": "",
+      "controlLayer": null,
+      "controlPath": [
+        "cn",
+        "api",
+        "controlnet_input_images",
+        0
+      ]
+    },
+    {
+      "controlName": "A1111Host",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Host",
+      "controlValue": "localhost",
+      "controlPath": [
+        "cn",
+        "host"
+      ]
+    },
+    {
+      "controlName": "A1111Port",
+      "controlType": "apiFlowVariable",
+      "variableKey": "A1111Port",
+      "controlValue": 7860,
+      "controlPath": [
+        "cn",
+        "port"
+      ]
+    }
+  ],
+  "apiCalls": [
+    {
+      "apiCallName": "cn",
+      "results": [
+        {
+          "resultName": "generated-image",
+          "resultType": "base64-image",
+          "resultPath": [
+            "images",
+            0
+          ]
+        }
+      ],
+      "host": "localhost",
+      "port": 7860,
+      "apiPath": "/controlnet/detect",
+      "method": "POST",
+      "dataFormat": "JSON",
+      "convertDataImages": false,
+      "api": {
+        "controlnet_module": "none",
+        "controlnet_input_images": [
+          ""
+        ],
+        "controlnet_processor_res": 1024,
+        "low_vram": false
+      }
+    }
+  ]
+}

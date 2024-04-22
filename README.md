@@ -20,6 +20,14 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 
 (It may also work on MacOS and iOS. Untested.)
 
+# New Features in Version 2024.04.22-1-alpha
+
+## Single-Click AI Tools
+
+<p align="center" width="100%"><img width="100%" src="img/2024.04.22-alpha-1.jpg"></p>
+<p align="center" width="100%">Single-Click AI Tools are quick, one-click shortcuts for triggering generative APIFlows. They have all the same power and flexibility as full APIFlows: completely user-creatable, modifiable, and sharable, and capable of connecting to any API backend whether local or in the cloud. But, when using single-click tools, there is no need to configure settings, create new generative layers, or configure layer node-links. Just select a paint layer, single-click the desired tool, then keep working without interruption.</p>
+<p align="center" width="100%">Two example tools ship with the app by default for now, and more will be added soon. Also, these tools are the first to include user-customizable icons, which display alongside the tool's name. :-) Many more custom-image features will soon follow! <i>(Tags, search, favorites, and list-filtering for single-click tools and other assets will be available in beta.)</i></p>
+
 # New Features in Version 2024.04.20-1-alpha
 
 ## Bug Fixes
