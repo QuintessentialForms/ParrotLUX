@@ -4019,6 +4019,7 @@ async function loadConservedSettings() {
 
 const nonSavedSettingsPaths = [
   "toolsSettings.paint.modeSettings.all.brushTipsImages",
+  "toolsSettings.paint.modeSettings.all.brushTexturesImages",
   "toolsSettings.transform",
   "maxUndoSteps",
   "defaultLayerWidth", "defaultLayerHeight",
@@ -4132,8 +4133,9 @@ let uiSettings = {
       mode: "brush", //brush | erase | blend
       modeSettings: {
         "all": {
-          "brushTips": ["res/img/brushes/tip-round01.png"],
-          //"brushTextures": [""],
+          "brushTips": ["data:image/png;base64,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"],
+          //"brushTextures": ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAAAAACMmsGiAAAAEUlEQVQI12P8z8DAwMSAQgAAE1EBB5BfnioAAAAASUVORK5CYII="],
+          "brushTextures": ["data:image/png;base64,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"],
           "brushTiltScale": 0,
           "brushTiltMinAngle": 0.25,
           "brushSize": 3.7,
@@ -4144,11 +4146,18 @@ let uiSettings = {
           "minBrushBlur": 0,
           "maxBrushBlur": 1,
           "brushSpacing": 0.1,
+          "pressureTextureCurvePoints": [[0,0],[1,0]],
           "pressureOpacityCurvePoints": [[0,1],[1,1]],
           "pressureScaleCurvePoints": [[0,0.33],[0.33,0.33],[1,1]],
 
           brushTipsImages: [],
-          //pressureOpacityCurve: pressure => 1,
+          brushTexturesImages: [],
+          pressureTextureCurve: pressure => {
+            return uiSettings.toolsSettings.paint.modeSettings.all.pointCurve(
+              pressure,
+              uiSettings.toolsSettings.paint.modeSettings.all.pressureTextureCurvePoints
+            )
+          },
           pressureOpacityCurve: pressure => {
             return uiSettings.toolsSettings.paint.modeSettings.all.pointCurve(
               pressure,
@@ -4514,6 +4523,7 @@ let uiSettings = {
 const loadedBrushTipsImages = {};
 function loadBrushTipsImages() {
   uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages.length = 0;
+  uiSettings.toolsSettings.paint.modeSettings.all.brushTexturesImages.length = 0;
   for( const url of uiSettings.toolsSettings.paint.modeSettings.all.brushTips ) {
     if( loadedBrushTipsImages[ url ] )
       uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages.push( loadedBrushTipsImages[ url ] )
@@ -4522,6 +4532,16 @@ function loadBrushTipsImages() {
       img.src = url;
       loadedBrushTipsImages[ url ] = img;
       uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages.push( img );
+    }
+  }
+  for( const url of uiSettings.toolsSettings.paint.modeSettings.all.brushTextures ) {
+    if( loadedBrushTipsImages[ url ] )
+      uiSettings.toolsSettings.paint.modeSettings.all.brushTexturesImages.push( loadedBrushTipsImages[ url ] )
+    else {
+      const img = new Image();
+      img.src = url;
+      loadedBrushTipsImages[ url ] = img;
+      uiSettings.toolsSettings.paint.modeSettings.all.brushTexturesImages.push( img );
     }
   }
 }
@@ -4535,13 +4555,14 @@ function loadBrush( brush ) {
   const brushKeysAll = [
     "brushTips", "brushTiltScale", "brushTiltMinAngle", "brushSize", "minBrushSize",
     "maxBrushSize", "brushOpacity", "brushBlur", "minBrushBlur", "maxBrushBlur", "brushSpacing",
-    "pressureOpacityCurvePoints", "pressureScaleCurvePoints" ],
+    "pressureOpacityCurvePoints", "pressureScaleCurvePoints", "pressureTextureCurvePoints" ],
     brushKeysBlend = [
       "blendPull", "blendAlpha"
     ];
   for( const allKey of brushKeysAll )
-    if( brush.hasOwnProperty( allKey ) )
+    if( brush.hasOwnProperty( allKey ) ) {
       all[ allKey ] = brush[ allKey ];
+    }
   for( const blendKey of brushKeysBlend )
     if( brush.hasOwnProperty( blendKey ) )
       blend[ blendKey ] = brush[ blendKey ];
@@ -10968,6 +10989,7 @@ const paintGPUResources2 = {
 
   brushTipTexture: null,
   brushTipCanvas: document.createElement( "canvas" ),
+  brushTextureTexture: null,
 
   blendSourceTexture: null, //this is a copy of the target layer
 
@@ -10999,7 +11021,11 @@ const paintGPUResources2 = {
   rgbas: null,
   rgbaBuffer: null,
   rgbaIndex: null,
+  miscs: null,
+  miscBuffer: null,
+  miscIndex: null,
   brushTipIndex: null,
+  brushTextureIndex: null,
   blendSourceIndex: null,
   blendAlphaIndex: null,
   eraseAmountIndex: null,
@@ -11018,11 +11044,13 @@ function setupPaintGPU2() {
   const vertexShaderSource = `#version 300 es
     in vec4 xyuv;
     in vec4 rgba;
+    in vec4 misc;
     in int pointIndex;
 
     out vec2 brushTipUV;
     out vec2 blendUV;
     out vec4 paintColor;
+    out vec4 miscData;
     flat out int pointBlendIndex;
     
     void main() {
@@ -11030,6 +11058,7 @@ function setupPaintGPU2() {
       brushTipUV = xyuv.zw;
       blendUV = xyuv.xy;
       paintColor = rgba;
+      miscData = misc;
       gl_Position = vec4(xyuv.xy,rgba.a,1);
     }`;
   //gl_FragCoord: Represents the current fragment's window-relative coordinates and depth
@@ -11045,6 +11074,7 @@ function setupPaintGPU2() {
   uniform sampler2D blendOrigins;
   uniform sampler2D blendHLegs;
   uniform sampler2D blendVLegs;
+  uniform sampler2D brushTexture;
   
   uniform float blendAlpha; //blendAlpha is a mixture ratio. 0=pure pigment; 1=pure blend
   uniform float eraseAmount;
@@ -11054,11 +11084,12 @@ function setupPaintGPU2() {
   in vec2 brushTipUV;
   in vec2 blendUV;
   in vec4 paintColor; //meanwhile, paint alpha (brush opacity) controls how much we change our base canvas
-  
+  in vec4 miscData;
+
   out vec4 outColor;
   
   vec4 blendLookup( vec2 uv ) {
-  
+
     //accumulate into a vector
     vec4 blendColor = vec4(0.0);
   
@@ -11091,9 +11122,31 @@ function setupPaintGPU2() {
   
   void main() {
   
+    vec2 brushTipUV = brushTipUV.xy;
+    float brushTextureWeight = miscData.x;
+    vec2 brushTextureOffset = miscData.yz;
+
+    vec2 brushTextureUV = vec2(
+      mod( float( gl_FragCoord.x ) / 64.0, 1.0 ),
+      mod( float( gl_FragCoord.y ) / 64.0, 1.0 )
+    );
+
     vec4 brushTipLookup = texture( brushTip, brushTipUV );
+    vec4 brushTextureLookup = texture(
+      brushTexture,
+      vec2(
+        mod( brushTextureUV.x + brushTextureOffset.x, 1.0 ),
+        mod( brushTextureUV.y + brushTextureOffset.y, 1.0 )
+      )
+    );
     vec4 paint = vec4( paintColor.rgb, paintColor.a * brushTipLookup.a );
   
+    //when my paint alpha nears zero, my brush textureweight is at its max
+    //when my paint alpha nears one, my brush textureweight nears nothing
+    brushTextureWeight = ( brushTextureWeight * 0.5 ) + ( brushTextureWeight * ( 1.0 - paint.a ) );
+
+    float brushTextureValue = ( brushTextureWeight * brushTextureLookup.r ) + ( 1.0 - brushTextureWeight );
+
     //A 16 scenarios:
     if( paint.a == 0.0 ) discard;
   
@@ -11103,7 +11156,7 @@ function setupPaintGPU2() {
     if( eraseAmount == 1.0 ) {
       outColor = vec4(
           destLookup.rgb,
-          destLookup.a * ( 1.0 - paint.a )
+          destLookup.a * ( 1.0 - paint.a ) * ( 1.0 - brushTextureValue )
       );
       gl_FragDepth = paint.a;
       return;
@@ -11111,16 +11164,19 @@ function setupPaintGPU2() {
   
     //C 2 scenarios
     if( blendAlpha == 0.0 && destLookup.a == 0.0 ) {
-      outColor = paint;
+      outColor = vec4(
+        paint.rgb,
+        paint.a * brushTextureValue
+      );
       gl_FragDepth = paint.a;
       return;
     }
   
     //D 2 scenarios:
     if( blendAlpha == 0.0 && destLookup.a > 0.0 ) {
-      float totalOpacity = clamp( destLookup.a + paint.a, 0.0, 1.0 );
-      float paintWeight = paint.a / totalOpacity;
-      float destWeight = ( totalOpacity - paint.a ) / totalOpacity;
+      float totalOpacity = clamp( destLookup.a + ( paint.a * brushTextureValue ), 0.0, 1.0 );
+      float paintWeight = ( paint.a * brushTextureValue ) / totalOpacity;
+      float destWeight = ( totalOpacity - ( paint.a * brushTextureValue ) ) / totalOpacity;
       outColor = vec4(
           sqrt( ( paintWeight * pow( paint.r, 2.0 ) ) + ( destWeight * pow( destLookup.r, 2.0 ) ) ),
           sqrt( ( paintWeight * pow( paint.g, 2.0 ) ) + ( destWeight * pow( destLookup.g, 2.0 ) ) ),
@@ -11135,7 +11191,7 @@ function setupPaintGPU2() {
     float blendLookupA = blendLookup.a * paint.a;
     
     //I 1 scenario:
-    if( blendAlpha == 1.0 && blendLookupA < 0.0 ) discard;
+    if( blendAlpha == 1.0 && blendLookupA < 0.0 ) discard; // < 0.0 means no blend pixels accumulated during average step
   
     //H 1 scenario:
     if( blendAlpha == 1.0 && destLookup.a == 0.0 && blendLookup.a == 0.0 ) discard;
@@ -11144,7 +11200,7 @@ function setupPaintGPU2() {
     if( blendAlpha == 1.0 && destLookup.a == 0.0 && blendLookupA > 0.0 ) {
       outColor = vec4(
           blendLookup.rgb,
-          blendLookupA
+          blendLookupA * brushTextureValue
       );
       gl_FragDepth = blendLookupA;
       return;
@@ -11153,7 +11209,7 @@ function setupPaintGPU2() {
     //F 1 scenario:
     /* if( blendAlpha == 1.0 && destLookup.a > 0.0 && blendLookupA > 0.0 ) {
       //float totalOpacity = clamp( destLookup.a + blendLookupA, 0.0, 1.0 );
-      //float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a ); //new code, untested
+      //float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a ); //new code, iffy theory
 
       float totalOpacity = clamp( destLookup.a + ( blendLookupA * paint.a ), 0.0, 1.0 );
       float blendWeight = ( blendLookupA * paint.a ) / totalOpacity;
@@ -11173,7 +11229,7 @@ function setupPaintGPU2() {
     } */
     if( blendAlpha == 1.0 && destLookup.a > 0.0 && blendLookupA > 0.0 ) {
       //float totalOpacity = clamp( destLookup.a + blendLookupA, 0.0, 1.0 );
-      float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a ); //new code, untested
+      float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a * brushTextureValue ); //new code, iffy theory
       float blendWeight = blendLookupA;
       float destWeight = 1.0 - blendWeight;
       outColor = vec4(
@@ -11188,7 +11244,7 @@ function setupPaintGPU2() {
   
     //G 1 scenario:
     if( blendAlpha == 1.0 && destLookup.a > 0.0 && blendLookupA == 0.0 ) {
-      float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a ); //new code, untested
+      float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a * brushTextureValue ); //new code, iffy theory
       outColor = vec4(
           destLookup.rgb,
           mixedOpacity
@@ -11200,141 +11256,6 @@ function setupPaintGPU2() {
     discard;
   
   }`;
-
-  const old_fragmentShaderSource = `#version 300 es
-    precision highp float;
-
-    uniform sampler2D brushTip;
-    uniform sampler2D blendSource;
-    uniform sampler2D blendOrigins;
-    uniform sampler2D blendHLegs;
-    uniform sampler2D blendVLegs;
-
-    uniform float blendAlpha; //blendAlpha is a mixture ratio. 0=pure pigment; 1=pure blend
-    uniform float eraseAmount;
-    uniform int blendPull;
-
-    flat in int pointBlendIndex;
-    in vec2 brushTipUV;
-    in vec2 blendUV;
-    in vec4 paintColor; //meanwhile, paint alpha (brush opacity) controls how much we change our base canvas
-
-    out vec4 outColor;
-
-    vec4 blendLookup( vec2 uv ) {
-
-      //accumulate into a vector
-      vec4 blendColor = vec4(0.0);
-
-      //start at pointBlendIndex
-      //count down from pointBlendIndex to limit or zero
-      float count = 0.0, totalCount = 0.0;
-      for( int i = max( 0, ( pointBlendIndex - blendPull ) ), j = pointBlendIndex; i < j; i++ ) {
-        //get our origin and legs 
-        highp vec4 origin = texelFetch( blendOrigins, ivec2(i,0), 0 );
-        highp vec4 hLeg = texelFetch( blendHLegs, ivec2(i,0), 0 );
-        highp vec4 vLeg = texelFetch( blendVLegs, ivec2(i,0), 0 );
-        //get our coordinate along the trail
-        vec2 blendTrailUV = ( ( origin.xy + (hLeg.xy * uv.x) + (vLeg.xy * uv.y) ) + 1.0 ) / 2.0;
-        vec4 blendTrailLookup = texture( blendSource, blendTrailUV );
-        if( blendTrailLookup.a == 0.0 ) continue;
-        count += 1.0;
-        totalCount += count;
-        blendColor += blendTrailLookup * count;
-      }
-
-      blendColor /= max( 1.0, totalCount );
-
-      return blendColor;
-
-    }
-    
-    vec4 oldblendLookup( vec2 uv ) {
-      //accumulate into a vector
-      vec4 blendColor = vec4(0.0);
-
-      //start at pointBlendIndex
-      //count down from pointBlendIndex to limit or zero
-      int c = 0;
-      for( int i = pointBlendIndex, j = max( 1, ( pointBlendIndex - blendPull ) ); i >= j; i-- ) {
-        //get our origin and legs 
-        highp vec4 origin = texelFetch( blendOrigins, ivec2(i,0), 0 );
-        highp vec4 hLeg = texelFetch( blendHLegs, ivec2(i,0), 0 );
-        highp vec4 vLeg = texelFetch( blendVLegs, ivec2(i,0), 0 );
-        //get our coordinate along the trail
-        vec2 blendTrailUV = ( ( origin.xy + (hLeg.xy * uv.x) + (vLeg.xy * uv.y) ) + 1.0 ) / 2.0;
-        vec4 blendTrailLookup = texture( blendSource, blendTrailUV );
-        if( blendTrailLookup.a == 0.0 ) continue;
-        blendColor += blendTrailLookup;
-        c += 1;
-      }
-
-      blendColor /= max( 1.0, float(c) );
-
-      return blendColor;
-
-    }
-    
-    void main() {
-
-      vec4 brushTipLookup = texture( brushTip, brushTipUV );
-
-      if( brushTipLookup.a == 0.0 ) { discard; }
-
-      vec4 destLookup = texture( blendSource, ( blendUV + 1.0 ) / 2.0 );
-
-      //we want to completely ignore the RGB component of a 0-alpha blendsource
-      //and, when blendAlpha=1, we want to completely ignore the paint's rgb component
-      vec4 blendSourceLookup = vec4(
-        mix( paintColor.rgb, destLookup.rgb, clamp( destLookup.a + blendAlpha, 0.0, 1.0 ) ),
-        destLookup.a
-      );
-      vec4 blendCompositeLookup = blendLookup( brushTipUV.xy );
-
-      //let's mix the paint and the blend composite
-      vec4 mixedMedia = vec4(
-        sqrt( ( ( 1.0 - blendAlpha ) * pow( paintColor.r, 2.0 ) ) + ( blendAlpha * pow( blendCompositeLookup.r, 2.0 ) ) ),
-        sqrt( ( ( 1.0 - blendAlpha ) * pow( paintColor.g, 2.0 ) ) + ( blendAlpha * pow( blendCompositeLookup.g, 2.0 ) ) ),
-        sqrt( ( ( 1.0 - blendAlpha ) * pow( paintColor.b, 2.0 ) ) + ( blendAlpha * pow( blendCompositeLookup.b, 2.0 ) ) ),
-        ( ( 1.0 - blendAlpha ) * paintColor.a ) + ( blendAlpha * blendCompositeLookup.a )
-      );
-     
-
-      //pretty sure we want the mixed alpha here
-      float alpha = mixedMedia.a * brushTipLookup.a;
-
-      gl_FragDepth = alpha;
-
-      //TODO: mix texture into alpha somehow... ulp.
-
-      //If blendSourceLookup.a == 0, completely overwrite its RGB with mixedMedia (destAlpha = 0)
-      //If blendSourceLookup.a == 1, just replace it with 1-src_alpha
-      //If we're pure blending (blendAlpha==1), completely overwrite blendsource's rgb with mixed media?
-      float destAlpha = mix( 0.0, 1.0 - alpha, blendSourceLookup.a );
-      float srcAlpha = 1.0 - destAlpha;
-
-      //Not bleeding black at all!!! :-)
-      //Very short blends have weird sharp-edge artifacts. Won't debug today.
-      
-      //mix the blend source with the paint via the alpha
-      vec3 mixedPaint = vec3(
-        sqrt( ( destAlpha * pow( blendSourceLookup.r, 2.0 ) ) + ( srcAlpha * pow( mixedMedia.r, 2.0 ) ) ),
-        sqrt( ( destAlpha * pow( blendSourceLookup.g, 2.0 ) ) + ( srcAlpha * pow( mixedMedia.g, 2.0 ) ) ),
-        sqrt( ( destAlpha * pow( blendSourceLookup.b, 2.0 ) ) + ( srcAlpha * pow( mixedMedia.b, 2.0 ) ) )
-      );
-
-      //What if we're erasing? eraseAmount = 0, behave as normal. eraseAmount = 1, erase without polluting color
-      //if eraseAmount = 0, add alphas. If eraseAmount = 1, destination alpha = blendSourceLookup.a - alpha. :-)
-
-      //When we're blending in transparent onto opaque, we want to cut out the opaque.
-      //But not everywhere. Only where our brush is solid. If our brush's opacity is 0, we want to keep the opaque.
-
-      float sourceAlpha = mix( blendSourceLookup.a, 0.0, blendAlpha * brushTipLookup.a );
-      float destinationAlpha = mix( clamp( sourceAlpha + alpha, 0.0, 1.0 ), clamp( sourceAlpha - alpha, 0.0, 1.0 ), eraseAmount );
-
-      outColor = vec4( mix( mixedPaint.rgb, blendSourceLookup.rgb, eraseAmount ), destinationAlpha );
-      
-    }`;
 
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
     gl.shaderSource(vertexShader,vertexShaderSource);
@@ -11410,6 +11331,36 @@ function setupPaintGPU2() {
       }
     }
 
+    //this is weight data and 3 unused
+    {
+      const misc = [
+        //top-left triangle
+        0,0, 0,0,
+        0,0, 0,0,
+        0,0, 0,0,
+        //bottom-right triangle
+        0,0, 0,0,
+        0,0, 0,0,
+        0,0, 0,0,
+      ];
+      {
+        const miscBuffer = gl.createBuffer();
+        const rgbaInputIndex = gl.getAttribLocation( program, "misc" );
+        paintGPUResources2.miscIndex = rgbaInputIndex;
+        paintGPUResources2.miscBuffer = miscBuffer;
+        paintGPUResources2.miscs = misc;
+        gl.bindBuffer(gl.ARRAY_BUFFER,paintGPUResources2.miscBuffer);
+        gl.bufferData( gl.ARRAY_BUFFER, new Float32Array(paintGPUResources2.miscs), gl.STREAM_DRAW );
+    
+        //push a description of our vertex data's structure
+        gl.enableVertexAttribArray( paintGPUResources2.miscIndex );
+        {
+          const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+          gl.vertexAttribPointer( paintGPUResources2.miscIndex, size, dType, normalize, stride, offset );
+        }
+      }
+    }
+
     paintGPUResources2.indices = [ 0,0,0, 0,0,0 ];
     {
       paintGPUResources2.indexInputIndex = gl.getAttribLocation( program, "pointIndex" );
@@ -11426,12 +11377,14 @@ function setupPaintGPU2() {
     }
 
     paintGPUResources2.brushTipIndex = gl.getUniformLocation( paintGPUResources2.program, "brushTip" );
+    paintGPUResources2.brushTextureIndex = gl.getUniformLocation( paintGPUResources2.program, "brushTexture" );
     paintGPUResources2.blendSourceIndex = gl.getUniformLocation( paintGPUResources2.program, "blendSource" );
     paintGPUResources2.eraseAmountIndex = gl.getUniformLocation( paintGPUResources2.program, "eraseAmount" );
     paintGPUResources2.blendAlphaIndex = gl.getUniformLocation( paintGPUResources2.program, "blendAlpha" );
     paintGPUResources2.blendPullIndex = gl.getUniformLocation( paintGPUResources2.program, "blendPull" );
     
     paintGPUResources2.brushTipTexture = gl.createTexture();
+    paintGPUResources2.brushTextureTexture = gl.createTexture();
     paintGPUResources2.blendSourceTexture = gl.createTexture();
     
     paintGPUResources2.blendOriginsIndex = gl.getUniformLocation( paintGPUResources2.program, "blendOrigins" );
@@ -11511,8 +11464,8 @@ function setupPaintGPU2() {
       //set filtering
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
     }
 
 
@@ -11596,38 +11549,58 @@ function beginPaintGPU2( layer ) {
   }
 
   //upload our brush tip texture
-  const brushTipImage = uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages[ 0 ];
-  const brushTipCanvas = paintGPUResources2.brushTipCanvas;
   {
-    //This blue code is a total mess, and the result is unusably bad. Seriously. I need to write it myself instead of relying on the browser's awful implementation.
-    const { brushBlur, brushSize } = uiSettings.toolsSettings.paint.modeSettings.all;
-    const blur = brushBlur * brushSize;
-    let w = brushTipCanvas.width = brushSize + 6 * blur;
-    let h = brushTipCanvas.height = brushSize * brushTipImage.height / brushTipImage.width + 6 * blur;
-    let iw = brushSize, ih = brushSize * brushTipImage.height / brushTipImage.width;
-    const btx = brushTipCanvas.getContext( "2d" );
-    btx.save();
-    btx.clearRect( 0, 0, w, h );
-    btx.filter = "blur(" + blur + "px)";
-    btx.translate( w/2 - iw/2, h/2 - ih/2 )
-    for( let i=0, j=blur; i<=j; i++ )
-      btx.drawImage( brushTipImage, i+Math.random()*3-1.5, i+Math.random()*3-1.5, iw-2*i, ih-2*i );
-    btx.restore();
-    //document.body.appendChild( brushTipCanvas );
-    //brushTipCanvas.style = "position:absolute; left:20px; width:100px; border:1px solid red; background-color:white;";
+    const brushTipImage = uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages[ 0 ];
+    const brushTipCanvas = paintGPUResources2.brushTipCanvas;
+    {
+      //This blue code is a total mess, and the result is unusably bad. Seriously. I need to write it myself instead of relying on the browser's awful implementation.
+      const { brushBlur, brushSize } = uiSettings.toolsSettings.paint.modeSettings.all;
+      const blur = brushBlur * brushSize;
+      let w = brushTipCanvas.width = brushSize + 6 * blur;
+      let h = brushTipCanvas.height = brushSize * brushTipImage.height / brushTipImage.width + 6 * blur;
+      let iw = brushSize, ih = brushSize * brushTipImage.height / brushTipImage.width;
+      const btx = brushTipCanvas.getContext( "2d" );
+      btx.save();
+      btx.clearRect( 0, 0, w, h );
+      btx.filter = "blur(" + blur + "px)";
+      btx.translate( w/2 - iw/2, h/2 - ih/2 )
+      for( let i=0, j=blur; i<=j; i++ )
+        btx.drawImage( brushTipImage, i+Math.random()*3-1.5, i+Math.random()*3-1.5, iw-2*i, ih-2*i );
+      btx.restore();
+      //document.body.appendChild( brushTipCanvas );
+      //brushTipCanvas.style = "position:absolute; left:20px; width:100px; border:1px solid red; background-color:white;";
+    }
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.brushTipTexture );
+    {
+      const mipLevel = 0,
+      internalFormat = gl.RGBA,
+      srcFormat = gl.RGBA,
+      srcType = gl.UNSIGNED_BYTE;
+      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, brushTipCanvas );
+  
+      //gl.generateMipmap( paintGPUResources.brushTipTexture );
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
   }
-  gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.brushTipTexture );
-  {
-    const mipLevel = 0,
-    internalFormat = gl.RGBA,
-    srcFormat = gl.RGBA,
-    srcType = gl.UNSIGNED_BYTE;
-    gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, brushTipCanvas );
 
-    //gl.generateMipmap( paintGPUResources.brushTipTexture );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  //upload our brush texture texture
+  {
+    const brushTextureImage = uiSettings.toolsSettings.paint.modeSettings.all.brushTexturesImages[ 0 ];
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.brushTextureTexture );
+    {
+      const mipLevel = 0,
+      internalFormat = gl.RGBA,
+      srcFormat = gl.RGBA,
+      srcType = gl.UNSIGNED_BYTE;
+      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, srcFormat, srcType, brushTextureImage );
+  
+      //gl.generateMipmap( paintGPUResources.brushTipTexture );
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
   }
 
   //reset our point histories arrays
@@ -11780,6 +11753,8 @@ function paintGPU2( points, layer ) {
   vertices.length = 0;
   const rgbas = paintGPUResources2.rgbas;
   rgbas.length = 0;
+  const miscs = paintGPUResources2.miscs;
+  miscs.length = 0;
   const indices = paintGPUResources2.indices;
   //the blend data buffers are cumulative, and indicesCount is cumulative,
   //but the indices we upload to the GPU each draw call are reset each draw call
@@ -11836,6 +11811,7 @@ function paintGPU2( points, layer ) {
       const pointPressure = uiSettings.toolsSettings.paint.modeSettings.all.pressureScaleCurve( paintPressure );
       let scaledBrushSize = brushSize * pointPressure * ( 1 + 1*brushBlur );
       let scaledOpacity = brushOpacity * uiSettings.toolsSettings.paint.modeSettings.all.pressureOpacityCurve( paintPressure );
+      let scaledTextureWeight = uiSettings.toolsSettings.paint.modeSettings.all.pressureTextureCurve( paintPressure );
   
       //our brush size in canvas pixels (this should probably be global pixels: scale again by layer canvas's scale)
       const tipImageWidth = paintGPUResources2.brushTipCanvas.width,
@@ -11912,6 +11888,22 @@ function paintGPU2( points, layer ) {
         ];
 
         rgbas.push( ...colors );
+
+        const textureXOffset = Math.random(),
+          textureYOffset = Math.random();
+
+        const weights = [
+          //top-left triangle
+          scaledTextureWeight, textureXOffset,textureYOffset, 0,
+          scaledTextureWeight, textureXOffset,textureYOffset, 0,
+          scaledTextureWeight, textureXOffset,textureYOffset, 0,
+          //bottom-right triangle
+          scaledTextureWeight, textureXOffset,textureYOffset, 0,
+          scaledTextureWeight, textureXOffset,textureYOffset, 0,
+          scaledTextureWeight, textureXOffset,textureYOffset, 0,
+        ];
+
+        miscs.push( ...weights );
 
         //push the point index for this point
         const pointIndex = paintGPUResources2.indicesCount;
@@ -11999,6 +11991,16 @@ function paintGPU2( points, layer ) {
       gl.vertexAttribPointer( paintGPUResources2.rgbaIndex, size, dType, normalize, stride, offset );
     }
   
+    //upload our miscs
+    {
+      gl.bindBuffer(gl.ARRAY_BUFFER,paintGPUResources2.miscBuffer);
+      gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( miscs ), gl.STREAM_DRAW );
+      //Do we need to reupload this description of our vertex data's structure? Did VAO keep it? Or did we lose it on rebuffering?
+      gl.enableVertexAttribArray( paintGPUResources2.miscIndex );
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( paintGPUResources2.miscIndex, size, dType, normalize, stride, offset );
+    }
+  
     //upload our indices
     {
       gl.bindBuffer(gl.ARRAY_BUFFER,paintGPUResources2.indexBuffer);
@@ -12020,7 +12022,7 @@ function paintGPU2( points, layer ) {
     gl.uniform1i( paintGPUResources2.blendSourceIndex, 1 );
 
     //upload our blend origin and legs textures
-    let textureIndex = 2;
+    let textureIndex = 2; //2, 3, and 4
     for( const mode of [ "blendOrigins", "blendHLegs", "blendVLegs" ] ) {
       const texture = paintGPUResources2[ mode + "Texture" ],
         data = paintGPUResources2[ mode + "Array" ];
@@ -12044,6 +12046,11 @@ function paintGPU2( points, layer ) {
 
       textureIndex += 1;
     }
+    
+    //set our brush texture as the texture texture (index 5)
+    gl.activeTexture( gl.TEXTURE0 + 5 );
+    gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.brushTextureTexture );
+    gl.uniform1i( paintGPUResources2.brushTextureIndex, 5 );
   
     //set our blend alpha
     gl.uniform1f( paintGPUResources2.blendAlphaIndex, blendAlpha );

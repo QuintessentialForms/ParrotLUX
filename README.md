@@ -20,6 +20,15 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 
 (It may also work on MacOS and iOS. Untested.)
 
+# New Features in Version 2024.04.24-1-alpha
+
+## Brush Custom Paper-Texture Effect
+
+<p align="center" width="100%"><img width="100%" src="img/2024.04.24-alpha-1.jpg"></p>
+<p align="center" width="100%">Brushes now support a customizable textured appearance (like paper, for example). When creating a custom brush in-app, the brush's texture will be uploaded as a second image along with uploading the image definining the brush's tip. The intensity of the texture effect will be defined as a point-curve controlled by the pen pressure dynamics--the same as opacity and scale. Currently, only the built-in "Pencil" brush has a texture effect applied by default. <i>(Currently, custom brushes can only be created and edited by modifying the .json files in the "/res/brushes" directory. In-app brush editing will be available in beta.)</i></p>
+
+## Single-Click AI Tools
+
 # New Features in Version 2024.04.22-1-alpha
 
 ## Single-Click AI Tools

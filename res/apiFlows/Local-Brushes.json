@@ -24,6 +24,10 @@
           "path": [ "brushTips" ]
         },
         {
+          "key": "brushTextures",
+          "path": [ "brushTextures" ]
+        },
+        {
           "key": "brushTiltScale",
           "path": [ "brushTiltScale" ]
         },
@@ -62,6 +66,10 @@
         {
           "key": "brushSpacing",
           "path": [ "brushSpacing" ]
+        },
+        {
+          "key": "pressureTextureCurvePoints",
+          "path": [ "pressureTextureCurvePoints" ]
         },
         {
           "key": "pressureOpacityCurvePoints",
