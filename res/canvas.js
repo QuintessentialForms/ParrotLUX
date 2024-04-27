@@ -256,6 +256,243 @@ function getPreviewLayer() {
   return layersStack.layers.find( l => l.layerType === "paint-preview" );
 }
 
+//the pixels object
+const Pixels = {
+  gnv: null,
+  gl: null,
+  cnv: null,
+  ctx: null,
+  ready: false,
+
+  readFramebuffer: null,
+  writeFramebuffer: null,
+
+  idCount: 0,
+  sources: {},
+  views: [],
+  recycledCanvases: [],
+
+};
+{
+  const MAX_16 = 2**16 - 1,
+    MAX_32 = 2**32 - 1;
+  const STRING_FORMAT = "image/webp";
+  const setup = ( webgl2Canvas, webgl2Context ) => {
+    Pixels.gnv = webgl2Canvas;
+    Pixels.gl = webgl2Context;
+    Pixels.cnv = document.createElement( "canvas" );
+    Pixels.ctx = Pixels.cnv.getContext( "2d" );
+    Pixels.readFramebuffer = Pixels.gl.createFramebuffer();
+    Pixels.writeFramebuffer = Pixels.gl.createFramebuffer();
+    Pixels.ready = true;
+  }
+  const reservePixels = ( formatInfo, w, h ) => {
+    const { channelCount, bytesPerChannel } = formatInfo;
+    const id = Pixels.idCount + 1;
+    Pixels.sources[ id ] = {
+      id,
+      formatKey, channelCount, bytesPerChannel, w, h,
+      accessed: Date.now(),
+      data: null
+    };
+    return id;
+  };
+  const initializePixels = id => {
+    const source = Pixels.sources[ id ];
+    const { channelCount, bytesPerChannel, w, h } = source;
+    const dataLength = channelCount * w * h;
+    let data;
+    if( bytesPerChannel === 1 ) data = new Uint8Array( dataLength );
+    if( bytesPerChannel === 2 ) data = new Uint16Array( dataLength );
+    if( bytesPerChannel === 4 ) data = new Uint32Array( dataLength );
+    //if( bytesPerChannel === 8 ) data = new BigUint64Array( dataLength );
+    //No obvious way to process 64-bit channel images???
+    source.data = data;
+    source.accessed = Date.now();
+  };
+
+  const getPixelsSource = id => {
+    //check if the source has been stored, and reload from storage
+    //this should also populate a save view; we're caching all our immediate ops to avoid duplication
+    const source = Pixels.sources[ id ];
+    return source;
+  }
+
+  const disposable32FromSource = () => {
+    //use this to get our paint texture from layer texture? Hmm.
+  }
+
+  const getPixelsSave = id => {
+    //Compression test results:
+    //For non-random data, webp is smaller than binary (1.7% of size for linear data) and smaller than png
+    //For a 1-channel random image (2 zero-filled channels, opaque alpha), webp is 1/3 the size of binary.
+    //For a 1-channel linear image (2 zero-filled channels, opaque alpha), webp is 1/3 the size of binary.
+    //Binary data always retrieved with perfect accuracy if and only if opaque alpha
+
+    let view = null;
+    
+    if( ! view ) {
+      const source = getPixelsSource( id );
+      const { channelCount, bytesPerChannel, w, h, data } = source;
+      
+      const saveObject = { id, channelCount, bytesPerChannel, w, h, channels: new Array( channelCount ) };
+  
+      let imagesPerChannel = parseInt( bytesPerChannel / 3 );
+      if( bytesPerChannel % 3 !== 0 ) imagesPerChannel += 1;
+  
+      const { channels } = saveObject;
+      const { cnv, ctx } = Pixels;
+      cnv.width = w;
+      cnv.height = h;
+  
+      //Our data is a list of 32-bit ints representing RGBA
+      //We want to walk by strides of 4: 0,3,7... Gives us our R32 values
+      //For each R32 value, we have 4 bytes
+      //3 of those bytes go in the RGB of image[0]
+      //1 of those bytes goes in the R of image[1]
+  
+      for( let channelId = 0; channelId < channelCount; channelId++ ) {
+        channels[ channelId ] = new Array( imagesPerChannel );
+        for( let channelImageIndex = 0; channelImageIndex < imagesPerChannel; channelImageIndex++ ) {
+          const imageData = ctx.createImageData( w, h );
+          const dest = imageData.data;
+          //walk along our channel values
+          for( let channelValueIndex = channelId, countIndex = 0; channelValueIndex < data.length; channelValueIndex += channelCount, countIndex++ ) {
+            const imageDataIndex = countIndex * 4;
+            //store first 3 bytes
+            if( channelImageIndex === 0 ) {
+              dest[ imageDataIndex + 0 ] = data[ channelValueIndex ] && 0xFF;
+              dest[ imageDataIndex + 1 ] = ( data[ channelValueIndex ] >> 8 ) && 0xFF;
+              dest[ imageDataIndex + 2 ] = ( data[ channelValueIndex ] >> 16 ) && 0xFF;
+              dest[ imageDataIndex + 3 ] = 0xFF;
+            }
+            //store 4th byte
+            if( channelImageIndex === 1 ) {
+              dest[ imageDataIndex + 0 ] = ( data[ channelValueIndex ] >> 24 ) && 0xFF;
+              dest[ imageDataIndex + 1 ] = 0xFF;
+              dest[ imageDataIndex + 2 ] = 0xFF;
+              dest[ imageDataIndex + 3 ] = 0xFF;
+            }
+          }
+          ctx.putImageData( imageData, 0, 0 );
+          channels[ channelId ][ channelImageIndex ] = cnv.toDataURL( STRING_FORMAT, 1 );
+        }
+      }
+  
+      view = { id, save: saveObject, w, h, accessed: Date.now() }
+    }
+
+    return view;
+
+  }
+
+  const loadPixelsSave = saveObject => {
+
+    const { id, channelCount, bytesPerChannel, w, h, channels } = saveObject;
+    Pixels.sources[ id ] = { }
+
+  }
+
+  const cleanUpMemory = () => {
+    //compare total memory against reasonable or configured limits
+    //if there is desirable action:
+    //  clear out unused views
+    //  store unused data
+  }
+
+  const getPixelsView = ( id, formatKey, w, h, options ) => {
+    //For texture formats:
+    //https://webgl2fundamentals.org/webgl/lessons/webgl-data-textures.html
+    const { gl, gnv } = Pixels;
+    const source = getPixelsSource( id );
+    if( formatKey === "texture-u32" && ( w !== source.w ) || ( h !== source.h ) ) {
+      throw console.error( "Pixel view 'texture-u32' must match pixel source dimensions! Did you mean to use 'texture-rgba8-scaled'?" );
+    }
+
+    let view = Pixels.views.find( v => v.id === id && v.formatKey === formatKey && v.w === w && v.h === h );
+
+    if( ! view ) {
+      if( formatKey === "texture-u32" ) {
+        //TODO: Don't assume source format! I want r8 format for masks and selections.
+        //native format
+        //create a gltexture and upload the source data
+        const texture = gl.createTexture();
+        gl.bindTexture( gl.TEXTURE_2D, texture );
+        gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA32UI, source.w, source.h, gl.RGBA_INTEGER, gl.UNSIGNED_INT, source.data );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        view = { id, formatKey, texture, w, h, accessed: Date.now() }
+        Pixels.views.push( view );
+      }
+      if( formatKey === "texture-rgba8-scaled" ) {
+        //proven working in experiment
+        //TODO: Update renderlayers to use this blit op instead of last screen-draw
+        //get the texture 32 view
+        const texture32View = getPixelsView( id, "texture-u32", source.w, source.h );
+        //attach the texture 32 view to the read framebuffer
+        {
+          gl.bindTexture( gl.TEXTURE_2D, texture32View.texture );
+          gl.bindFramebuffer( gl.FRAMEBUFFER, Pixels.readFramebuffer );
+          gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture32View.texture, 0 );
+        }
+
+        const texture = gl.createTexture();
+        gl.bindTexture( gl.TEXTURE_2D, texture );
+        gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        //attach the scaled texture to the write framebuffer
+        {
+          gl.bindTexture( gl.TEXTURE_2D, texture );
+          gl.bindFramebuffer( gl.FRAMEBUFFER, Pixels.writeFramebuffer );
+          gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        }
+
+        //bind the read and write framebuffers
+        gl.bindFramebuffer( gl.READ_FRAMEBUFFER, Pixels.readFramebuffer );
+        gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, Pixels.writeFramebuffer );
+        //copy
+        gl.blitFramebuffer( 0, 0, source.w, source.h, 0, 0, w, h, gl.COLOR_BUFFER_BIT, gl.NEAREST );
+
+        view = { id, formatKey, texture, w, h, accessed: Date.now() };
+
+      }
+      if( formatKey === "canvas" ) {
+        //return an HTML canvas
+
+        //get the scaled pixel view
+        //bind the texture to the readFramebuffer
+        //get a recycled canvas, or create a new one
+        //gl.readpixels into an image data
+        //put the image data onto the canvas
+        //return the canvas
+      }
+      if( formatKey === "string" ) {
+        //return a data url string (this is NOT a lossless compression of the pixel data)
+        
+        //get the canvas view
+        //call toDataURL with png, webp, or jpg depending on options{}
+        //return the string view
+      }
+      if( formatKey === "image" ) {
+        //return an HTML image
+
+        //get the string, options{}: lossless png/webp (for export) |or| lossy jpg (e.g. UI frame thumbnail)
+      }
+      //etc
+    }
+
+    view.accessed = Date.now();
+
+    return view;
+  };
+
+
+
+}
+
 let layersAddedCount = -2;
 async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibling=null, doNotUpdate=false ) {
   
@@ -332,6 +569,8 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
     setVisibility: null,
     opacity:1.0,
     setOpacity: null,
+    alphaLocked: false,
+    setAlphaLocked: null,
 
     generativeSettings: { apiFlowName },
     generativeControls: {},
@@ -528,6 +767,19 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
       { tooltip: ["Select Layer", "to-left", "above-center" ], zIndex:100 }
     );
 
+    //add the header and footer rows
+    let headerRow, footerRow;
+    {
+      headerRow = document.createElement( "div" );
+      headerRow.classList.add( "layer-button-header-row" );
+      layerButton.appendChild( headerRow );
+    }
+    {
+      footerRow = document.createElement( "div" );
+      footerRow.classList.add( "layer-button-footer-row" );
+      layerButton.appendChild( footerRow );
+    }
+
     //add the layer type icon
     {
       const groupIcon = document.createElement( "div" );
@@ -538,6 +790,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
           groupIcon,
           {
             onclick: () => {
+              if( newLayer.layerType !== "group" ) return;
               newLayer.groupClosed = ! newLayer.groupClosed;
               if( newLayer.groupClosed ) {
                 groupIcon.querySelector( ".tooltip" ).textContent = "Open Group";
@@ -613,31 +866,6 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
       layerButton.appendChild( lowerDropzoneGroupJoiner );
     }
 
-    //add the opacity slider
-    {
-      newLayer.setOpacity = ( opacity, skipHTML=false ) => {
-        newLayer.opacity = opacity;
-        if( skipHTML === false ) opacitySlider.setValue( opacity );
-      }
-      const opacitySlider = UI.make.slider( {
-        orientation: "horizontal",
-        onchange: value => newLayer.setOpacity( value, true ),
-        initialValue: 1,
-        min: 0,
-        max: 1,
-        tooltip: [ "Set Layer Opacity", "to-left", "vertical-center" ],
-        zIndex:1000,
-        updateContext: () => {
-          if( typeof opacitySlider !== "object" ) return;
-          if( layerButton.classList.contains( "active" ) )
-            opacitySlider.classList.remove( "hidden" );
-          else opacitySlider.classList.add( "hidden" );
-        }
-      })
-      opacitySlider.classList.add( "layer-opacity-slider", "animated" );
-      layerButton.appendChild( opacitySlider );
-    }
-
     //the visibility button
     {
       newLayer.setVisibility = visible => {
@@ -652,9 +880,32 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         { onclick: () => newLayer.setVisibility( !newLayer.visible ) },
         { tooltip: [ "Layer Visibility On/Off", "above", "to-left-of-center" ], zIndex:1000 }
       )
-      layerButton.appendChild( visibilityButton );
+      headerRow.appendChild( visibilityButton );
     }
     
+    //the alpha lock button
+    {
+      newLayer.setAlphaLocked = alphaLocked => {
+        newLayer.alphaLocked = alphaLocked;
+        if( newLayer.alphaLocked ) alphaLockButton.classList.add( "locked" );
+        else alphaLockButton.classList.remove( "locked" );
+      }
+      const alphaLockButton = document.createElement( "div" );
+      alphaLockButton.classList.add( "layer-alpha-lock-button", "unlocked", "layer-ui-button", "animated" );
+      UI.registerElement(
+        alphaLockButton,
+        {
+          onclick: () => newLayer.setAlphaLocked( !newLayer.alphaLocked ),
+          updateContext: () => {
+            if( newLayer.layerType === "paint" ) alphaLockButton.classList.remove( "hidden" );
+            else alphaLockButton.classList.add( "hidden" );
+          }
+        },
+        { tooltip: [ "Layer Alpha Lock/Unlock", "above", "to-left-of-center" ], zIndex:1000 }
+      )
+      headerRow.appendChild( alphaLockButton );
+    }
+
     //the duplicate button
     {
       const duplicateButton = document.createElement( "div" );
@@ -755,7 +1006,57 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         },
         { tooltip: [ "Duplicate Layer", "above", "to-left-of-center" ], zIndex:1000 }
       )
-      layerButton.appendChild( duplicateButton );
+      headerRow.appendChild( duplicateButton );
+    }
+
+    //the layer name
+    {
+      const layerName = document.createElement( "div" );
+      layerName.classList.add( "layer-name", "animated"  );
+      const layerNameText = layerName.appendChild( document.createElement( "span" ) );
+      layerNameText.classList.add( "layer-name-text" );
+      layerNameText.textContent = newLayer.layerName;
+      UI.registerElement(
+        layerName,
+        {
+          onclick: () => {
+            UI.showOverlay.text({
+              value: newLayer.layerName,
+              onapply: text => {
+                //get old and new values
+                const oldLayerName = newLayer.layerName;
+                const newLayerName = text;
+                
+                newLayer.layerName = text;
+                layerNameText.textContent = newLayer.layerName;
+                layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
+  
+                const historyEntry = {
+                  oldLayerName,
+                  newLayerName,
+                  targetLayer: newLayer,
+                  undo: () => {
+                    newLayer.layerName = oldLayerName;
+                    layerNameText.textContent = newLayer.layerName;
+                    layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
+                  },
+                  redo: () => {
+                    newLayer.layerName = newLayerName;
+                    layerNameText.textContent = newLayer.layerName;
+                    layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
+                  }
+                }
+                recordHistoryEntry( historyEntry );
+              }
+            });
+          },
+          updateContext: () => {
+            layerNameText.textContent = newLayer.layerName;
+          }
+        },
+        { tooltip: [ `Rename Layer [${newLayer.layerName}]`, "above", "to-left-of-center" ], zIndex:1000 },
+      )
+      headerRow.appendChild( layerName );
     }
 
     //the delete button
@@ -774,7 +1075,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         },
         { tooltip: [ "Delete Layer", "above", "to-left-of-center" ], zIndex:1000 },
       )
-      layerButton.appendChild( deleteButton );
+      headerRow.appendChild( deleteButton );
     }
 
     //the move handle
@@ -907,57 +1208,32 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         },
         { tooltip: [ "Reorganize Layer", "to-left", "vertical-center" ], zIndex:1000 },
       )
-      layerButton.appendChild( moveHandle );
+      footerRow.appendChild( moveHandle );
     }
 
-    //the layer name
+    //add the opacity slider
     {
-      const layerName = document.createElement( "div" );
-      layerName.classList.add( "layer-name", "animated"  );
-      const layerNameText = layerName.appendChild( document.createElement( "span" ) );
-      layerNameText.classList.add( "layer-name-text" );
-      layerNameText.textContent = newLayer.layerName;
-      UI.registerElement(
-        layerName,
-        {
-          onclick: () => {
-            UI.showOverlay.text({
-              value: newLayer.layerName,
-              onapply: text => {
-                //get old and new values
-                const oldLayerName = newLayer.layerName;
-                const newLayerName = text;
-                
-                newLayer.layerName = text;
-                layerNameText.textContent = newLayer.layerName;
-                layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
-  
-                const historyEntry = {
-                  oldLayerName,
-                  newLayerName,
-                  targetLayer: newLayer,
-                  undo: () => {
-                    newLayer.layerName = oldLayerName;
-                    layerNameText.textContent = newLayer.layerName;
-                    layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
-                  },
-                  redo: () => {
-                    newLayer.layerName = newLayerName;
-                    layerNameText.textContent = newLayer.layerName;
-                    layerName.querySelector( ".tooltip" ).textContent = `Rename Layer [${newLayer.layerName}]`;
-                  }
-                }
-                recordHistoryEntry( historyEntry );
-              }
-            });
-          },
-          updateContext: () => {
-            layerNameText.textContent = newLayer.layerName;
-          }
-        },
-        { tooltip: [ `Rename Layer [${newLayer.layerName}]`, "above", "to-left-of-center" ], zIndex:1000 },
-      )
-      layerButton.appendChild( layerName );
+      newLayer.setOpacity = ( opacity, skipHTML=false ) => {
+        newLayer.opacity = opacity;
+        if( skipHTML === false ) opacitySlider.setValue( opacity );
+      }
+      const opacitySlider = UI.make.slider( {
+        orientation: "horizontal",
+        onchange: value => newLayer.setOpacity( value, true ),
+        initialValue: 1,
+        min: 0,
+        max: 1,
+        tooltip: [ "Set Layer Opacity", "to-left", "vertical-center" ],
+        zIndex:1000,
+        updateContext: () => {
+          if( typeof opacitySlider !== "object" ) return;
+          if( layerButton.classList.contains( "active" ) )
+            opacitySlider.classList.remove( "hidden" );
+          else opacitySlider.classList.add( "hidden" );
+        }
+      })
+      opacitySlider.classList.add( "layer-opacity-slider", "animated" );
+      footerRow.appendChild( opacitySlider );
     }
 
     //add the merge-down button
@@ -1095,7 +1371,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         },
         { tooltip: [ "Merge Layer Down", "above", "to-left-of-center" ], zIndex:1000 }
       )
-      layerButton.appendChild( mergeButton );
+      footerRow.appendChild( mergeButton );
     }
 
     //the flatten button
@@ -1179,7 +1455,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         { tooltip: [ "Flatten Group to Paint Layer", "above", "to-left-of-center" ], zIndex:1000 }
       );
       
-      layerButton.appendChild( flattenButton );
+      footerRow.appendChild( flattenButton );
     }
 
     //add the convert to paint layer button
@@ -1204,10 +1480,6 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                 }
               }
             }
-
-            //update the layer type icon
-            layerButton.querySelector( ".layer-type-icon" ).classList.remove( "generative" );
-            layerButton.querySelector( ".layer-type-icon" ).classList.add( "paint" );
     
             const oldFrames = newLayer.frames,
               oldFrameIndex = newLayer.currentFrameIndex;
@@ -1234,9 +1506,6 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                 //reinstall popped uplinks
                 for( const [uplinkingLayer,uplink] of historyEntry.poppedUplinks )
                   uplinkingLayer.nodeUplinks.add( uplink );
-                //update the layer type icon
-                newLayer.layerButton.querySelector( ".layer-type-icon" ).classList.add( "generative" );
-                newLayer.layerButton.querySelector( ".layer-type-icon" ).classList.remove( "paint" );
                 //reinstall the old frames
                 historyEntry.newLayer.frames = historyEntry.oldFrames;
                 historyEntry.newLayer.currentFrameIndex = historyEntry.oldFrameIndex;
@@ -1247,9 +1516,6 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
                 //repop popped uplinks
                 for( const [uplinkingLayer,uplink] of historyEntry.poppedUplinks )
                   uplinkingLayer.nodeUplinks.delete( uplink );
-                //update the layer type icon
-                layerButton.querySelector( ".layer-type-icon" ).classList.remove( "generative" );
-                layerButton.querySelector( ".layer-type-icon" ).classList.add( "paint" );
                 //reinstall the new frames
                 historyEntry.newLayer.frames = historyEntry.newFrames;
                 historyEntry.newLayer.currentFrameIndex = 0;
@@ -1271,7 +1537,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
         { tooltip: [ "Convert to Paint Layer", "above", "to-left-of-center" ], zIndex:1000 }
       )
       
-      layerButton.appendChild( convertToPaintbutton );
+      footerRow.appendChild( convertToPaintbutton );
     }
 
     //add the node link source
@@ -1528,16 +1794,28 @@ function reorganizeLayerButtons() {
   for( let i=layersStack.layers.length-1; i>=0; i-- ) {
     const layer = layersStack.layers[ i ];
     if( layer.layerType === "paint-preview" ) continue;
+
     if( layer.layerButton.classList.contains( "dragging-layer-button" ) ) {
       uiContainer.appendChild( layer.layerButton );
       continue;
     }
+
     if( checkLayerInsideClosedGroup( layer ) ) continue;
+
+    //set the layer icon
+    const iconElement = layer.layerButton.querySelector( ".layer-type-icon" );
+    let iconClassName = "layer-type-icon tooltip-holder " + layer.layerType;
+    if( layer.layerType === "group" ) {
+      if( layer.groupClosed === false ) iconClassName += " open";
+    } else {
+      iconClassName += " no-hover";
+    }
+    iconElement.className = iconClassName;
+
     if( layer.layerType === "group" && layer === selectedLayer ) {
       updateLayerGroupCoordinates( layer );
-      if( layer.groupClosed === false ) layer.layerButton.querySelector( ".layer-type-icon.group" ).classList.add( "open" );
-      if( layer.groupClosed === true ) layer.layerButton.querySelector( ".layer-type-icon.group" ).classList.remove( "open" );
     }
+
     layersColumn.appendChild( layer.layerButton );
     const layerGroupDepth = Math.min( 5, getLayerGroupDepth( layer ) );
     if( layerGroupDepth > 0 ) {
@@ -3725,6 +4003,43 @@ function setupGL( testImageTexture ) {
     in vec2 uv;
     out vec4 outColor;
     
+    vec3 hsl2rgb( vec3 c ) {
+        vec3 rgb = clamp( abs(mod(c.x*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0, 0.0, 1.0 );
+        return c.z + c.y * (rgb-0.5)*(1.0-abs(2.0*c.z-1.0));
+    }
+    vec3 rgb2hsl( vec3 c ){
+      float h = 0.0;
+      float s = 0.0;
+      float l = 0.0;
+      float r = c.r;
+      float g = c.g;
+      float b = c.b;
+      float cMin = min( r, min( g, b ) );
+      float cMax = max( r, max( g, b ) );
+    
+      l = ( cMax + cMin ) / 2.0;
+      if ( cMax > cMin ) {
+        float cDelta = cMax - cMin;
+            
+            //s = l < .05 ? cDelta / ( cMax + cMin ) : cDelta / ( 2.0 - ( cMax + cMin ) ); Original
+        s = l < .0 ? cDelta / ( cMax + cMin ) : cDelta / ( 2.0 - ( cMax + cMin ) );
+            
+        if ( r == cMax ) {
+          h = ( g - b ) / cDelta;
+        } else if ( g == cMax ) {
+          h = 2.0 + ( b - r ) / cDelta;
+        } else {
+          h = 4.0 + ( r - g ) / cDelta;
+        }
+    
+        if ( h < 0.0) {
+          h += 6.0;
+        }
+        h = h / 6.0;
+      }
+      return vec3( h, s, l );
+    }
+
     void main() {
 
       vec4 canvasLookup = texture( canvas, ( xy + 1.0 ) * 0.5 );
@@ -3741,7 +4056,32 @@ function setupGL( testImageTexture ) {
       vec4 maskColor = vec4( mix( vec3( 1.0 ), vec3( borderShade ), 0.5 ), mask * maskLookup.a );
 
       //draw the mask under our mainColor, and with the mask 50% opacity, still see the layer beneath
-      vec4 compositeColor = vec4( mix( mix( maskColor.rgb, mainColor.rgb, ( 1.0 - maskColor.a ) ), mainColor.rgb, mainColor.a ), clamp( mainColor.a + maskColor.a, 0.0, 1.0 ) );
+      vec4 compositeColor = vec4(
+        mix(
+          mix(
+            maskColor.rgb,
+            mainColor.rgb,
+            ( 1.0 - maskColor.a )
+          ),
+          mainColor.rgb,
+          mainColor.a
+        ),
+        clamp( mainColor.a + maskColor.a, 0.0, 1.0 )
+      );
+
+      /* vec3 adjustedColor = rgb2hsl( compositeColor.rgb );
+      //hsl
+      //have to think through how to scale these toward 100% though
+      //adjustedColor.x = clamp( mod( adjustedColor.x + time, 1.0 ), 0.0, 1.0 );
+      //adjustedColor.y = clamp( mod( adjustedColor.y + time * 10.0, 1.0 ), 0.0, 1.0 );
+      //adjustedColor.z = clamp( mod( adjustedColor.z + time * 10.0, 1.0 ), 0.0, 1.0 );
+      adjustedColor = hsl2rgb( adjustedColor );
+      contrastFactor = 1.0; //Just increase for more contrast. Probably a better way though.
+      adjustedColor.r = clamp( contrastFactor * ( adjustedColor.r - 0.5 ) + 0.5, 0.0, 1.0 );
+      adjustedColor.g = clamp( contrastFactor * ( adjustedColor.g - 0.5 ) + 0.5, 0.0, 1.0 );
+      adjustedColor.b = clamp( contrastFactor * ( adjustedColor.b - 0.5 ) + 0.5, 0.0, 1.0 );
+
+      compositeColor = vec4( adjustedColor, compositeColor.a ); */
 
       if( compositeColor.a == 0.0 && canvasLookup.a == 0.0 ) discard;
 
@@ -9537,6 +9877,7 @@ function saveJSON() {
 
       visible,
       opacity,
+      alphaLocked,
 
       generativeSettings,
       generativeControls,
@@ -9570,6 +9911,7 @@ function saveJSON() {
 
       visible,
       opacity,
+      alphaLocked,
 
       rig,
       textInfo,
@@ -9711,6 +10053,7 @@ function loadJSON() {
       
             visible,
             opacity,
+            alphaLocked,
       
             generativeSettings,
             generativeControls,
@@ -9731,30 +10074,32 @@ function loadJSON() {
             topLeft, topRight, bottomLeft, bottomRight,
           } = layer;
 
-          newLayer.layerType = layerType;
-          newLayer.layerName = layerName;
-          newLayer.layerId = layerId;
+          newLayer.layerType = layerType || "paint";
+          newLayer.layerName = layerName || "Unnamed Layer";
+          newLayer.layerId = layerId; //no pre-id versioning available
           layersAddedCount = Math.max( layersAddedCount, layerId )
-          newLayer.layerGroupId = layerGroupId;
+          newLayer.layerGroupId = layerGroupId || null;
           newLayer.groupCompositeUpToDate = false;
-          newLayer.groupClosed = groupClosed;
+          newLayer.groupClosed = groupClosed || false;
 
           //newLayer.visible = visible;
-          newLayer.setVisibility( visible ); //update icon
+          newLayer.setVisibility( visible || true ); //update icon
           //newLayer.opacity = opacity;
-          newLayer.setOpacity( opacity ); //update slider position
+          newLayer.setOpacity( isNan( opacity ) ? 1.0 : opacity ); //update slider position
+          //newLayer.alphaLocked = alphaLocked
+          newLayer.setAlphaLocked( alphaLocked || false ); //update lock icon
 
           newLayer.generativeSettings = generativeSettings;
           newLayer.generativeControls = generativeControls;
 
           newLayer.currentFrameIndex = uiSettings.currentTimeSeekIndex;
-          newLayer.frames = frames;
+          newLayer.frames = frames || [];
           
-          newLayer.nodeUplinks = new Set( nodeUplinks );
+          newLayer.nodeUplinks = new Set( nodeUplinks||[] );
 
-          newLayer.rig = rig;
-          newLayer.textInfo = textInfo;
-          newLayer.vectors = vectors;
+          if( rig ) newLayer.rig = rig;
+          if( textInfo ) newLayer.textInfo = textInfo;
+          if( vectors ) newLayer.vectors = vectors;
 
           newLayer.w = w;
           newLayer.h = h;
@@ -9764,6 +10109,7 @@ function loadJSON() {
           newLayer.bottomRight = bottomRight;
 
           newLayer.textureChanged = false;
+          newLayer.maskChanged = false;
           //initialized to full panel, leave
           //newLayer.textureChangedRect = textureChangedRect;
         }
@@ -10987,6 +11333,8 @@ function transformLayerPoint( p ) {
 
 const paintGPUResources2 = {
 
+  alphaLocked: 0,
+
   brushTipTexture: null,
   brushTipCanvas: document.createElement( "canvas" ),
   brushTextureTexture: null,
@@ -11029,6 +11377,7 @@ const paintGPUResources2 = {
   blendSourceIndex: null,
   blendAlphaIndex: null,
   eraseAmountIndex: null,
+  alphaLockedIndex: null,
   
   modRect: {x:0,y:0,x2:0,y2:0,w:0,h:0},
   blendDistanceTraveled: 0,
@@ -11079,6 +11428,7 @@ function setupPaintGPU2() {
   uniform float blendAlpha; //blendAlpha is a mixture ratio. 0=pure pigment; 1=pure blend
   uniform float eraseAmount;
   uniform int blendPull;
+  uniform float alphaLocked;
   
   flat in int pointBlendIndex;
   in vec2 brushTipUV;
@@ -11154,6 +11504,7 @@ function setupPaintGPU2() {
   
     //B 8 scenarios:
     if( eraseAmount == 1.0 ) {
+      //alphaLocked ignored for erase
       outColor = vec4(
           destLookup.rgb,
           destLookup.a * ( 1.0 - paint.a ) * ( 1.0 - brushTextureValue )
@@ -11162,8 +11513,14 @@ function setupPaintGPU2() {
       return;
     }
   
+    //? ? scenarios not mapped for alphalocked
+    if( alphaLocked == 1.0 && destLookup.a == 0.0 ) {
+      discard;
+    }
+
     //C 2 scenarios
     if( blendAlpha == 0.0 && destLookup.a == 0.0 ) {
+      //if alphaLocked, already discarded
       outColor = vec4(
         paint.rgb,
         paint.a * brushTextureValue
@@ -11181,7 +11538,7 @@ function setupPaintGPU2() {
           sqrt( ( paintWeight * pow( paint.r, 2.0 ) ) + ( destWeight * pow( destLookup.r, 2.0 ) ) ),
           sqrt( ( paintWeight * pow( paint.g, 2.0 ) ) + ( destWeight * pow( destLookup.g, 2.0 ) ) ),
           sqrt( ( paintWeight * pow( paint.b, 2.0 ) ) + ( destWeight * pow( destLookup.b, 2.0 ) ) ),
-          totalOpacity
+          mix( totalOpacity, destLookup.a, alphaLocked )
       );
       gl_FragDepth = paint.a;
       return;
@@ -11198,6 +11555,7 @@ function setupPaintGPU2() {
   
     //E 1 scenario:
     if( blendAlpha == 1.0 && destLookup.a == 0.0 && blendLookupA > 0.0 ) {
+      //if alphaLocked, already discarded
       outColor = vec4(
           blendLookup.rgb,
           blendLookupA * brushTextureValue
@@ -11236,7 +11594,7 @@ function setupPaintGPU2() {
           sqrt( ( blendWeight * pow( blendLookup.r, 2.0 ) ) + ( destWeight * pow( destLookup.r, 2.0 ) ) ),
           sqrt( ( blendWeight * pow( blendLookup.g, 2.0 ) ) + ( destWeight * pow( destLookup.g, 2.0 ) ) ),
           sqrt( ( blendWeight * pow( blendLookup.b, 2.0 ) ) + ( destWeight * pow( destLookup.b, 2.0 ) ) ),
-          mixedOpacity
+          mix( mixedOpacity, destLookup.a, alphaLocked )
       );
       gl_FragDepth = blendLookupA;
       return;
@@ -11247,7 +11605,7 @@ function setupPaintGPU2() {
       float mixedOpacity = mix( destLookup.a, blendLookup.a, paint.a * brushTextureValue ); //new code, iffy theory
       outColor = vec4(
           destLookup.rgb,
-          mixedOpacity
+          mix( mixedOpacity, destLookup.a, alphaLocked )
       );
       gl_FragDepth = paint.a;
       return;
@@ -11382,6 +11740,7 @@ function setupPaintGPU2() {
     paintGPUResources2.eraseAmountIndex = gl.getUniformLocation( paintGPUResources2.program, "eraseAmount" );
     paintGPUResources2.blendAlphaIndex = gl.getUniformLocation( paintGPUResources2.program, "blendAlpha" );
     paintGPUResources2.blendPullIndex = gl.getUniformLocation( paintGPUResources2.program, "blendPull" );
+    paintGPUResources2.alphaLockedIndex = gl.getUniformLocation( paintGPUResources2.program, "alphaLocked" );
     
     paintGPUResources2.brushTipTexture = gl.createTexture();
     paintGPUResources2.brushTextureTexture = gl.createTexture();
@@ -11478,6 +11837,9 @@ function beginPaintGPU2( layer ) {
   //  always copy our source to our preview (and hide our source in loop draw)
 
   //const layer = selectedLayer;
+
+  if( layer.alphaLocked === true ) paintGPUResources2.alphaLocked = 1;
+  else paintGPUResources2.alphaLocked = 0;
 
   gl.bindVertexArray(paintGPUResources2.vao);
 
@@ -11633,6 +11995,7 @@ function paintGPU2( points, layer ) {
 
   //const layer = selectedLayer;
 
+  const { alphaLocked } = paintGPUResources2;
   const settings = uiSettings.toolsSettings.paint.modeSettings;
   const { brushTipsImages, brushAspectRatio, brushTiltScale, brushTiltMinAngle, brushSize, brushOpacity, brushBlur, brushSpacing } = settings.all;
   const colorRGB = settings.brush.colorModes[ settings.brush.colorMode ].getRGBFloat();
@@ -11776,6 +12139,7 @@ function paintGPU2( points, layer ) {
       let paintX = canvasTransformAx*(f**3) + 3*cp1x*(f**2)*(fr) + 3*cp2x*(f)*(fr**2) + canvasTransformBx*(fr**3),
         paintY = canvasTransformAy*(f**3) + 3*cp1y*(f**2)*(fr) + 3*cp2y*(f)*(fr**2) + canvasTransformBy*(fr**3);
 
+      //TODO: spline interpolate pressure and angles!
       //linearly interpolate our pressure and angles
       let paintPressure = bPressure*fr + aPressure*f,
         altitudeAngle = bAltitudeAngle*fr + aAltitudeAngle*f, //against screen z-axis
@@ -12058,6 +12422,8 @@ function paintGPU2( points, layer ) {
     gl.uniform1f( paintGPUResources2.eraseAmountIndex, eraseAmount );
     //set our blend pull (this is in points, as per spacing)
     gl.uniform1i( paintGPUResources2.blendPullIndex, blendPull );
+    //set our alphaLocked
+    gl.uniform1f( paintGPUResources2.alphaLockedIndex, alphaLocked );
 
     //draw the triangles
     {

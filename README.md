@@ -2,7 +2,7 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (Version: 2024.04.20-1-alpha)
+# ParrotLUX (Version: 2024.04.27-1-alpha)
 A Painting App for Open-Source AI
 
 This app is currently in Alpha version. Expect bugs and missing features. Tuturials and documentation will be added soon.
@@ -19,6 +19,13 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 (*Pen pressure is unavailable on Windows.)
 
 (It may also work on MacOS and iOS. Untested.)
+
+# New Features in Version 2024.04.27-1-alpha
+
+## Alpha Lock on Paint Layer
+
+<p align="center" width="100%"><img width="100%" src="img/2024.04.27-alpha-1.jpg"></p>
+<p align="center" width="100%">There is now an "alpha lock" icon on the paint layer button, in the top-left next to the visibility icon. When activated, paint strokes will appear only on top of already-painted regions of the layer.</p>
 
 # New Features in Version 2024.04.24-1-alpha
 
