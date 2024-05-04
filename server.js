@@ -1,29 +1,40 @@
 "use strict";
 
-const { networkInterfaces, type } = require("os");
+let ipAddress, displayAddress;
+let dirPrefix = "";
+if( global.inAndroidApp !== true ) {
+	
+    const { networkInterfaces, type } = require("os");
 
-const nets = networkInterfaces();
-const results = [];
+    const nets = networkInterfaces();
+    const results = [];
 
-for (const name of Object.keys(nets)) {
-    for (const net of nets[name]) {
-        // Skip over non-IPv4 and internal (i.e. 127.0.0.1) addresses
-        // 'IPv4' is in Node <= 17, from 18 it's a number 4 or 6
-        const familyV4Value = typeof net.family === 'string' ? 'IPv4' : 4
-        if (net.family === familyV4Value && !net.internal) {
-            results.push( net.address );
+    for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+            // Skip over non-IPv4 and internal (i.e. 127.0.0.1) addresses
+            // 'IPv4' is in Node <= 17, from 18 it's a number 4 or 6
+            const familyV4Value = typeof net.family === 'string' ? 'IPv4' : 4
+            if (net.family === familyV4Value && !net.internal) {
+                results.push( net.address );
+            }
         }
     }
-}
 
-let ipAddress = results.find( ip => ip.indexOf( "192" ) === 0 );
-if( ! ipAddress ) {
-    ipAddress = "127.0.0.1";
-    console.log( "Local network IP address not found. App will only be accessible on this device." );
-}
+    ipAddress = results.find( ip => ip.indexOf( "192" ) === 0 );
+    if( ! ipAddress ) {
+        ipAddress = "127.0.0.1";
+        console.log( "Local network IP address not found. App will only be accessible on this device." );
+    }
 
-let displayAddress = ipAddress;
-ipAddress = "0.0.0.0";
+    displayAddress = ipAddress;
+    ipAddress = "0.0.0.0";
+
+} else {
+    
+	displayAddress = ipAddress = "127.0.0.1";
+    dirPrefix = __dirname + "/";
+
+}
 
 const http = require( 'http' );
 const https = require( 'https' );
@@ -46,26 +57,26 @@ const server = http.createServer(
             
             if( url === '/' ) {
                 response.writeHead( 200 , { 'Content-Type': 'text/html' } );
-                const indexFile = fss.readFileSync( 'res/canvas.html' );
+                const indexFile = fss.readFileSync( dirPrefix + 'res/canvas.html' );
                 response.write( indexFile );
                 //response.end( '\n<!-- Comment at end of file! -->\n' );
                 response.end();
             }
             if( url.indexOf( '/store.js' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'text/javascript' } );
-                const codeFile = fss.readFileSync( 'res/store.js' );
+                const codeFile = fss.readFileSync( dirPrefix + 'res/store.js' );
                 response.write( codeFile );
                 response.end();
             }
             if( url.indexOf( '/canvas.js' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'text/javascript' } );
-                const codeFile = fss.readFileSync( 'res/canvas.js' );
+                const codeFile = fss.readFileSync( dirPrefix + 'res/canvas.js' );
                 response.write( codeFile );
                 response.end();
             }
             if( url.indexOf( '/canvas.css' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'text/css' } );
-                const styleFile = fss.readFileSync( 'res/canvas.css' );
+                const styleFile = fss.readFileSync( dirPrefix + 'res/canvas.css' );
                 response.write( styleFile );
                 response.end();
             }
@@ -77,7 +88,7 @@ const server = http.createServer(
                     ref = "res/img/ui/icon-" + iconName + ".png";
                 if( okay ) { okay = fss.existsSync( ref ); }
                 if( okay ) {
-                    const iconImageFile = fss.readFileSync( ref );
+                    const iconImageFile = fss.readFileSync( dirPrefix + ref );
                     response.writeHead( 200 , { 'Content-Type': 'image/png' } );
                     response.write( iconImageFile );
                     response.end();
@@ -92,7 +103,7 @@ const server = http.createServer(
                     ref = "res/apiFlows/" + apiFlowName + ".json";
                 if( okay ) { okay = fss.existsSync( ref ); }
                 if( okay ) {
-                    const apiFlowJSONFile = fss.readFileSync( ref );
+                    const apiFlowJSONFile = fss.readFileSync( dirPrefix + ref );
                     response.writeHead( 200 , { 'Content-Type': 'text/json' } );
                     response.write( apiFlowJSONFile );
                     response.end();
@@ -120,7 +131,7 @@ const server = http.createServer(
                 const directory = fss.readdirSync( brushesFolder, { withFileTypes: true } );
                 for( const fileEntry of directory ) {
                     if( fileEntry.isFile() && ! fileEntry.isDirectory() ) {
-                        brushFiles.push( fss.readFileSync( "res/brushes/" + fileEntry.name ) );
+                        brushFiles.push( fss.readFileSync( dirPrefix + "res/brushes/" + fileEntry.name ) );
                     }
                 }
                 response.writeHead( 200, { 'Content-Type': 'text/json' } );
@@ -130,25 +141,25 @@ const server = http.createServer(
 
             if( url.indexOf( '/paper.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = fss.readFileSync( 'res/paper.png' );
+                const paperFile = fss.readFileSync( dirPrefix + 'res/paper.png' );
                 response.write( paperFile );
                 response.end();
             }
             if( url.indexOf( '/ColorWheel-Base.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = fss.readFileSync( 'res/ColorWheel-Base.png' );
+                const paperFile = fss.readFileSync( dirPrefix + 'res/ColorWheel-Base.png' );
                 response.write( paperFile );
                 response.end();
             }
             if( url.indexOf( '/ColorWheel-Slots-Lower.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = fss.readFileSync( 'res/ColorWheel-Slots-Lower.png' );
+                const paperFile = fss.readFileSync( dirPrefix + 'res/ColorWheel-Slots-Lower.png' );
                 response.write( paperFile );
                 response.end();
             }
             if( url.indexOf( '/ColorWheel-Slots-Upper.png' ) === 0 ) {
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const paperFile = fss.readFileSync( 'res/ColorWheel-Slots-Upper.png' );
+                const paperFile = fss.readFileSync( dirPrefix + 'res/ColorWheel-Slots-Upper.png' );
                 response.write( paperFile );
                 response.end();
             }
@@ -157,7 +168,7 @@ const server = http.createServer(
                 //Brush images should be DataURIs in JSON, just make the converter already
                 const filename = url.replace( '/res/img/brushes/', '' );
                 response.writeHead( 200 , { 'Content-Type': 'image/png' } );
-                const brushtipFile = fss.readFileSync( 'res/img/brushes/' + filename );
+                const brushtipFile = fss.readFileSync( dirPrefix + 'res/img/brushes/' + filename );
                 response.write( brushtipFile );
                 response.end();
             }

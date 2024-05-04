@@ -2,7 +2,7 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (Version: 2024.04.27-1-alpha)
+# ParrotLUX (Version: 2024.05.04-1-alpha)
 A Painting App for Open-Source AI
 
 This app is currently in Alpha version. Expect bugs and missing features. Tuturials and documentation will be added soon.
@@ -19,6 +19,17 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 (*Pen pressure is unavailable on Windows.)
 
 (It may also work on MacOS and iOS. Untested.)
+
+# New Features in Version 2024.05.04-1-alpha
+
+## View Controls
+
+<p align="center" width="100%"><img width="100%" src="img/2024.05.04-alpha-1.jpg"></p>
+<p align="center" width="100%">You can now find view controls in the bottom-left corner of the app, beside the undo/redo buttons. These allow you to reset the view's zoom and rotation, or to lock rotation or zoom. <i>(If rotation is locked, the pinch gesture will only pan and zoom the view, so you can keep your drawing right-way-up. If zoom is locked, the pinch gesture will only pan and rotate the view, so you can keep your drawing at a fixed size.)</i></p>
+
+## Bug Fixes
+<p align="center" width="100%">Bug fixes include one resulting in saved projects not loading.</p>
+
 
 # New Features in Version 2024.04.27-1-alpha
 

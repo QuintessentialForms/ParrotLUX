@@ -4357,6 +4357,7 @@ async function loadConservedSettings() {
   return true;
 }
 
+//these settings are not included in a save file
 const nonSavedSettingsPaths = [
   "toolsSettings.paint.modeSettings.all.brushTipsImages",
   "toolsSettings.paint.modeSettings.all.brushTexturesImages",
@@ -4369,8 +4370,16 @@ const nonSavedSettingsPaths = [
   "paintBusyTimeout",
   "clickTimeMS",
   "retryAPIDelay",
+
+  "alwaysLockCanvasRotate",
+  "lockCanvasRotate",
+  "lockCanvasZoom",
+  "lockTransformRotate",
+  "lockTransformZoom",
 ];
 
+//these settings persist across app close/open
+//(untested for Android APK!)
 const conservedSettingsKeys = [
   "maxUndoSteps",
   "defaultLayerWidth", "defaultLayerHeight",
@@ -4380,6 +4389,11 @@ const conservedSettingsKeys = [
   "clickTimeMS",
   "retryAPIDelay",
   "apiFlowVariables",
+  "alwaysLockCanvasRotate",
+  //"lockCanvasRotate",
+  //"lockCanvasZoom",
+  //"lockTransformRotate",
+  //"lockTransformZoom",
 ];
 
 let uiSettings = {
@@ -4397,6 +4411,12 @@ let uiSettings = {
   defaultLayerWidth: 1024,
   defaultLayerHeight: 1024,
   addTimeStampToFilename: true,
+
+  alwaysLockCanvasRotate: false,
+  lockCanvasRotate: false,
+  lockCanvasZoom: false,
+  lockTransformRotate: false,
+  lockTransformZoom: false,
 
   defaultAPIFlowName: null,
   generativeControls: {},
@@ -8454,6 +8474,97 @@ function setupUI() {
       );
       bottomLeftRow.appendChild( animationTimelineButton );
     }
+    //canvas reset button
+    {
+      const canvasZoomRotateResetButton = document.createElement( "div" );
+      canvasZoomRotateResetButton.classList.add( "round-toggle", "animated" );
+      canvasZoomRotateResetButton.id = "canvas-zoom-rotate-reset-button";
+      const canvasZoomRotateReset = () => {
+        viewMatrices.current[0] = 1; viewMatrices.current[1] = 0; viewMatrices.current[2] = 0;
+        viewMatrices.current[3] = 0; viewMatrices.current[4] = 1; viewMatrices.current[5] = 0;
+      }
+      UI.registerElement(
+        canvasZoomRotateResetButton,
+        {
+          onclick: canvasZoomRotateReset,
+        },
+        {
+          tooltip: [ "Reset View Zoom/Rotate", "above", "to-right-of-center" ],
+          bindings: {
+            "Reset View Zoom/Rotate": canvasZoomRotateReset
+          }
+        }
+      );
+      bottomLeftRow.appendChild( canvasZoomRotateResetButton );
+    }
+    //canvas rotate lock button
+    {
+      const canvasRotateLockButton = document.createElement( "div" );
+      canvasRotateLockButton.classList.add( "round-toggle", "animated" );
+      canvasRotateLockButton.id = "canvas-rotate-lock-button";
+      const toggleCanvasRotateLock = () => {
+        uiSettings.lockCanvasRotate = ! uiSettings.lockCanvasRotate;
+        updateCanvasRotateLockButton();
+      }
+      const updateCanvasRotateLockButton = () => {
+        if( uiSettings.lockCanvasRotate === true ) {
+          canvasRotateLockButton.classList.add( "on" );
+          canvasRotateLockButton.style.backgroundImage = "url('icon/view-rotate-locked.png')";
+        } else {
+          canvasRotateLockButton.classList.remove( "on" );
+          canvasRotateLockButton.style.backgroundImage = "url('icon/view-rotate-unlocked.png')";
+        }
+      }
+      updateCanvasRotateLockButton();
+      UI.registerElement(
+        canvasRotateLockButton,
+        {
+          onclick: toggleCanvasRotateLock,
+          updateContext: updateCanvasRotateLockButton
+        },
+        {
+          tooltip: [ "Lock/Unlock View Rotate", "above", "to-right-of-center" ],
+          bindings: {
+            "Lock/Unlock View Rotate": toggleCanvasRotateLock
+          }
+        }
+      );
+      bottomLeftRow.appendChild( canvasRotateLockButton );
+    }
+    //canvas zoom lock button
+    {
+      const canvasZoomLockButton = document.createElement( "div" );
+      canvasZoomLockButton.classList.add( "round-toggle", "animated" );
+      canvasZoomLockButton.id = "canvas-zoom-lock-button";
+      const toggleCanvasZoomLock = () => {
+        uiSettings.lockCanvasZoom = ! uiSettings.lockCanvasZoom;
+        updateCanvasZoomLockButton();
+      }
+      const updateCanvasZoomLockButton = () => {
+        if( uiSettings.lockCanvasZoom === true ) {
+          canvasZoomLockButton.classList.add( "on" );
+          canvasZoomLockButton.style.backgroundImage = "url('icon/view-zoom-locked.png')";
+        } else {
+          canvasZoomLockButton.classList.remove( "on" );
+          canvasZoomLockButton.style.backgroundImage = "url('icon/view-zoom-unlocked.png')";
+        }
+      }
+      updateCanvasZoomLockButton();
+      UI.registerElement(
+        canvasZoomLockButton,
+        {
+          onclick: toggleCanvasZoomLock,
+          updateContext: updateCanvasZoomLockButton
+        },
+        {
+          tooltip: [ "Lock/Unlock View Zoom", "above", "to-right-of-center" ],
+          bindings: {
+            "Lock/Unlock View Zoom": toggleCanvasZoomLock
+          }
+        }
+      );
+      bottomLeftRow.appendChild( canvasZoomLockButton );
+    }
   }
 
   
@@ -10085,7 +10196,7 @@ function loadJSON() {
           //newLayer.visible = visible;
           newLayer.setVisibility( visible || true ); //update icon
           //newLayer.opacity = opacity;
-          newLayer.setOpacity( isNan( opacity ) ? 1.0 : opacity ); //update slider position
+          newLayer.setOpacity( isNaN( opacity ) ? 1.0 : opacity ); //update slider position
           //newLayer.alphaLocked = alphaLocked
           newLayer.setAlphaLocked( alphaLocked || false ); //update lock icon
 
@@ -11177,6 +11288,9 @@ function updateCycle( t ) {
         const dy = cursor.current.y - cursor.origin.y;
         const d = Math.sqrt( dx**2 + dy**2 );
         layerTransform.zoom = d / layerTransform.initialZoomLength;
+
+        if( uiSettings.lockTransformZoom === true ) layerTransform.zoom = 1;
+
         mat( layerTransform.zoom , 0 , 0 , 0 , layerTransformMatrices.moving );
         UI.updateView();
       }
@@ -11190,6 +11304,9 @@ function updateCycle( t ) {
         const dy = cursor.origin.y - cursor.current.y;
   
         layerTransform.angle = Math.atan2( dy , dx ) + layerTransform.initialAngleOffset;
+
+        if( uiSettings.lockTransformRotate === true ) layerTransform.angle = 0;
+
         mat( 1 , layerTransform.angle , 0 , 0 , layerTransformMatrices.moving );
         UI.updateView();
       }
@@ -11215,6 +11332,9 @@ function updateCycle( t ) {
         const dy = cursor.current.y - cursor.origin.y;
         const d = Math.sqrt( dx**2 + dy**2 );
         view.zoom = d / view.initialZoomLength;
+
+        if( uiSettings.lockCanvasZoom === true ) view.zoom = 1;
+
         mat( view.zoom , 0 , 0 , 0 , viewMatrices.moving );
         UI.updateView();
       }
@@ -11227,8 +11347,10 @@ function updateCycle( t ) {
         const dx = cursor.origin.x - cursor.current.x;
         const dy = cursor.origin.y - cursor.current.y;
   
-        //view.angle = Math.atan2( dy, dx );
         view.angle = Math.atan2( dy, dx ) + view.initialAngleOffset;
+
+        if( uiSettings.lockCanvasRotate === true || uiSettings.alwaysLockCanvasRotate === true ) view.angle = 0;
+
         mat( 1 , view.angle , 0 , 0 , viewMatrices.moving );
         UI.updateView();
       }
@@ -11250,7 +11372,13 @@ function updateCycle( t ) {
       layerTransform.origin.y = pincher.origin.center.y;
       
       layerTransform.zoom = d / pincher.origin.length;
+
+      if( uiSettings.lockTransformZoom === true ) layerTransform.zoom = 1;
+
       layerTransform.angle = angle - pincher.origin.angle;
+
+      if( uiSettings.lockTransformRotate === true ) layerTransform.angle = 0;
+
       layerTransform.pan.x = cx - pincher.origin.center.x;
       layerTransform.pan.y = cy - pincher.origin.center.y;
       mat( layerTransform.zoom , layerTransform.angle , layerTransform.pan.x , layerTransform.pan.y , layerTransformMatrices.moving );
@@ -11270,7 +11398,13 @@ function updateCycle( t ) {
       view.origin.y = pincher.origin.center.y;
       
       view.zoom = d / pincher.origin.length;
+
+      if( uiSettings.lockCanvasZoom === true ) view.zoom = 1;
+
       view.angle = angle - pincher.origin.angle;
+
+      if( uiSettings.lockCanvasRotate === true || uiSettings.alwaysLockCanvasRotate === true ) view.angle = 0;
+
       view.pan.x = cx - pincher.origin.center.x;
       view.pan.y = cy - pincher.origin.center.y;
       mat( view.zoom , view.angle , view.pan.x , view.pan.y , viewMatrices.moving );
@@ -12535,12 +12669,63 @@ function finalizePaintGPU2( layer ) {
 
 /* 
 
+After all, I really don't think I should replicate layercode.
+I think it's not that expensive to call addCanvasLayer, and I will add a new generic instead of "paint-preview"
+I could replace every reference to "paint-preview" with "..." hmm.
+Okay. Then absolutely no building my own independent layerstack code to maintain.
+  We're using paint-preview layers by the gobs to implement selections. They don't even make layerbuttons. 
+  Checked, and we only ever reference .layers[0] directly (in export PNG).
+  I think we can make these no problem.
+
+What's the first next step?
+1. Draw all of the selection stack layers to 1 screen-rect texture with the renderLayers function
+2. During the renderLayers loop, include that canvas render result as a layer atop all the rest, with 50% opacity
+3. How to test? Add to the selection stack somehow. The selection stack needs layer rects with global coordinates
+  a. set up 2 layers with screen-rect coordinates
+  b. for each layer, draw onto its canvas an ellipse, one on the left, the other right, so the ellipses overlap
+  c. in the screen test, we should see no seam etc.
+
+1. Enable the selection tool via uiSettings
+2. Track paint start, and if the selection tool is active, and if the mode is "lasso"
+3. call a set of functions that:
+  a. preps a screen-sized canvas
+  b. starts clearing / redrawing that canvas every frame
+    i. redrawing with a looping might cut off formerly filled pixels
+  c. uploads the cleared / redrawn result every frame
+  d. tracks a list of points (well, this is painter queue)
+  e. uses the end-tacked-on canvas-coordinates to plot-fill to that screen-rect canvas
+  f. includes that canvas as a 50% opacity layer during the render loop
+  g. on finalize:
+    i. adds that screen-rect with its global coordinates to the selections stack
+
 Selections explained:
 
 - stack of <image> rects{ topLeft, bottomLeft, topRight, bottomRight }
 - we can render that stack onscreen in various ways
 - paint function that takes painter's queue of points and does stuff
-- for any given layer, we can acquire a pixel buffer representing its selection mask
+- for any given paintlayer, we can acquire a pixel buffer representing its selection mask
+- clone operation (CPU for now):
+  - render batched layers like a group (existing code)
+  - render selections stack like a group (existing code)
+  - have canvas sized to batched layers, blit batched layers data onto it
+  - set canvas op to clip
+  - get xy for selections stack group (scale and rotation are unchanging)
+  - draw selections stack group onto canvas
+  - create new paintlayer populated from that canvas
+- cut operation (CPU for now):
+  - do clone operation
+  - for each batched layer:
+    - get selection mask in rect as canvas / image
+    - set canvas op to erase
+    - draw selection mask
+    - flag for texture upload
+
+I need to delete / restart the code below. Some of it makes sense though.
+  I understand what it's doing, it was just a very flawed approach. I wasn't thinking at the time.
+
+- we have lasso input: vector fill a line stroked within a single, screen-sized rect
+- when creating a new selection, simply erase the selections stack and replace with lasso input
+- when modifying existing selection
 
 */
 
@@ -12562,7 +12747,8 @@ const selectionsStack = {
   }
 }
 function setupSelectionCanvas() {
-  selectionsStack.context = selectionsStack.canvas.getContext( "2d" );
+  selectionsStack.livePreviewLayer.context = selectionsStack.livePreviewLayer.canvas.getContext( "2d" );
+  selectionsStack.livePreviewLayer.glTexture = gl.createTexture();
 }
 function beginPaintSelectionCanvas( booleanMode ) {
   const layer = selectionsStack.livePreviewLayer;
@@ -12584,6 +12770,9 @@ function beginPaintSelectionCanvas( booleanMode ) {
 
 }
 function paintSelectionCanvas( points, booleanMode, ) {
+
+  //this theory won't work
+  //it doesn't edit the existing layers, and it can't replace them without clipping their off-canvas regions
 
   //booleanMode === "replace" | "add" | "subtract"
 
