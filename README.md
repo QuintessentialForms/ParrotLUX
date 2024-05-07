@@ -2,7 +2,7 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (Version: 2024.05.04-1-alpha)
+# ParrotLUX (Version: 2024.05.07-1-alpha)
 A Painting App for Open-Source AI
 
 This app is currently in Alpha version. Expect bugs and missing features. Tuturials and documentation will be added soon.
@@ -23,7 +23,7 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 # New Features in Version 2024.05.07-1-alpha
 
 ## Multi-Layer Paint, Mask, and Flood-Fill
-<p align="center" width="100%">Paint, mask, and flood-fill now both work correctly when you have multiple layers selected, or a group selected. You will automatically paint or flood-fill whichever layer you click inside of. <i>Multi-layer color adjust, multi-layer AI-generate, and multi-layer AI-tools still do not work.</i></p>
+<p align="center" width="100%">Paint, mask, and flood-fill now all work correctly when you have multiple layers selected, or a group selected. You will automatically paint, mask, or flood-fill whichever layer you click inside of. <i>Multi-layer color adjust, multi-layer AI-generate, and multi-layer AI-tools still do not work.</i></p>
 
 ## Bug Fixes
 <p align="center" width="100%">A few UI-glitches fixed.</p>
