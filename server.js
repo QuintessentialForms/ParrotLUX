@@ -37,8 +37,6 @@ if( global.inAndroidApp !== true ) {
 }
 
 const http = require( 'http' );
-const https = require( 'https' );
-//const fs = require( 'fs/promises' ); //not available by default on linux??? IDK nodejs... :-/
 const fss = require( "fs" );
 const host = ipAddress;
 const port = 6789;
@@ -86,7 +84,7 @@ const server = http.createServer(
                 const iconName = url.substring( "/icon/".length, url.length - ".png".length );
                 let okay = (/[\w-]+/gmi).test( iconName ),
                     ref = "res/img/ui/icon-" + iconName + ".png";
-                if( okay ) { okay = fss.existsSync( ref ); }
+                if( okay ) { okay = fss.existsSync( dirPrefix + ref ); }
                 if( okay ) {
                     const iconImageFile = fss.readFileSync( dirPrefix + ref );
                     response.writeHead( 200 , { 'Content-Type': 'image/png' } );
@@ -101,7 +99,7 @@ const server = http.createServer(
                 const apiFlowName = url.substring( "/apiFlows/".length, url.length - ".json".length );
                 let okay = (/[\w-]+/gmi).test( apiFlowName ),
                     ref = "res/apiFlows/" + apiFlowName + ".json";
-                if( okay ) { okay = fss.existsSync( ref ); }
+                if( okay ) { okay = fss.existsSync( dirPrefix + ref ); }
                 if( okay ) {
                     const apiFlowJSONFile = fss.readFileSync( dirPrefix + ref );
                     response.writeHead( 200 , { 'Content-Type': 'text/json' } );

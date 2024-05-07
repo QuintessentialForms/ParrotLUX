@@ -253,7 +253,7 @@ function makeFrameMergingFrameOntoFrame( topLayer, topFrame, lowerLayer, lowerFr
 }
 
 function getPreviewLayer() {
-  return layersStack.layers.find( l => l.layerType === "paint-preview" );
+  return layersStack.layers.find( l => l.layerType === "_temp" );
 }
 
 //the pixels object
@@ -494,9 +494,9 @@ const Pixels = {
 }
 
 let layersAddedCount = -2;
-async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibling=null, doNotUpdate=false ) {
+function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibling=null, doNotUpdate=false ) {
   
-  //layerType === "paint" | "paint-preview" | "generative" | "group" | "text" | "pose" | "filter" | "model" | ...
+  //layerType === "paint" | "_temp" | "generative" | "group" | "text" | "pose" | "filter" | "model" | ...
 
   let layerCenterX = W/2,
     layerCenterY = H/2;
@@ -718,7 +718,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
   }
 
   let layerButton;
-  if( layerType !== "paint-preview" ) {
+  if( layerType !== "_temp" ) {
     //create the layer button
     layerButton = document.createElement( "div" );
     layerButton.classList.add( "layer-button", "expanded" );
@@ -930,7 +930,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
               //we're going to catch our historyEntries
               for( const layer of groupedLayers ) {
                 //adding all copies as siblings directly above the current layer, one by one
-                const copy = await addCanvasLayer( layer.layerType, layer.w, layer.h, newLayer, true );
+                const copy = addCanvasLayer( layer.layerType, layer.w, layer.h, newLayer, true );
                 //by altering the properties without registering a new undo, the creation undo is a copy
                 copy.layerName = layer.layerName;
                 if( layer === newLayer ) copy.layerGroupId = newLayer.layerGroupId;
@@ -980,7 +980,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
             }
             else {
               //adding the new layer inherently adds the undo component
-              const copy = await addCanvasLayer( newLayer.layerType, newLayer.w, newLayer.h, newLayer, true )
+              const copy = addCanvasLayer( newLayer.layerType, newLayer.w, newLayer.h, newLayer, true )
               //by altering the properties without registering a new undo, the creation undo is a copy
               copy.layerName = newLayer.layerName;
               copy.layerGroupId = newLayer.layerGroupId;
@@ -1731,7 +1731,7 @@ async function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nex
       selectLayer( newLayer );
   }
 
-  if( layerType !== "paint-preview" ) {
+  if( layerType !== "_temp" ) {
     const historyEntry = {
       newLayer,
       stackIndex: layersStack.layers.indexOf( newLayer ),
@@ -1793,7 +1793,7 @@ function reorganizeLayerButtons() {
   //reinstall in order
   for( let i=layersStack.layers.length-1; i>=0; i-- ) {
     const layer = layersStack.layers[ i ];
-    if( layer.layerType === "paint-preview" ) continue;
+    if( layer.layerType === "_temp" ) continue;
 
     if( layer.layerButton.classList.contains( "dragging-layer-button" ) ) {
       uiContainer.appendChild( layer.layerButton );
@@ -1949,6 +1949,69 @@ function updateLayerGroupCoordinates( layerGroup ) {
 
 }
 
+let selectionChanged = false;
+function declareSelectionChanged() {
+  selectionChanged = true;
+}
+function getSelectedOrBatchedLayers() {
+  //TODO: optimize this to not rebuild unless the selection has changed or rearranged (track layer Ids w/ array join?)
+  //can i hook the functions that change selection? yeah that's what to do
+  //selectionChanged = true; //temporary hack; implement selection change tracking!
+  if( ! getSelectedOrBatchedLayers.selectedAndBatchedLayers ) {
+    getSelectedOrBatchedLayers.selectedAndBatchedLayers = [];
+    selectionChanged = true;
+  }
+  if( selectionChanged === false ) {
+    return getSelectedOrBatchedLayers.selectedAndBatchedLayers;
+  }
+  const selectedAndBatchedLayers = getSelectedOrBatchedLayers.selectedAndBatchedLayers;
+  selectedAndBatchedLayers.length = 0;
+  if( batchedLayers.size ) {
+    const transformableChildren = [];
+    for( const layer of batchedLayers ) {
+      if( layer.layerType === "group" ) continue;
+      transformableChildren.push( layer );
+    }
+    selectedAndBatchedLayers.push( ...transformableChildren );
+  }
+  else if( selectedLayer?.layerType === "group" ) {
+    const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
+    const transformableChildren = [];
+    for( const layer of groupChildren ) {
+      if( layer.layerType === "group" ) continue;
+      transformableChildren.push( layer );
+    }
+    selectedAndBatchedLayers.push( ...transformableChildren );
+  }
+  else if( selectedLayer ) {
+    selectedAndBatchedLayers.push( selectedLayer );
+  }
+  //check our top-most layer first
+  selectedAndBatchedLayers.sort( (a,b) => ( layersStack.layers.indexOf(a) < layersStack.layers.indexOf(b) ) ? 1 : -1 );
+
+  selectionChanged = false;
+
+  return selectedAndBatchedLayers;
+
+}
+
+function getSelectedOrBatchedLayerContainingPoint( point ) {
+
+  const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+
+  //collect active / relevant layers
+  let layerContainingPoint = null;
+  for( const layer of selectedAndBatchedLayers ) {
+    if( testPointsInLayer( layer, [point], true ) ) {
+      layerContainingPoint = layer;
+      break;
+    }
+  }
+
+  return { selectedAndBatchedLayers, layerContainingPoint };
+
+}
+
 function testPointsInLayer( layer, testPoints, screenSpacePoints = false ) {
 
   const points = [];
@@ -2012,7 +2075,13 @@ function testPointsInLayer( layer, testPoints, screenSpacePoints = false ) {
 
 function floodFillLayer( layer, layerX, layerY ) {
 
+  //get the layer's data
   const imageData = layer.context.getImageData( 0, 0, layer.w, layer.h );
+  //get the layer's lasso mask
+  const lassoArea = getLassoLayerForLayer( layer, true );
+  const lassoData = lassoArea ? lassoArea.lassoImageData.data : null;
+  const invertLasso = lassoResources.invert;
+  //create a storage buffer
   const island = new Uint8ClampedArray( imageData.data.length / 4 );
 
   
@@ -2056,6 +2125,13 @@ function floodFillLayer( layer, layerX, layerY ) {
           dr, dg, db, da,
           dist;
         
+        let sa = 255;
+
+        if( lassoData ) {
+          if( ( ( ! invertLasso ) && lassoData[ i + 3 ] === 0 ) || ( invertLasso && lassoData[ i + 3 ] === 255 ) ) continue;
+          sa = invertLasso ? 255 - lassoData[ i + 3 ] : lassoData[ i + 3 ];
+        }
+
         //to the left
         i = ((y*w)+x-1) * 4;
         if( island[ i/4 ] === 0 ) {
@@ -2063,7 +2139,7 @@ function floodFillLayer( layer, layerX, layerY ) {
           dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
           if( dist < tolerance ) {
             if( erase ) d[ i+3 ] = 0;
-            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
+            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = sa; }
             crawledPixels.push( [x-1,y] );
             island[ i/4 ] = 255;
             minX = Math.min( minX, x-1 );
@@ -2080,7 +2156,7 @@ function floodFillLayer( layer, layerX, layerY ) {
           dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
           if( dist < tolerance ) {
             if( erase ) d[ i+3 ] = 0;
-            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
+            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = sa; }
             crawledPixels.push( [x+1,y] );
             island[ i/4 ] = 255;
             minX = Math.min( minX, x+1 );
@@ -2097,7 +2173,7 @@ function floodFillLayer( layer, layerX, layerY ) {
           dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
           if( dist < tolerance ) {
             if( erase ) d[ i+3 ] = 0;
-            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
+            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = sa; }
             crawledPixels.push( [x,y-1] );
             island[ i/4 ] = 255;
             minX = Math.min( minX, x );
@@ -2114,7 +2190,7 @@ function floodFillLayer( layer, layerX, layerY ) {
           dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
           if( dist < tolerance ) {
             if( erase ) d[ i+3 ] = 0;
-            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
+            else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = sa; }
             crawledPixels.push( [x,y+1] );
             island[ i/4 ] = 255;
             minX = Math.min( minX, x );
@@ -2131,11 +2207,19 @@ function floodFillLayer( layer, layerX, layerY ) {
     //for each pixel, get distance from lrlglbla
     //if( dist < tolerance ): replace pixel w/ erase, update min*
     for( let i=0; i<d.length; i+=4 ) {
+
+      let sa = 255;
+
+      if( lassoData ) {
+        if( ( ( ! invertLasso ) && lassoData[ i + 3 ] === 0 ) || ( invertLasso && lassoData[ i + 3 ] === 255 ) ) continue;
+        sa = invertLasso ? 255 - lassoData[ i + 3 ] : lassoData[ i + 3 ];
+      }
+
       const dr = d[ i ] - lr, dg = d[ i+1 ] - lg, db = d[ i+2 ] - lb, da = d[ i+3 ] - la;
       const dist = Math.sqrt( dr**2 + dg**2 + db**2 + da**2 );
       if( dist < tolerance ) {
         if( erase ) d[ i+3 ] = 0;
-        else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
+        else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = sa; }
         const x = ( i/4 ) % w,
           y = ( i/4 - x ) / w; //this is untested for float errors vs. parseInt, but for min* it should work
         island[ i/4 ] = 255;
@@ -2157,6 +2241,14 @@ function floodFillLayer( layer, layerX, layerY ) {
     //CPU optimized, still far too slow at 10px padding. :-/ Need to move to GPU. (Not a priority.)
     padPixelSearch:
     for( let i=0,j=0, py=0, px=0; i<d.length; ) {
+
+      let sa = 255;
+
+      if( lassoData ) {
+        if( ( ( ! invertLasso ) && lassoData[ i + 3 ] === 0 ) || ( invertLasso && lassoData[ i + 3 ] === 255 ) ) continue;
+        sa = invertLasso ? 255 - lassoData[ i + 3 ] : lassoData[ i + 3 ];
+      }
+
       if( island[ j ] === 255 ) {
         //pixel already filled
         i += 4;
@@ -2191,7 +2283,7 @@ function floodFillLayer( layer, layerX, layerY ) {
 
         //erase or fill
         if( erase ) d[ i+3 ] = 0;
-        else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = 255; }
+        else { d[ i ] = r; d[ i+1 ] = g; d[ i+2 ] = b; d[ i+3 ] = sa; }
 
         //update rect
         const x = j % w, y = ( j - x ) / w;
@@ -2620,7 +2712,7 @@ function getLayerGroupDepth( layer ) {
 
 function existsVisibleLayer() {
   for( const layer of layersStack.layers ) {
-    if( layer.layerType === "paint-preview" ) continue;
+    if( layer.layerType === "_temp" ) continue;
     if( layer.layerType === "group" ) continue;
     if( getLayerVisibility( layer ) ) return true;
   }
@@ -2794,7 +2886,14 @@ async function cropLayerSizeAndRecordUndo( layer, width, height, x=null, y=null 
 async function deleteLayer( layer ) {
 
   //if this layer is selected, unselect it
-  if( selectedLayer === layer ) selectedLayer = null;
+  if( selectedLayer === layer ) {
+    selectedLayer = null;
+    declareSelectionChanged();
+  }
+  if( batchedLayers.has( layer ) ) {
+    batchedLayers.delete( layer );
+    declareSelectionChanged();
+  }
   //(we'll reselect a new layer at the bottom of this function)
 
   //delete layer (and any children) from stack
@@ -2857,7 +2956,7 @@ async function deleteLayer( layer ) {
     //search for a non-preview layer
     for( let i=index; i<layersStack.layers.length; i++ ) {
       const searchLayer = layersStack.layers[ i ];
-      if( searchLayer.layerType === "paint-preview" ) continue;
+      if( searchLayer.layerType === "_temp" ) continue;
       nextLayer = searchLayer;
       break;
     }
@@ -2866,7 +2965,7 @@ async function deleteLayer( layer ) {
     //search for a non-preview layer
     for( let i=index-1; i>=0; i-- ) {
       const searchLayer = layersStack.layers[ i ];
-      if( searchLayer.layerType === "paint-preview" ) continue;
+      if( searchLayer.layerType === "_temp" ) continue;
       nextLayer = searchLayer;
       break;
     }
@@ -2908,6 +3007,7 @@ function removeLayerFromSelection( layer ) {
   batchedLayers.delete( layer );
   document.querySelectorAll( ".layer-button" ).forEach( l => l.classList.remove( "active", "selected", "hovering", "no-hover" ) );
   for( const l of batchedLayers ) l.layerButton.classList.add( "selected" );
+  declareSelectionChanged();
 }
 function addLayerToSelection( layer ) {
   if( selectedLayer ) {
@@ -2923,6 +3023,7 @@ function addLayerToSelection( layer ) {
   }
   document.querySelectorAll( ".layer-button" ).forEach( l => l.classList.remove( "active", "selected", "hovering", "no-hover" ) );
   for( const l of batchedLayers ) l.layerButton.classList.add( "selected" );
+  declareSelectionChanged();
 }
 
 function selectLayer( layer ) {
@@ -2947,6 +3048,7 @@ function selectLayer( layer ) {
     layer.layerButton.querySelector( ".layer-name" ).uiActive = true;
     layer.layerButton.querySelector( ".layer-name" ).classList.remove( "no-hover" );  
   }
+  declareSelectionChanged();
   UI.updateContext();
 }
 
@@ -2992,7 +3094,7 @@ function Loop( t ) {
         selectedGroupLayers = [];
 
       for( const layer of layersStack.layers ) {
-        if( layer.layerType === "paint-preview" )
+        if( layer.layerType === "_temp" )
           continue;
         if( layer.layerType === "group" ) {
           if(  layer !== selectedLayer ) {
@@ -3013,6 +3115,9 @@ function Loop( t ) {
         selectedGroupLayers.push( batchedLayer );
       }
 
+
+      if( lassoResources.ready ) visibleLayers.push( lassoResources.lassoPreview );
+
       getTransform();
 
       const screenPointRect = getScreenPointRect();
@@ -3020,6 +3125,7 @@ function Loop( t ) {
       //renderLayers( visibleLayers, selectedGroupLayers, floatTime, null, [ 0.25,0.25,0.25, 1 ], true );
       //renderLayersIntoPointRect( screenPointRect, visibleLayers, selectedGroupLayers, floatTime, null, [ 0.25,0.25,0.25, 1 ], true );
       renderLayersIntoPointRect( screenPointRect, visibleLayers, selectedGroupLayers, floatTime, null, [ 0,0,0,0 ], true );
+      //simpleRenderLayersIntoPointRect( screenPointRect, visibleLayers, null, true ); //this was just to test simplerender
 
       //get the eyedropper color
       if( airInput.active ) {
@@ -3039,6 +3145,8 @@ function getScreenPointRect() {
       topRight: [0,0,1],
       bottomLeft: [0,0,1],
       bottomRight: [0,0,1],
+      w: 0,
+      h: 0
     }
   }
 
@@ -3060,6 +3168,8 @@ function getScreenPointRect() {
   mul3x1( _inverter, [w,0,1], pointRect.topRight );
   mul3x1( _inverter, [0,h,1], pointRect.bottomLeft );
   mul3x1( _inverter, [w,h,1], pointRect.bottomRight );
+  pointRect.w = w;
+  pointRect.h = h;
 
   return pointRect;
 
@@ -3083,21 +3193,21 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
     normalizedYLeg = { x:yLeg.x * yLegLengthInverse, y:yLeg.y * yLegLengthInverse };
   //console.log( origin.x, origin.y, xLeg.x, xLeg.y, xLegLengthInverse, normalizedXLeg.x, normalizedXLeg.y, yLeg.x, yLeg.y, yLegLengthInverse, normalizedYLeg.x, normalizedYLeg.y );
 
-  if( ! renderLayers.framebuffer ) {
-    renderLayers.readPixelsDest = new Uint8ClampedArray( 4 );
-    renderLayers.midFramebuffer = gl.createFramebuffer();
-    renderLayers.framebuffer = gl.createFramebuffer();
+  if( ! renderLayersIntoPointRect.framebuffer ) {
+    renderLayersIntoPointRect.readPixelsDest = new Uint8ClampedArray( 4 );
+    renderLayersIntoPointRect.midFramebuffer = gl.createFramebuffer();
+    renderLayersIntoPointRect.framebuffer = gl.createFramebuffer();
     if( targetLayer === null ) {
-      renderLayers.width = gnv.width;
-      renderLayers.height = gnv.height;
+      renderLayersIntoPointRect.width = gnv.width;
+      renderLayersIntoPointRect.height = gnv.height;
     } else {
-      renderLayers.width = targetLayer.canvas.width;
-      renderLayers.height = targetLayer.canvas.height;
+      renderLayersIntoPointRect.width = targetLayer.canvas.width;
+      renderLayersIntoPointRect.height = targetLayer.canvas.height;
     }
 
     {
-      renderLayers.blankTexture = gl.createTexture();
-      gl.bindTexture( gl.TEXTURE_2D, renderLayers.blankTexture );
+      renderLayersIntoPointRect.blankTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.blankTexture );
       const blankData = new Uint8ClampedArray( 4 * 4 );
       blankData.fill( 255 );
       gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, blankData );
@@ -3108,8 +3218,8 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
     }
 
     {
-      renderLayers.colorTexture = gl.createTexture();
-      gl.bindTexture( gl.TEXTURE_2D, renderLayers.colorTexture );
+      renderLayersIntoPointRect.colorTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.colorTexture );
       const blankData = new Uint8ClampedArray( 4 * 4 );
       blankData.fill( 255 );
       gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, blankData );
@@ -3120,9 +3230,9 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
     }
 
     {
-      renderLayers.backTexture = gl.createTexture();
-      gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      renderLayersIntoPointRect.backTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.backTexture );
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayersIntoPointRect.width, renderLayersIntoPointRect.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
      
       //set filtering
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -3138,9 +3248,9 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
     //renderLayers.depthTexture = gl.createTexture();
     
     {
-      renderLayers.midTexture = gl.createTexture();
-      gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      renderLayersIntoPointRect.midTexture = gl.createTexture();
+      gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.midTexture );
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayersIntoPointRect.width, renderLayersIntoPointRect.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
      
       //set filtering
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -3159,13 +3269,13 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
     targetWidth = targetLayer.canvas.width;
     targetHeight = targetLayer.canvas.height;
   }
-  if( renderLayers.width !== targetWidth || renderLayers.height !== targetHeight ) {
-    renderLayers.width = targetWidth;
-    renderLayers.height = targetHeight;
-    gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayers.width, renderLayers.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  if( renderLayersIntoPointRect.width !== targetWidth || renderLayersIntoPointRect.height !== targetHeight ) {
+    renderLayersIntoPointRect.width = targetWidth;
+    renderLayersIntoPointRect.height = targetHeight;
+    gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.backTexture );
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayersIntoPointRect.width, renderLayersIntoPointRect.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.midTexture );
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderLayersIntoPointRect.width, renderLayersIntoPointRect.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
   }
 
   
@@ -3175,21 +3285,21 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
 
   //clear both buffers
   {
-    gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
+    gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.backTexture );
     // attach the back texture as the first color attachment
-    gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
+    gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayersIntoPointRect.framebuffer );
     const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
-    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
+    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayersIntoPointRect.backTexture, level);
     gl.viewport( 0, 0, targetWidth, targetHeight );
     gl.clearColor( ...backgroundRGBA );
     gl.clear( gl.COLOR_BUFFER_BIT );
   }
   {
-    gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+    gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.midTexture );
     // attach the back texture as the first color attachment
-    gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.midFramebuffer );
+    gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayersIntoPointRect.midFramebuffer );
     const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
-    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.midTexture, level);
+    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayersIntoPointRect.midTexture, level);
     gl.viewport( 0, 0, targetWidth, targetHeight );
     gl.clearColor( ...backgroundRGBA );
     gl.clear( gl.COLOR_BUFFER_BIT );
@@ -3208,17 +3318,17 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
     if( drewToMidTexture === false ) {
       const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
       // attach the back texture as the first color attachment
-      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
-      gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
-      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.backTexture, level);
+      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayersIntoPointRect.framebuffer );
+      gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.backTexture );
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayersIntoPointRect.backTexture, level);
       gl.viewport( 0, 0, targetWidth, targetHeight );
     }
     if( drewToMidTexture === true ) {
       const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
       // attach the back texture as the first color attachment
-      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.midFramebuffer );
-      gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
-      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayers.midTexture, level);
+      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayersIntoPointRect.midFramebuffer );
+      gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.midTexture );
+      gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, renderLayersIntoPointRect.midTexture, level);
       gl.viewport( 0, 0, targetWidth, targetHeight );
     }
 
@@ -3327,8 +3437,8 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
 
     //bind the previous render result as the canvas
     gl.activeTexture( gl.TEXTURE0 + 2 );
-    if( drewToMidTexture === false ) { gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture ); }
-    if( drewToMidTexture === true ) { gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture ); }
+    if( drewToMidTexture === false ) { gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.midTexture ); }
+    if( drewToMidTexture === true ) { gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.backTexture ); }
     //point canvas at texture 2
     gl.uniform1i( gl.getUniformLocation( glState.program, "canvas" ), 2 );
 
@@ -3366,13 +3476,13 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
     
     //blit from the current framebuffer to whichever texture we're not using
     if( drewToMidTexture === false ) {
-      gl.bindFramebuffer( gl.READ_FRAMEBUFFER, renderLayers.framebuffer );
-      gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, renderLayers.midFramebuffer );
+      gl.bindFramebuffer( gl.READ_FRAMEBUFFER, renderLayersIntoPointRect.framebuffer );
+      gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, renderLayersIntoPointRect.midFramebuffer );
       gl.blitFramebuffer( 0,0,targetWidth,targetHeight, 0,0,targetWidth,targetHeight, gl.COLOR_BUFFER_BIT, gl.NEAREST );
     }
     if( drewToMidTexture === true ) {
-      gl.bindFramebuffer( gl.READ_FRAMEBUFFER, renderLayers.midFramebuffer );
-      gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, renderLayers.framebuffer );
+      gl.bindFramebuffer( gl.READ_FRAMEBUFFER, renderLayersIntoPointRect.midFramebuffer );
+      gl.bindFramebuffer( gl.DRAW_FRAMEBUFFER, renderLayersIntoPointRect.framebuffer );
       gl.blitFramebuffer( 0,0,targetWidth,targetHeight, 0,0,targetWidth,targetHeight, gl.COLOR_BUFFER_BIT, gl.NEAREST );
     }
 
@@ -3387,7 +3497,7 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
     }
     else {
       const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
-      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayers.framebuffer );
+      gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayersIntoPointRect.framebuffer );
       gl.bindTexture( gl.TEXTURE_2D, targetLayer.glTexture );
       //resize (and clear) the target layer's texture
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, targetWidth, targetHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
@@ -3422,20 +3532,20 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
 
     //bind the backtexture as the layer's source
     gl.activeTexture( gl.TEXTURE0 + 0 );
-    if( drewToMidTexture === false ) gl.bindTexture( gl.TEXTURE_2D, renderLayers.backTexture );
-    if( drewToMidTexture === true ) gl.bindTexture( gl.TEXTURE_2D, renderLayers.midTexture );
+    if( drewToMidTexture === false ) gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.backTexture );
+    if( drewToMidTexture === true ) gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.midTexture );
     //point the layer's source image at texture 0
     gl.uniform1i( gl.getUniformLocation( glState.program, "img" ), 0 );
 
     //blank the mask (solid alpha)
     gl.activeTexture( gl.TEXTURE0 + 1 );
-    gl.bindTexture( gl.TEXTURE_2D, renderLayers.blankTexture );
+    gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.blankTexture );
     gl.uniform1i( gl.getUniformLocation( glState.program, "imgMask" ), 1 );
 
     //blank or color the undercanvas (this is the base-mix color)
     {
       gl.activeTexture( gl.TEXTURE0 + 2 );
-      gl.bindTexture( gl.TEXTURE_2D, renderLayers.colorTexture );
+      gl.bindTexture( gl.TEXTURE_2D, renderLayersIntoPointRect.colorTexture );
       const colorData = new Uint8ClampedArray( [ ...backgroundRGBA, ...backgroundRGBA, ...backgroundRGBA, ...backgroundRGBA ] );
       gl.texImage2D( gl.TEXTURE_2D, 0, gl.RGBA, 2, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, colorData );
       //set filtering
@@ -3465,6 +3575,147 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
     const newData = targetLayer.context.createImageData( targetWidth, targetHeight );
     gl.readPixels( 0, 0, targetWidth, targetHeight, gl.RGBA, gl.UNSIGNED_BYTE, newData.data );
     targetLayer.context.putImageData( newData, 0, 0 );
+  }
+
+}
+
+function renderLayersAlphasIntoPointRect( pointRect, visibleLayers, targetLayer = null, flipY = true, color=[255,255,255], readPixelsArray = null ) {
+
+  //we need basically the code from samplelayerinlayer
+  //for every layer, we need to cast it to pointRect's space
+  //from there, we can calculate rotation and scale, but in this case that casting is all we need.
+  
+  //Note that the scale of our pointRect is independent of the canvas dims of our targetLayer (or screen)
+
+  if( ! renderLayersAlphasIntoPointRect.framebuffer ) {
+    renderLayersAlphasIntoPointRect.framebuffer = gl.createFramebuffer();
+  }
+
+  //get our rectLayer's coordinate space
+  const origin = { x:pointRect.topLeft[0], y:pointRect.topLeft[1] },
+    xLeg = { x:pointRect.topRight[0] - origin.x, y: pointRect.topRight[1] - origin.y },
+    xLegLengthInverse = 1 / Math.sqrt( xLeg.x**2 + xLeg.y**2 ),
+    normalizedXLeg = { x:xLeg.x * xLegLengthInverse, y:xLeg.y * xLegLengthInverse },
+    yLeg = { x:pointRect.bottomLeft[0] - origin.x, y: pointRect.bottomLeft[1] - origin.y },
+    yLegLengthInverse = 1 / Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
+    normalizedYLeg = { x:yLeg.x * yLegLengthInverse, y:yLeg.y * yLegLengthInverse };
+    
+  gl.useProgram( glStateAlphaRender.program );
+  //resize the destination texture
+  let targetWidth = gnv.width,
+    targetHeight = gnv.height;
+  if( targetLayer !== null ) {
+    targetWidth = targetLayer.canvas.width;
+    targetHeight = targetLayer.canvas.height;
+  }
+
+  if( targetLayer === null ) {
+    gl.bindFramebuffer( gl.FRAMEBUFFER, null );
+  } else {
+    gl.bindTexture( gl.TEXTURE_2D, targetLayer.glTexture );
+    gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayersAlphasIntoPointRect.framebuffer );
+    const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, targetLayer.glTexture, level);
+  }
+
+  //set drawing behavior and clear
+  gl.disable(gl.DEPTH_TEST);
+  gl.enable( gl.BLEND );
+  gl.blendFunc( gl.ONE, gl.ONE );
+
+  gl.viewport( 0, 0, targetWidth, targetHeight );
+  gl.clearColor(0,0,0,0);
+  gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+
+  gl.bindVertexArray(glStateAlphaRender.vao);
+
+  for( const layer of visibleLayers ) {
+
+    const castPoints = {};
+    for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+      let [x,y] = layer[ pointName ];
+      //translate from origin
+      x -= origin.x; y -= origin.y;
+      //project on normals
+      let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
+      let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
+      //unnormalize
+      xProjection *= targetWidth * xLegLengthInverse;
+      yProjection *= targetHeight * yLegLengthInverse;
+      castPoints[ pointName ] = [ xProjection, yProjection, 1 ];
+    }
+
+    let xy = castPoints.topLeft,
+      xy2 = castPoints.topRight,
+      xy3 = castPoints.bottomLeft,
+      xy4 = castPoints.bottomRight;
+
+    //we're ignoring active layer transforms! that's not what this render function is for
+
+    //get the layer's pixel size on the destination
+    //(Not used until later, but must calculate before gl-transforming points)
+    let layerSizePixels;
+    {
+      const dx = xy2[0] - xy[0], dy = xy2[1] - xy[1];
+      layerSizePixels = Math.sqrt( dx**2 + dy**2 );
+    }
+
+    //convert that screenspace to GL space
+    const glOriginX = targetWidth/2, glOriginY = targetHeight/2;
+    for( const p of [xy,xy2,xy3,xy4] ) {
+      p[0] -= glOriginX; p[1] -= glOriginY;
+      p[0] /= glOriginX;
+      //We're flipping the y coordinate! OpenGL NDC space defines the bottom of the screen as -1 y, and the top as +1 y (center 0).
+      if( flipY === true ) p[1] /= -glOriginY;
+      else p[1] /= glOriginY;
+    }
+
+    //update the vertex data
+    //top-left triangle
+    glStateAlphaRender.vertices[0] = xy[0]; glStateAlphaRender.vertices[1] = xy[1];
+    glStateAlphaRender.vertices[4] = xy2[0]; glStateAlphaRender.vertices[5] = xy2[1];
+    glStateAlphaRender.vertices[8] = xy3[0]; glStateAlphaRender.vertices[9] = xy3[1];
+    //bottom-right triangle
+    glStateAlphaRender.vertices[12] = xy2[0]; glStateAlphaRender.vertices[13] = xy2[1];
+    glStateAlphaRender.vertices[16] = xy4[0]; glStateAlphaRender.vertices[17] = xy4[1];
+    glStateAlphaRender.vertices[20] = xy3[0]; glStateAlphaRender.vertices[21] = xy3[1];
+    //push the updated vertex data to the GPU
+    gl.bindBuffer( gl.ARRAY_BUFFER, glStateAlphaRender.vertexBuffer );
+    gl.bufferData( gl.ARRAY_BUFFER, glStateAlphaRender.vertices, gl.STREAM_DRAW );
+
+    //do I need to re-enable the vertex array??? Let's assume so, then try coding this out later
+    gl.enableVertexAttribArray( glStateAlphaRender.xyuvInputIndex );
+    {
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( glStateAlphaRender.xyuvInputIndex, size, dType, normalize, stride, offset );
+    }
+
+    //let's bind the layer's texture
+    gl.activeTexture( gl.TEXTURE0 + 0 );
+    gl.bindTexture( gl.TEXTURE_2D, layer.glTexture );
+    //we're not reuploading the layer's texture on flag change!
+    //point the layer's source image at texture 0
+    gl.uniform1i( gl.getUniformLocation( glStateAlphaRender.program, "img" ), 0 );
+
+    gl.uniform3fv( gl.getUniformLocation( glStateAlphaRender.program, "color" ), color )
+
+    //ignoring layer mask, this isn't for that
+
+    {
+      //and draw our triangles
+      const primitiveType = gl.TRIANGLES,
+        structStartOffset = 0,
+        structCount = 6;
+      gl.drawArrays( primitiveType, structStartOffset, structCount );
+    }
+
+  }
+
+  //and that's it for our drawing
+
+  //bring the pixel data back to the CPU if called for
+  if( readPixelsArray ) {
+    gl.readPixels( 0, 0, targetWidth, targetHeight, gl.RGBA, gl.UNSIGNED_BYTE, readPixelsArray );
   }
 
 }
@@ -3883,11 +4134,13 @@ async function setup() {
 
     const img = new Image();
     img.src = "paper.png";
-    img.onload = () => {
+    img.onload = async () => {
       //paperTexture = ctx.createPattern( img, "repeat" );
       //setup GL temporarily inside img onload for texture test
       setupGL( img );  
+      setupGLAlphaRender(); //no errors on setup, good sign
       setupPaintGPU2();
+      await setupLassoStack();
   
     }
 
@@ -3926,8 +4179,8 @@ async function setup() {
     enableKeyTrapping();
 
     //setup two paint preview layers (these are actually still used for now)
-    addCanvasLayer( "paint-preview" );
-    addCanvasLayer( "paint-preview" );
+    addCanvasLayer( "_temp" );
+    addCanvasLayer( "_temp" );
 
     window.requestAnimationFrame( Loop );
 
@@ -4237,6 +4490,104 @@ function setupGL( testImageTexture ) {
 
 }
 
+const glStateAlphaRender = {
+  ready: false,
+  program: null,
+  vertices: null,
+  vertexBuffer: null,
+  vao: null,
+  xyuvInputIndex: null,
+};
+function setupGLAlphaRender() {
+
+  gl.disable(gl.DEPTH_TEST);
+  
+  gl.enable( gl.BLEND );
+  gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+
+  gl.clearColor(0,0,0,0);
+  gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+
+  //push some code to the GPU
+  const vertexShaderSource = `#version 300 es
+    in vec4 xyuv;
+
+    out vec2 xy;
+    out vec2 uv;
+    
+    void main() {
+      xy = xyuv.xy;
+      uv = xyuv.zw;
+      gl_Position = vec4(xyuv.xy,0.5,1);
+    }`;
+  const fragmentShaderSource = `#version 300 es
+    precision highp float;
+    
+    uniform sampler2D img;
+    uniform vec3 color;
+
+    in vec2 xy;
+    in vec2 uv;
+
+    out vec4 outColor;
+    
+    void main() {
+
+      vec4 lookup = texture( img, uv );
+      
+      outColor = vec4( color, lookup.a );
+
+    }`;
+
+    const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vertexShader,vertexShaderSource);
+    gl.compileShader(vertexShader);
+    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fragmentShader,fragmentShaderSource);
+    gl.compileShader(fragmentShader);
+
+    const program = gl.createProgram();
+    gl.attachShader(program,vertexShader);
+    gl.attachShader(program,fragmentShader);
+    gl.linkProgram(program);
+    glStateAlphaRender.program = program;
+
+    //push some vertex and UV data to the GPU
+    const ccs = new Float32Array([
+      //top-left triangle
+      0,0, 0,0,
+      1,0, 1,0,
+      0,1, 0,1,
+      //bottom-right triangle
+      1,0, 1,0,
+      1,1, 1,1,
+      0,1, 0,1,
+    ]);
+    const xyuvInputIndex = gl.getAttribLocation( program, "xyuv" );
+    glStateAlphaRender.xyuvInputIndex = xyuvInputIndex;
+    const xyBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER,xyBuffer);
+    gl.bufferData( gl.ARRAY_BUFFER, ccs, gl.STATIC_DRAW );
+    glStateAlphaRender.vertices = ccs;
+    glStateAlphaRender.vertexBuffer = xyBuffer;
+
+    //set up a data-descriptor
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    glStateAlphaRender.vao = vao;
+
+    //push a description of our vertex data's structure
+    gl.enableVertexAttribArray( xyuvInputIndex );
+    {
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( xyuvInputIndex, size, dType, normalize, stride, offset );
+    }
+
+    glStateAlphaRender.ready = true;
+
+}
+
+
 const airInput = {
   active: false,
   started: { x:0, y:0 },
@@ -4300,6 +4651,7 @@ function endAirInput( p ) {
   airInput.uiElement.style.display = "none";
 }
 
+
 let initialSettings = true;
 function makeConservedSettingsObject() {
   const snapshot = {};
@@ -4316,6 +4668,7 @@ function loadConservedSettingsObject( snapshot ) {
     const value = snapshot[ key ];
     if( typeof value === "object" )
       uiSettings[ key ] = JSON.parse( JSON.stringify( value ) );
+    else if( value === undefined ) {}
     else uiSettings[ key ] = value;
   }
 }
@@ -4477,11 +4830,20 @@ let uiSettings = {
   nodeSnappingDistance: Math.min( innerWidth, innerHeight ) * 0.04, //~50px on a 1080p screen
 
   setActiveTool: tool => {
+    //console.error( "Set active tool: ", tool );
     uiSettings.activeTool = tool;
     UI.updateContext();
   },
+  unsetActiveTool: tool => {
+    //console.error( "SUnet active tool: ", tool );
+    if( uiSettings.activeTool === tool )
+      uiSettings.activeTool = null;
+  },
+  isActiveTool: tool => {
+    return uiSettings.activeTool === tool;
+  },
 
- //null | generate | paint | vector | select | mask | transform | flood-fill | text-tool | pose | color-adjust
+ //null | generate | paint | vector | select | mask | transform | flood-fill | text | pose | color-adjust | lasso-tool
   activeTool: null,
   toolsSettings: {
     "generate": {},
@@ -5045,11 +5407,16 @@ function setupUI() {
       generateButton.classList.add( "tools-column-generate-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( generateButton );
       const activateGenerativeTool = () => {
-        if( ! generateButton.classList.contains( "unavailable" ) ) {
+        const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+        //you can only one-click gen on paint layers, I guess? Hmm. I mean, I guess eventually we should be able to do vector->raster->gen->vector
+        const nonUsableLayer = (selectedAndBatchedLayers.length!==1) || selectedAndBatchedLayers.some( l => l.layerType !== "generative" );
+
+        if( ! generateButton.classList.contains( "unavailable" ) && ! nonUsableLayer ) {
           uiSettings.setActiveTool( "generate" );
           setupUIGenerativeControls( selectedLayer.generativeSettings.apiFlowName );
           document.querySelector( "#generative-controls-row" ).classList.remove( "hidden" );
         }
+        else if( uiSettings.isActiveTool( "generate" ) ) uiSettings.unsetActiveTool( "generate" );
       }
 
       UI.registerElement(
@@ -5057,22 +5424,26 @@ function setupUI() {
         {
           onclick: activateGenerativeTool,
           updateContext: () => {
-            if( uiSettings.activeTool === "generate" ) { generateButton.classList.add( "on" ); }
-            else { generateButton.classList.remove( "on" ); }
+            const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+            //you can only one-click gen on paint layers, I guess? Hmm. I mean, I guess eventually we should be able to do vector->raster->gen->vector
+            const nonUsableLayer = (selectedAndBatchedLayers.length!==1) || selectedAndBatchedLayers.some( l => l.layerType !== "generative" );
 
             //if not generative layer selected, unavailable
-            if( selectedLayer?.layerType !== "generative" ) {
+            if( nonUsableLayer ) {
               generateButton.classList.add( "unavailable" );
-              generateButton.querySelector(".tooltip" ).textContent = "AI Generation Tool [Select generative layer to enable]";
+              generateButton.querySelector(".tooltip" ).textContent = "AI Generation Tool [Select one generative layer to enable]";
               generateButton.classList.remove( "on" );
-              if( uiSettings.activeTool === "generate" )
-                uiSettings.setActiveTool( null );
+              if( uiSettings.isActiveTool( "generate" ) ) uiSettings.unsetActiveTool( "generate" );
             }
             //mark if available
-            if( selectedLayer?.layerType === "generative" ) {
+            else {
               generateButton.classList.remove( "unavailable" );
               generateButton.querySelector(".tooltip" ).textContent = "AI Generation Tool";
             }
+
+            if( uiSettings.isActiveTool( "generate" ) ) { generateButton.classList.add( "on" ); }
+            else { generateButton.classList.remove( "on" ); }
+
           },
         },
         {
@@ -5087,11 +5458,14 @@ function setupUI() {
     //the AI tools button and panel
     {
       const aiToolsButton = document.createElement( "div" );
-      //aiToolsButton.classList.add( "tools-column-ai-tools-button", "round-toggle", "animated", "unavailable" );
-      aiToolsButton.classList.add( "tools-column-ai-tools-button", "round-toggle", "animated" );
+      aiToolsButton.classList.add( "tools-column-ai-tools-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( aiToolsButton );
       const openAIToolsPanel = () => {
-        if( ! aiToolsButton.classList.contains( "unavailable" ) ) {
+        const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+        //you can only one-click gen on paint layers, I guess? Hmm. I mean, I guess eventually we should be able to do vector->raster->gen->vector
+        const nonUsableLayer = (selectedAndBatchedLayers.length!==1) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
+
+        if( ! aiToolsButton.classList.contains( "unavailable" ) && ! nonUsableLayer ) {
           if( UI.context.has( "add-ai-tools-panel-visible" ) ) {
             UI.deleteContext( "add-ai-tools-panel-visible" );
           } else {
@@ -5107,12 +5481,15 @@ function setupUI() {
         {
           onclick: openAIToolsPanel,
           updateContext: () => {
-            const sourceLayer = selectedLayer || batchedLayers[0];
+            const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+            //you can only one-click gen on paint layers, I guess? Hmm. I mean, I guess eventually we should be able to do vector->raster->gen->vector
+            const nonUsableLayer = (selectedAndBatchedLayers.length!==1) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
+    
             //if selectedlayer(s) contain non-paint, unavailable
-            if( sourceLayer?.layerType !== "paint" ) {
+            if( nonUsableLayer ) {
               aiToolsButton.classList.add( "unavailable" );
               aiToolsButton.classList.remove( "on" );
-              aiToolsButton.querySelector( ".tooltip" ).textContent = "AI Tools [Select paint layer to enable]";
+              aiToolsButton.querySelector( ".tooltip" ).textContent = "AI Tools [Select one paint layer to enable]";
               UI.deleteContext( "add-ai-tools-panel-visible" );
             } else {
               aiToolsButton.classList.remove( "unavailable" );
@@ -5162,39 +5539,58 @@ function setupUI() {
 
     //the paint button
     {
-      const paintButton = document.createElement( "div" );
-      paintButton.classList.add( "tools-column-paint-button", "round-toggle", "animated", "unavailable" );
-      toolsColumn.appendChild( paintButton );
+      const canvasToolsButton = document.createElement( "div" );
+      canvasToolsButton.classList.add( "tools-column-paint-button", "round-toggle", "animated", "unavailable" );
+      toolsColumn.appendChild( canvasToolsButton );
+      const canvasTools = [ "paint", "mask", "select", "flood-fill", "color-adjust" ];
+      const canvasLayerTypes = [ "paint", "generative", "text", "vector" ];
+      let lastActiveCanvasTool = "paint";
+      window.declareLastActiveTool = () => console.log( lastActiveCanvasTool );
       const activateCanvasToolsOptions = () => {
-        if( ! paintButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
-          uiSettings.setActiveTool( "paint" );
-          console.error( "Left-column paint button needs to remember last active canvas tool and switch to it instead of paint." );
+        const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+        //at least pose layers can't have masks IMO
+        const nonUsableLayer = (selectedAndBatchedLayers.length===0) || selectedAndBatchedLayers.some( l => ! canvasLayerTypes.includes( l.layerType ) );
+        const nonPaintLayer = (selectedAndBatchedLayers.length===0) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
+        const nonSinglePaintLayer = (selectedAndBatchedLayers.length!==1) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
+
+        if( ! canvasToolsButton.classList.contains( "unavailable" ) && ! nonUsableLayer ) {
+          //this is a temporary fix to keep our tools on-screen; need to add color-adjust multiple layer support!
+          if( nonSinglePaintLayer && ( uiSettings.isActiveTool( "color-adjust" ) || lastActiveCanvasTool === "color-adjust" ) ) {
+            lastActiveCanvasTool = nonPaintLayer ? "mask" : "paint";
+          }
+          else if( nonPaintLayer ) lastActiveCanvasTool = "mask";
+          uiSettings.setActiveTool( lastActiveCanvasTool );
         } else {
-          paintButton.classList.add( "unavailable" );
+          canvasTools.forEach( t => uiSettings.isActiveTool( t ) ? uiSettings.unsetActiveTool( t ) : 0 );
+          canvasToolsButton.classList.add( "unavailable" );
         }
       }
       UI.registerElement(
-        paintButton,
+        canvasToolsButton,
         {
           onclick: activateCanvasToolsOptions,
           updateContext: () => {
-            if( [ "paint", "mask", "select", "flood-fill", "color-adjust" ].includes( uiSettings.activeTool ) ) {
-              paintButton.classList.add( "on" );
-            }
-            else {
-              paintButton.classList.remove( "on" );
+            const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+            //at least pose layers can't have masks IMO
+            const nonUsableLayer = (selectedAndBatchedLayers.length===0) || selectedAndBatchedLayers.some( l => ! canvasLayerTypes.includes( l.layerType ) );
+    
+            //if not paint layer selected, unavailable
+            if( nonUsableLayer ) {
+              canvasToolsButton.classList.add( "unavailable" );
+              canvasToolsButton.querySelector(".tooltip" ).textContent = "Canvas Tools [Select only paint, generative, text, and vector layer(s) to enable]";
+              canvasToolsButton.classList.remove( "on" );
+              canvasTools.forEach( t => uiSettings.isActiveTool( t ) ? uiSettings.unsetActiveTool( t ) : 0 );
+            } else {
+              canvasToolsButton.classList.remove( "unavailable" );
+              canvasToolsButton.querySelector(".tooltip" ).textContent = "Canvas Tools";
             }
 
-            //if not paint layer selected, unavailable
-            if( selectedLayer?.layerType !== "paint" ) {
-              paintButton.classList.add( "unavailable" );
-              paintButton.querySelector(".tooltip" ).textContent = "Canvas Tools [Select paint layer to enable]";
-              paintButton.classList.remove( "on" );
-              if( uiSettings.activeTool === "paint" )
-                uiSettings.setActiveTool( null );
-            } else {
-              paintButton.classList.remove( "unavailable" );
-              paintButton.querySelector(".tooltip" ).textContent = "Canvas Tools";
+            if( !nonUsableLayer && canvasTools.some( t => uiSettings.isActiveTool( t ) ) ) {
+              canvasToolsButton.classList.add( "on" );
+              lastActiveCanvasTool = canvasTools.find( t => uiSettings.isActiveTool( t ) );
+            }
+            else {
+              canvasToolsButton.classList.remove( "on" );
             }
 
           },
@@ -5214,31 +5610,40 @@ function setupUI() {
       vectorToolButton.classList.add( "tools-column-vector-button", "round-toggle", "animated", "unimplemented", "unavailable" );
       toolsColumn.appendChild( vectorToolButton );
       const activateVectorTool = () => {
-        if( ! vectorToolButton.classList.contains( "unavailable" ) && ! vectorToolButton.classList.contains( "unimplemented" ) ) {
-          uiSettings.setActiveTool( "vector-tool" )
+        const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+        const nonVectorLayer = (selectedAndBatchedLayers.length===0) || selectedAndBatchedLayers.some( l => l.layerType !== "vector" );
+
+        if( ! vectorToolButton.classList.contains( "unavailable" ) && ! nonVectorLayer ) {
+          uiSettings.setActiveTool( "vector" )
         }
+        else if( uiSettings.isActiveTool( "vector" ) ) uiSettings.unsetActiveTool( "vector" );
       }
       UI.registerElement(
         vectorToolButton,
         {
           onclick: activateVectorTool,
           updateContext: () => {
+            const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+            const nonVectorLayer = (selectedAndBatchedLayers.length===0) || selectedAndBatchedLayers.some( l => l.layerType !== "vector" );
+    
             if( vectorToolButton.classList.contains( "unimplemented" ) ) {
               vectorToolButton.classList.add( "unavailable" );
               vectorToolButton.classList.remove( "on" );
-              vectorToolButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Vector Tool" + ((selectedLayer?.layerType==="vector") ? "" : " [Select vector layer to enable]");
+              vectorToolButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Vector Tool" + ( nonVectorLayer ? "" : " [Select only vector layer(s) to enable]");
+              if( uiSettings.isActiveTool( "vector" ) ) uiSettings.unsetActiveTool( "vector" );
               return;
             }
             //if no layer selected, unavailable
-            if( selectedLayer?.layerType !== "vector" ) {
+            if( nonVectorLayer ) {
               vectorToolButton.classList.add( "unavailable" );
-              vectorToolButton.querySelector(".tooltip" ).textContent = "Vector Tool [Select vector layer to enable]";
+              vectorToolButton.querySelector(".tooltip" ).textContent = "Vector Tool [Select only vector layer(s) to enable]";
+              if( uiSettings.isActiveTool( "vector" ) ) uiSettings.unsetActiveTool( "vector" );
               vectorToolButton.classList.remove( "on" );
             } 
             if( selectedLayer?.layerType === "vector" ) {
               vectorToolButton.classList.remove( "unavailable" );
               vectorToolButton.querySelector(".tooltip" ).textContent = "Vector Tool";
-              if( uiSettings.activeTool === "vector-tool" ) vectorToolButton.classList.add( "on" );
+              if( uiSettings.isActiveTool( "vector" ) ) vectorToolButton.classList.add( "on" );
               else vectorToolButton.classList.remove( "on" );
             }
           },
@@ -5252,102 +5657,19 @@ function setupUI() {
       )
     }
     
-    //the select tool button
-    if( false ){
-      const selectToolButton = document.createElement( "div" );
-      selectToolButton.classList.add( "tools-column-select-button", "round-toggle", "animated", "unimplemented", "unavailable" );
-      toolsColumn.appendChild( selectToolButton );
-      const activateSelectTool = () => {
-        if( ! selectToolButton.classList.contains( "unavailable" ) && ! selectToolButton.classList.contains( "unimplemented" ) ) {
-          uiSettings.setActiveTool( "select-tool" )
-        }
-      }
-      UI.registerElement(
-        selectToolButton,
-        {
-          onclick: activateSelectTool,
-          updateContext: () => {
-            if( selectToolButton.classList.contains( "unimplemented" ) ) {
-              selectToolButton.classList.add( "unavailable" );
-              selectToolButton.classList.remove( "on" );
-              selectToolButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Select Tool" + ((selectedLayer?.layerType==="paint") ? "" : " [Select paint layer to enable]");
-              return;
-            }
-            //if no paint layer selected, unavailable
-            if( selectedLayer?.layerType !== "paint" ) {
-              selectToolButton.classList.add( "unavailable" );
-              selectToolButton.querySelector(".tooltip" ).textContent = "Select Tool [Select paint layer to enable]";
-              selectToolButton.classList.remove( "on" );
-            } 
-            if( selectedLayer?.layerType === "paint" ) {
-              selectToolButton.classList.remove( "unavailable" );
-              selectToolButton.querySelector(".tooltip" ).textContent = "Select Tool";
-              if( uiSettings.activeTool === "select-tool" ) selectToolButton.classList.add( "on" );
-              else selectToolButton.classList.remove( "on" );
-            }
-          },
-        },
-        {
-          tooltip: [ "Select Tool", "to-right", "vertical-center" ],
-          binding: {
-            "Activate Select Tool": activateSelectTool,
-          }
-        }
-      )
-    }
-    
-    //the mask button
-    if( false ){
-      const maskButton = document.createElement( "div" );
-      maskButton.classList.add( "tools-column-mask-button", "round-toggle", "animated", "unavailable" );
-      toolsColumn.appendChild( maskButton );
-      const activateMaskTool = () => {
-        if( ! maskButton.classList.contains( "unavailable" ) && [ "paint","generative","text" ].includes( selectedLayer?.layerType ) ) {
-          uiSettings.setActiveTool( "mask" )
-        } else {
-          maskButton.classList.add( "unavailable" );
-        }
-      }
-      UI.registerElement(
-        maskButton,
-        {
-          onclick: activateMaskTool,
-          updateContext: () => {
-            //if no layer selected, unavailable
-            if( uiSettings.activeTool === "mask" ) maskButton.classList.add( "on" );
-            if( uiSettings.activeTool !== "mask" ) maskButton.classList.remove( "on" );
-            
-            if( ! selectedLayer || ! [ "paint", "generative", "text" ].includes( selectedLayer?.layerType ) ) {
-              maskButton.classList.add( "unavailable" );
-              maskButton.querySelector(".tooltip" ).textContent = "Mask Tool [Select paint, text, or generative layer to enable]";
-              maskButton.classList.remove( "on" );
-            } else {
-              maskButton.classList.remove( "unavailable" );
-              maskButton.querySelector(".tooltip" ).textContent = "Mask Tool";
-              if( uiSettings.activeTool === "mask" ) maskButton.classList.add( "on" );
-              else maskButton.classList.remove( "on" );
-            }
-          },
-        },
-        {
-          tooltip: [ "Mask Tool", "to-right", "vertical-center" ],
-          binding: {
-            "Activate Mask Tool": activateMaskTool
-          }
-        }
-      )
-    }
-
     //the transform button
     {
       const transformButton = document.createElement( "div" );
       transformButton.classList.add( "tools-column-transform-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( transformButton );
       const activateTransformTool = () => {
-        if( ! transformButton.classList.contains( "unavailable" ) && ( selectedLayer || batchedLayers.size ) ) {
+        const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+
+        if( ! transformButton.classList.contains( "unavailable" ) && selectedAndBatchedLayers.length > 0 ) {
           uiSettings.setActiveTool( "transform" );
         } else {
           transformButton.classList.add( "unavailable" );
+          if( uiSettings.isActiveTool( "transform" ) ) uiSettings.unsetActiveTool( "transform" );
         }
       }
       UI.registerElement(
@@ -5355,18 +5677,21 @@ function setupUI() {
         {
           onclick: activateTransformTool,
           updateContext: () => {
+            const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
             //if no layer selected, unavailable
             //This tool AFAIK can be used on every layer type.
             if( uiSettings.activeTool === "transform" ) transformButton.classList.add( "on" );
             else transformButton.classList.remove( "on" );
-            if( ! selectedLayer && batchedLayers.size === 0 ) {
+
+            if( selectedAndBatchedLayers.length === 0 ) {
               transformButton.classList.add( "unavailable" );
-              transformButton.querySelector(".tooltip" ).textContent = "Transform Tool [Select layer to enable]";
+              transformButton.querySelector(".tooltip" ).textContent = "Transform Tool [Select layer(s) to enable]";
               transformButton.classList.remove( "on" );
+              if( uiSettings.isActiveTool( "transform" ) ) uiSettings.unsetActiveTool( "transform" );
             } else {
               transformButton.classList.remove( "unavailable" );
               transformButton.querySelector(".tooltip" ).textContent = "Transform Tool";
-              if( uiSettings.activeTool === "transform" ) transformButton.classList.add( "on" );
+              if( uiSettings.isActiveTool( "transform" ) ) transformButton.classList.add( "on" );
               else transformButton.classList.remove( "on" );
             }
           },
@@ -5380,57 +5705,17 @@ function setupUI() {
       )
     }
 
-    //the flood fill button
-    if( false ){
-      const floodFillButton = document.createElement( "div" );
-      floodFillButton.classList.add( "tools-column-flood-fill-button", "round-toggle", "animated", "unavailable" );
-      toolsColumn.appendChild( floodFillButton );
-      const activateFloodFillTool = () => {
-        if( ! floodFillButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
-          uiSettings.setActiveTool( "flood-fill" );
-        } else {
-          floodFillButton.classList.add( "unavailable" );
-        }
-      }
-      UI.registerElement(
-        floodFillButton,
-        {
-          onclick: activateFloodFillTool,
-          updateContext: () => {
-
-            //if no layer selected, unavailable
-            if( selectedLayer?.layerType !== "paint" ) {
-              floodFillButton.classList.add( "unavailable" );
-              floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool [Select paint layer to enable]";
-              floodFillButton.classList.remove( "on" );
-            }
-            if( selectedLayer?.layerType === "paint" ) {
-              floodFillButton.classList.remove( "unavailable" );
-              floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool";
-              if( uiSettings.activeTool === "flood-fill" ) {
-                floodFillButton.classList.add( "on" );
-              }
-              else floodFillButton.classList.remove( "on" );
-            }
-          },
-        },
-        {
-          tooltip: [ "Flood Fill Tool", "to-right", "vertical-center" ],
-          bindings: {
-            "Activate Flood Fill Tool": activateFloodFillTool,
-          },
-        }
-      )
-    }
-    
     //the text tool button
     {
       const textToolButton = document.createElement( "div" );
       textToolButton.classList.add( "tools-column-text-tool-button", "round-toggle", "animated", "unimplemented", "unavailable" );
       toolsColumn.appendChild( textToolButton );
       const activateTextTool = () => {
-        if( ! textToolButton.classList.contains( "unavailable" ) && ! textToolButton.classList.contains( "unimplemented" ) ) {
-          uiSettings.setActiveTool( "text-tool" )
+        const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+        const nonTextLayer = (selectedAndBatchedLayers.length!==1) || selectedAndBatchedLayers.some( l => l.layerType !== "text" );
+
+        if( ! textToolButton.classList.contains( "unavailable" ) && ! textToolButton.classList.contains( "unimplemented" ) && ! nonTextLayer ) {
+          uiSettings.setActiveTool( "text" )
         }
       }
       UI.registerElement(
@@ -5439,22 +5724,26 @@ function setupUI() {
           onclick: activateTextTool,
           updateContext: () => {
 
+            const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+            const nonTextLayer = (selectedAndBatchedLayers.length!==1) || selectedAndBatchedLayers.some( l => l.layerType !== "text" );
+
             if( textToolButton.classList.contains( "unimplemented" ) ) {
               textToolButton.classList.add( "unavailable" );
               textToolButton.classList.remove( "on" );
-              textToolButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Text Tool" + (selectedLayer ? "" : " [Select text layer to enable]");
+              textToolButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Text Tool" + (selectedLayer ? "" : " [Select one text layer to enable]");
               return;
             }
             //if no layer selected, unavailable
-            if( selectedLayer?.layerType !== "text" ) {
+            if( nonTextLayer ) {
               textToolButton.classList.add( "unavailable" );
-              textToolButton.querySelector(".tooltip" ).textContent = "Text Tool [Select text layer to enable]";
+              textToolButton.querySelector(".tooltip" ).textContent = "Text Tool [Select one text layer to enable]";
               textToolButton.classList.remove( "on" );
+              if( uiSettings.isActiveTool( "text" ) ) uiSettings.unsetActiveTool( "text" );
             } 
-            if( selectedLayer?.layerType === "text" ) {
+            else {
               textToolButton.classList.remove( "unavailable" );
               textToolButton.querySelector(".tooltip" ).textContent = "Text Tool";
-              if( uiSettings.activeTool === "text-tool" ) textToolButton.classList.add( "on" );
+              if( uiSettings.isActiveTool( "text") ) textToolButton.classList.add( "on" );
               else textToolButton.classList.remove( "on" );
             }
           },
@@ -5474,11 +5763,15 @@ function setupUI() {
       poseButton.classList.add( "tools-column-pose-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( poseButton );
       const activatePoseTool = () => {
-        if( ! poseButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "pose" ) {
+        const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+        const nonPoseLayer = (selectedAndBatchedLayers.length!==1) || selectedAndBatchedLayers.some( l => l.layerType !== "pose" );
+
+        if( ! poseButton.classList.contains( "unavailable" ) && ! nonPoseLayer ) {
           uiSettings.setActiveTool( "pose" );
           document.querySelector( "#pose-rig-container" ).loadLayer( selectedLayer );
         } else {
           poseButton.classList.add( "unavailable" );
+          if( uiSettings.activeTool === "pose" ) uiSettings.setActiveTool( null );
         }
       }
       UI.registerElement(
@@ -5486,13 +5779,17 @@ function setupUI() {
         {
           onclick: activatePoseTool,
           updateContext: () => {
+            const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+            const nonPoseLayer = (selectedAndBatchedLayers.length!==1) || selectedAndBatchedLayers.some( l => l.layerType !== "pose" );
+
             //if no layer selected, unavailable
-            if( selectedLayer?.layerType !== "pose" ) {
+            if( nonPoseLayer ) {
               poseButton.classList.add( "unavailable" );
-              poseButton.querySelector(".tooltip" ).textContent = "Pose Tool [Select pose layer to enable]";
+              poseButton.querySelector(".tooltip" ).textContent = "Pose Tool [Select one pose layer to enable]";
               poseButton.classList.remove( "on" );
+              if( uiSettings.activeTool === "pose" ) uiSettings.setActiveTool( null );
             }
-            if( selectedLayer?.layerType === "pose" ) {
+            else {
               poseButton.classList.remove( "unavailable" );
               poseButton.querySelector(".tooltip" ).textContent = "Pose Tool";
               if( uiSettings.activeTool === "pose" ) poseButton.classList.add( "on" );
@@ -5504,46 +5801,6 @@ function setupUI() {
           tooltip: [ "Pose Tool", "to-right", "vertical-center" ],
           bindings: {
             "Activate Pose Tool": activatePoseTool
-          }
-        }
-      )
-    }
-
-    //the color adjust tool button
-    if( false ){
-      const colorAdjustButton = document.createElement( "div" );
-      colorAdjustButton.classList.add( "tools-column-color-adjust-button", "round-toggle", "animated", "unavailable" );
-      toolsColumn.appendChild( colorAdjustButton );
-      const activateColorAdjustTool = () => {
-        if( ! colorAdjustButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
-          uiSettings.setActiveTool( "color-adjust" );
-        } else {
-          colorAdjustButton.classList.add( "unavailable" );
-        }
-      }
-      UI.registerElement(
-        colorAdjustButton,
-        {
-          onclick: activateColorAdjustTool,
-          updateContext: () => {
-            //if no layer selected, unavailable
-            if( selectedLayer?.layerType !== "paint" ) {
-              colorAdjustButton.classList.add( "unavailable" );
-              colorAdjustButton.querySelector(".tooltip" ).textContent = "Color Adjust Tool [Select paint layer to enable]";
-              colorAdjustButton.classList.remove( "on" );
-            }
-            if( selectedLayer?.layerType === "paint" ) {
-              colorAdjustButton.classList.remove( "unavailable" );
-              colorAdjustButton.querySelector(".tooltip" ).textContent = "Color Adjust Tool";
-              if( uiSettings.activeTool === "color-adjust" ) colorAdjustButton.classList.add( "on" );
-              else colorAdjustButton.classList.remove( "on" );
-            }
-          },
-        },
-        {
-          tooltip: [ "Color Adjust Tool", "to-right", "vertical-center" ],
-          bindings: {
-            "Activate Color Adjust Tool": activateColorAdjustTool
           }
         }
       )
@@ -5590,9 +5847,13 @@ function setupUI() {
         paintCanvasControlsButton.classList.add( "round-toggle", "on" );
         paintCanvasControlsButton.style.backgroundImage = "url('icon/canvas-paint.png')";
         const activatePaintCanvasControls = () => {
-          if( ! paintCanvasControlsButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
+          const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+          const nonPaintLayer = (selectedAndBatchedLayers.length===0) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
+
+          if( ! paintCanvasControlsButton.classList.contains( "unavailable" ) && ! nonPaintLayer ) {
             uiSettings.setActiveTool( "paint" )
           } else {
+            if( uiSettings.activeTool === "paint" ) uiSettings.setActiveTool( null );
             paintCanvasControlsButton.classList.add( "unavailable" );
           }
         }
@@ -5601,19 +5862,29 @@ function setupUI() {
           {
             onclick: activatePaintCanvasControls,
             updateContext: () => {
-              if( uiSettings.activeTool === "paint" ) { paintCanvasControlsButton.classList.add( "on" ); }
-              else { paintCanvasControlsButton.classList.remove( "on" ); }
+
+              const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+              const nonPaintLayer = (selectedAndBatchedLayers.length===0) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
+
+              if( nonPaintLayer && uiSettings.activeTool === "paint" ) {
+                uiSettings.setActiveTool( null );
+              }
+
+              if( uiSettings.activeTool === "paint" ) { 
+                paintCanvasControlsButton.classList.add( "on" ); 
+              }
+              else { 
+                paintCanvasControlsButton.classList.remove( "on" ); 
+              }
   
               //if not paint layer selected, unavailable
-              if( selectedLayer?.layerType !== "paint" ) {
+              if( nonPaintLayer ) {
                 paintCanvasControlsButton.classList.add( "unavailable" );
-                //paintCanvasControlsButton.querySelector(".tooltip" ).textContent = "Paint Tool [Select paint layer to enable]";
+                paintCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Paint [Select only paint layer(s) to enable]";
                 paintCanvasControlsButton.classList.remove( "on" );
-                if( uiSettings.activeTool === "paint" )
-                  uiSettings.setActiveTool( null );
               } else {
                 paintCanvasControlsButton.classList.remove( "unavailable" );
-                //paintCanvasControlsButton.querySelector(".tooltip" ).textContent = "Paint Tool";
+                paintCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Paint";
               }
             }
           },
@@ -5632,9 +5903,13 @@ function setupUI() {
         maskCanvasControlsButton.classList.add( "round-toggle", "on" );
         maskCanvasControlsButton.style.backgroundImage = "url('icon/gala-mask.png')";
         const activateMaskCanvasControls = () => {
-          if( ! maskCanvasControlsButton.classList.contains( "unavailable" ) && [ "paint","generative","text" ].includes( selectedLayer?.layerType ) ) {
+          const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+          const nonMaskLayer = (selectedAndBatchedLayers.length===0) || selectedAndBatchedLayers.some( l => ! [ "paint", "generative", "text" ].includes( l.layerType ) );
+
+          if( ! maskCanvasControlsButton.classList.contains( "unavailable" ) && ! nonMaskLayer ) {
             uiSettings.setActiveTool( "mask" )
           } else {
+            if( uiSettings.activeTool === "mask" ) uiSettings.setActiveTool( null );
             maskCanvasControlsButton.classList.add( "unavailable" );
           }
         }
@@ -5647,13 +5922,16 @@ function setupUI() {
               if( uiSettings.activeTool === "mask" ) maskCanvasControlsButton.classList.add( "on" );
               if( uiSettings.activeTool !== "mask" ) maskCanvasControlsButton.classList.remove( "on" );
               
-              if( ! selectedLayer || ! [ "paint", "generative", "text" ].includes( selectedLayer?.layerType ) ) {
+              const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+              const nonMaskLayer = (selectedAndBatchedLayers.length===0) || selectedAndBatchedLayers.some( l => ! [ "paint", "generative", "text" ].includes( l.layerType ) );
+
+              if( nonMaskLayer ) {
                 maskCanvasControlsButton.classList.add( "unavailable" );
-                //maskCanvasControlsButton.querySelector(".tooltip" ).textContent = "Mask Tool [Select paint, text, or generative layer to enable]";
+                maskCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Mask [Select only paint, text, or generative layer(s) to enable]";
                 maskCanvasControlsButton.classList.remove( "on" );
               } else {
                 maskCanvasControlsButton.classList.remove( "unavailable" );
-                //maskCanvasControlsButton.querySelector(".tooltip" ).textContent = "Mask Tool";
+                maskCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Mask";
                 if( uiSettings.activeTool === "mask" ) maskCanvasControlsButton.classList.add( "on" );
                 else maskCanvasControlsButton.classList.remove( "on" );
               }
@@ -5668,49 +5946,59 @@ function setupUI() {
         );
         canvasControlsOptionsRow.appendChild( maskCanvasControlsButton );
       }
-      //the select-canvas controls button
+      //the lasso-canvas controls button
       {
-        const selectCanvasControlsButton = document.createElement( "div" );
-        selectCanvasControlsButton.classList.add( "round-toggle", "on", "unimplemented" );
-        selectCanvasControlsButton.style.backgroundImage = "url('icon/select-free.png')";
-        const activateSelectCanvasControls = () => {
-          if( ! selectCanvasControlsButton.classList.contains( "unavailable" ) && ! selectCanvasControlsButton.classList.contains( "unimplemented" ) ) {
-            uiSettings.setActiveTool( "select-tool" )
+        //we're keeping this under the canvas tools. those are the only ones that need it; because we'll have a unique transform? hmm.
+        console.error( "enable lasso tool controls here (and rename from select to lasso)" );
+        const lassoCanvasControlsButton = document.createElement( "div" );
+        lassoCanvasControlsButton.classList.add( "round-toggle", "on", "unimplemented", "unavailable" );
+        lassoCanvasControlsButton.style.backgroundImage = "url('icon/select-free.png')";
+        const activateLassoCanvasControls = () => {
+          const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+          let nonPaintLayer = (selectedAndBatchedLayers.length === 0) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
+          if( ! lassoCanvasControlsButton.classList.contains( "unavailable" ) && ! lassoCanvasControlsButton.classList.contains( "unimplemented" ) && ! nonPaintLayer ) {
+            uiSettings.setActiveTool( "lasso-tool" )
+          }
+          else if( uiSettings.activeTool === "lasso-tool" ) {
+            uiSettings.setActiveTool( null );
           }
         }
         UI.registerElement(
-          selectCanvasControlsButton,
+          lassoCanvasControlsButton,
           {
-            onclick: activateSelectCanvasControls,
+            onclick: activateLassoCanvasControls,
             updateContext: () => {
-              if( selectCanvasControlsButton.classList.contains( "unimplemented" ) ) {
-                selectCanvasControlsButton.classList.add( "unavailable" );
-                selectCanvasControlsButton.classList.remove( "on" );
-                //selectCanvasControlsButton.querySelector(".tooltip" ).textContent = "!Unimplemented! Select Tool" + ((selectedLayer?.layerType==="paint") ? "" : " [Select paint layer to enable]");
+
+              if( lassoCanvasControlsButton.classList.contains( "unimplemented" ) ) {
+                lassoCanvasControlsButton.classList.add( "unavailable" );
+                lassoCanvasControlsButton.classList.remove( "on" );
                 return;
               }
+
+              const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+              let nonPaintLayer = (selectedAndBatchedLayers.length === 0) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
               //if no paint layer selected, unavailable
-              if( selectedLayer?.layerType !== "paint" ) {
-                selectCanvasControlsButton.classList.add( "unavailable" );
-                //selectCanvasControlsButton.querySelector(".tooltip" ).textContent = "Select Tool [Select paint layer to enable]";
-                selectCanvasControlsButton.classList.remove( "on" );
-              } 
-              if( selectedLayer?.layerType === "paint" ) {
-                selectCanvasControlsButton.classList.remove( "unavailable" );
-                //selectCanvasControlsButton.querySelector(".tooltip" ).textContent = "Select Tool";
-                if( uiSettings.activeTool === "select-tool" ) selectCanvasControlsButton.classList.add( "on" );
-                else selectCanvasControlsButton.classList.remove( "on" );
+              if( nonPaintLayer ) {
+                lassoCanvasControlsButton.classList.add( "unavailable" );
+                lassoCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Lasso [Select only paint layer(s) to enable]";
+                lassoCanvasControlsButton.classList.remove( "on" );
+              }
+              else {
+                lassoCanvasControlsButton.classList.remove( "unavailable" );
+                lassoCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Lasso";
+                if( uiSettings.activeTool === "lasso-tool" ) lassoCanvasControlsButton.classList.add( "on" );
+                else lassoCanvasControlsButton.classList.remove( "on" );
               }
             }
           },
           {
-            tooltip: [ "!Unimplemented! Canvas Select", "below", "to-right-of-center" ], zIndex:10000,
+            tooltip: [ "!Unimplemented! Canvas Lasso", "below", "to-right-of-center" ], zIndex:10000,
             bindings: {
-              "Activate Canvas Controls - Select": activateSelectCanvasControls
+              "Activate Canvas Controls - Lasso": activateLassoCanvasControls
             }
           }
         );
-        canvasControlsOptionsRow.appendChild( selectCanvasControlsButton );
+        canvasControlsOptionsRow.appendChild( lassoCanvasControlsButton );
       }
       //the flood-fill-canvas controls button
       {
@@ -5718,7 +6006,10 @@ function setupUI() {
         floodFillCanvasControlsButton.classList.add( "round-toggle", "on" );
         floodFillCanvasControlsButton.style.backgroundImage = "url('icon/paint-bucket.png')";
         const activateFlooodFillCanvasControls = () => {
-          if( ! floodFillCanvasControlsButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
+          const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+          const nonPaintLayer = (selectedAndBatchedLayers.length === 0) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
+
+          if( ! floodFillCanvasControlsButton.classList.contains( "unavailable" ) && ! nonPaintLayer ) {
             uiSettings.setActiveTool( "flood-fill" );
           } else {
             floodFillCanvasControlsButton.classList.add( "unavailable" );
@@ -5729,16 +6020,19 @@ function setupUI() {
           {
             onclick: activateFlooodFillCanvasControls,
             updateContext: () => {
+              const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+              const nonPaintLayer = (selectedAndBatchedLayers.length === 0) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
+
               //if no layer selected, unavailable
-              if( selectedLayer?.layerType !== "paint" ) {
+              if( nonPaintLayer ) {
                 floodFillCanvasControlsButton.classList.add( "unavailable" );
-                //floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool [Select paint layer to enable]";
+                floodFillCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Flood Fill [Select only paint layer(s) to enable]";
                 floodFillCanvasControlsButton.classList.remove( "on" );
               }
-              if( selectedLayer?.layerType === "paint" ) {
+              else {
                 floodFillCanvasControlsButton.classList.remove( "unavailable" );
-                //floodFillButton.querySelector(".tooltip" ).textContent = "Flood Fill Tool";
-                if( uiSettings.activeTool === "flood-fill" ) {
+                floodFillCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Flood Fill";
+                if( uiSettings.isActiveTool( "flood-fill" ) ) {
                   floodFillCanvasControlsButton.classList.add( "on" );
                 }
                 else floodFillCanvasControlsButton.classList.remove( "on" );
@@ -5760,27 +6054,33 @@ function setupUI() {
         colorAdjustCanvasControlsButton.classList.add( "round-toggle", "on" );
         colorAdjustCanvasControlsButton.style.backgroundImage = "url('icon/adjust.png')";
         const activateColorAdjustCanvasControls = () => {
-          if( ! colorAdjustCanvasControlsButton.classList.contains( "unavailable" ) && selectedLayer?.layerType === "paint" ) {
+          const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+          let nonPaintLayer = (selectedAndBatchedLayers.length !== 1) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
+          if( ! colorAdjustCanvasControlsButton.classList.contains( "unavailable" ) && ! nonPaintLayer ) {
             uiSettings.setActiveTool( "color-adjust" );
           } else {
             colorAdjustCanvasControlsButton.classList.add( "unavailable" );
+            if( uiSettings.isActiveTool( "color-adjust" ) ) uiSettings.unsetActiveTool( "color-adjust" );
           }
         }
+        console.error( "TODO IMMEDIATELY!: modify color adjust to accept multiple layers (w/ GPU shader preview & resolution i guess probably)" );
         UI.registerElement(
           colorAdjustCanvasControlsButton,
           {
             onclick: activateColorAdjustCanvasControls,
             updateContext: () => {
+              const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+              let nonPaintLayer = (selectedAndBatchedLayers.length !== 1 ) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
               //if no layer selected, unavailable
-              if( selectedLayer?.layerType !== "paint" ) {
+              if( nonPaintLayer ) {
                 colorAdjustCanvasControlsButton.classList.add( "unavailable" );
-                //colorAdjustCanvasControlsButton.querySelector(".tooltip" ).textContent = "Color Adjust Tool [Select paint layer to enable]";
+                colorAdjustCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Color Adjust [Select one paint layer to enable]";
                 colorAdjustCanvasControlsButton.classList.remove( "on" );
               }
-              if( selectedLayer?.layerType === "paint" ) {
+              else {
                 colorAdjustCanvasControlsButton.classList.remove( "unavailable" );
-                //colorAdjustCanvasControlsButton.querySelector(".tooltip" ).textContent = "Color Adjust Tool";
-                if( uiSettings.activeTool === "color-adjust" ) colorAdjustCanvasControlsButton.classList.add( "on" );
+                colorAdjustCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Color Adjust";
+                if( uiSettings.isActiveTool( "color-adjust" ) ) colorAdjustCanvasControlsButton.classList.add( "on" );
                 else colorAdjustCanvasControlsButton.classList.remove( "on" );
               }
             }
@@ -6199,9 +6499,9 @@ function setupUI() {
         colorAdjustToolOptionsRow.id = "color-adjust-tools-options-row";
         toolOptionsRow.appendChild( colorAdjustToolOptionsRow );
         let adjustingLayer = null,
-          sourceImage = new Image(),
-          sourceURL = "",
-          sourceLoaded = false,
+          lassoLayer = null,
+          sourceCanvas = document.createElement( "canvas" ),
+          sourceContext = sourceCanvas.getContext( "2d" ),
           colorAdjustments = {
             saturation: 0, //0=unsaturated, 1=no effect, >1 saturate
             contrast: 0, //0=gray, 1=no effect, >1 contrast
@@ -6213,18 +6513,17 @@ function setupUI() {
           toolOptionsRow,
           {
             updateContext: () => {
-              if( uiSettings.activeTool === "color-adjust" && selectedLayer && selectedLayer.layerType === "paint" ) {
+              if( uiSettings.isActiveTool( "color-adjust" ) && selectedLayer && selectedLayer.layerType === "paint" ) {
                 if( adjustingLayer !== selectedLayer ) {
                   if( adjustingLayer !== null ) {
-                    //this is weird behavior
+                    //this is weird behavior (not a code bug, just a user-expectations questions)
                     //e.g., if you preview, then merge down, then undo... what happens? is it reasonable?
                     resetPreview();
                     adjustingLayer = null;
-                    sourceURL = "";
                   }
                   colorAdjustToolOptionsRow.classList.remove( "hidden" );
                   adjustingLayer = selectedLayer;
-                  loadSourceImageFromLayer( adjustingLayer );
+                  loadSourceCanvasFromLayer( adjustingLayer );
                   Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
                 }
               }
@@ -6233,13 +6532,10 @@ function setupUI() {
                   //roll back any changes if any filter is non-zero
                   resetPreview();
                   adjustingLayer = null;
-                  sourceURL = "";
                 }
                 if( uiSettings.activeTool === "color-adjust" ) {
                   uiSettings.setActiveTool( null );
                   adjustingLayer = null;
-                  sourceURL = "";
-                  sourceLoaded = false;
                 }
                 colorAdjustToolOptionsRow.classList.add( "hidden" );
               }
@@ -6250,53 +6546,57 @@ function setupUI() {
           }
         );
   
-        function loadSourceImageFromLayer( layer ) {
-          let registerSourceLoaded;
+        function loadSourceCanvasFromLayer( layer ) {
           adjustingLayer = layer;
-          sourceLoaded = new Promise( r => registerSourceLoaded = r );
-          sourceImage.onload = registerSourceLoaded;
-          sourceURL = layer.canvas.toDataURL();
-          sourceImage.src = sourceURL;
+          sourceCanvas.width = layer.w;
+          sourceCanvas.height = layer.h;
+          sourceContext.clearRect( 0,0,layer.w,layer.h );
+          sourceContext.save();
+          sourceContext.globalCompositeOperation = "copy";
+          sourceContext.globalAlpha = 1.0;
+          sourceContext.drawImage( layer.canvas, 0, 0 );
+          sourceContext.restore();
+          lassoLayer = getLassoLayerForLayer( layer, true );
+          if( lassoLayer ) {
+            lassoLayer.context.putImageData( lassoLayer.lassoImageData, 0, 0 );
+          }
         }
   
-        async function resetPreview() {
-          if( sourceLoaded === false ) return;
-          await sourceLoaded;
-          if( sourceLoaded === false ) return;
+        function resetPreview() {
           Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
           colorAdjustToolOptionsRow.querySelectorAll( ".number-slider" ).forEach( s => s.setValue( 0 ) );
           adjustingLayer.context.save();
           adjustingLayer.context.filter = "none";
           adjustingLayer.context.globalCompositeOperation = "copy";
           adjustingLayer.context.globalAlpha = 1.0;
-          adjustingLayer.context.drawImage( sourceImage, 0, 0 );
+          adjustingLayer.context.drawImage( sourceCanvas, 0, 0 );
           adjustingLayer.context.restore();
           flagLayerTextureChanged( adjustingLayer, null, false );
         }
-        async function updateColorAdjustPreview() {
-          if( sourceLoaded === false ) return;
-          await sourceLoaded;
-          if( sourceLoaded === false ) return;
+        function updateColorAdjustPreview() {
           adjustingLayer.context.save();
+          if( lassoLayer ) {
+            adjustingLayer.context.filter = "none";
+            adjustingLayer.context.globalCompositeOperation = "copy";
+            adjustingLayer.context.globalAlpha = 1.0;
+            adjustingLayer.context.drawImage( sourceCanvas, 0, 0 );
+            if( lassoResources.invert === false ) adjustingLayer.context.globalCompositeOperation = "destination-out";
+            else adjustingLayer.context.globalCompositeOperation = "destination-in";
+            adjustingLayer.context.drawImage( lassoLayer.canvas, 0, 0 );
+          }
           adjustingLayer.context.filter = `saturate(${colorAdjustments.saturation+1}) contrast(${colorAdjustments.contrast+1}) brightness(${colorAdjustments.brightness+1}) hue-rotate(${colorAdjustments.hue}turn) invert(${colorAdjustments.invert})`;
-          adjustingLayer.context.globalCompositeOperation = "copy";
+          if( lassoLayer ) adjustingLayer.context.globalCompositeOperation = "destination-over";
+          else adjustingLayer.context.globalCompositeOperation = "copy";
           adjustingLayer.context.globalAlpha = 1.0;
-          adjustingLayer.context.drawImage( sourceImage, 0, 0 );
+          adjustingLayer.context.drawImage( sourceCanvas, 0, 0 );
           adjustingLayer.context.restore();
           flagLayerTextureChanged( adjustingLayer, null, false );
         }
-        async function finalizeColorAdjust() {
-          if( sourceLoaded === false ) return;
-          await sourceLoaded;
-          if( sourceLoaded === false ) return;
+        function finalizeColorAdjust() {
   
-          adjustingLayer.context.save();
-          adjustingLayer.context.filter = `saturate(${colorAdjustments.saturation+1}) contrast(${colorAdjustments.contrast+1}) brightness(${colorAdjustments.brightness+1}) hue-rotate(${colorAdjustments.hue}turn) invert(${colorAdjustments.invert})`;
-          adjustingLayer.context.globalCompositeOperation = "copy";
-          adjustingLayer.context.globalAlpha = 1.0;
-          adjustingLayer.context.drawImage( sourceImage, 0, 0 );
+          updateColorAdjustPreview();
+          const sourceURL = sourceCanvas.toDataURL();
           const finalURL = adjustingLayer.canvas.toDataURL();
-          adjustingLayer.context.restore();
           flagLayerTextureChanged( adjustingLayer, null, true );
           
           Object.keys( colorAdjustments ).forEach( k => colorAdjustments[ k ] = 0 );
@@ -6332,7 +6632,7 @@ function setupUI() {
           };
           recordHistoryEntry( historyEntry );
   
-          loadSourceImageFromLayer( adjustingLayer );
+          loadSourceCanvasFromLayer( adjustingLayer );
           
         }
   
@@ -6423,16 +6723,8 @@ function setupUI() {
           floodFillOptionsRow,
           {
             updateContext: () => {
-              if( uiSettings.activeTool === "flood-fill" ) {
-                if( selectedLayer?.layerType === "paint" ) {
-                  floodFillOptionsRow.classList.remove( "hidden" );
-                  /* const colorWell = document.querySelector( ".paint-tools-options-color-well" );
-                  colorWell.classList.remove( "hidden" );
-                  floodFillOptionsRow.appendChild( colorWell ); */
-                } else {
-                  uiSettings.setActiveTool( null );
-                  floodFillOptionsRow.classList.add( "hidden" );
-                }
+              if( uiSettings.isActiveTool( "flood-fill" ) ) {
+                floodFillOptionsRow.classList.remove( "hidden" );
               }
               else {
                 floodFillOptionsRow.classList.add( "hidden" );
@@ -6761,8 +7053,10 @@ function setupUI() {
 
           if( uiSettings.activeTool === "transform" ) {
 
+            const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+
             //check if we have any selected layers, disable the tool if not
-            if( ! selectedLayer && batchedLayers.size === 0 ) {
+            if( selectedAndBatchedLayers.length === 0 ) {
               uiSettings.setActiveTool( null );
               transformToolOptionsRow.classList.add( "hidden" );
               return;
@@ -6774,51 +7068,25 @@ function setupUI() {
             let selectedLayersTarget = [...uiSettings.toolsSettings.transform.transformingLayers];
             if( selectedLayersTarget.length === 0 ) {
               //means ready to transform, but not yet transforming batch of layers
-              selectedLayersTarget = [ ...batchedLayers] ;
+              selectedLayersTarget.push( ...selectedAndBatchedLayers );
             }
-            if( selectedLayersTarget.length === 0 ) {
-              //means ready to transform, but not yet transforming single layer
-              if( selectedLayer.layerType === "group" ) {
-                const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
-                for( const layer of groupChildren ) {
-                  if( layer.layerType === "group" ) continue;
-                  selectedLayersTarget.push( layer );
-                }
-              }
-              else {
-                selectedLayersTarget.push( selectedLayer );
-              }
-            }
+
+            const toolNames = [".rotation-slider", ".scale-slider", ".x-slider", ".y-slider", ".width-slider", ".height-slider"];
 
             if( selectedLayersTarget.length === 0 ) {
               //nothing to transform, hide our tools
-              transformToolOptionsRow.querySelector( ".rotation-slider" ).classList.add( "hidden" );
-              transformToolOptionsRow.querySelector( ".scale-slider" ).classList.add( "hidden" );
-              transformToolOptionsRow.querySelector( ".x-slider" ).classList.add( "hidden" );
-              transformToolOptionsRow.querySelector( ".y-slider" ).classList.add( "hidden" );
-              transformToolOptionsRow.querySelector( ".width-slider" ).classList.add( "hidden" );
-              transformToolOptionsRow.querySelector( ".height-slider" ).classList.add( "hidden" );
+              toolNames.forEach( tn => transformToolOptionsRow.querySelector( tn ).classList.add( "hidden" ) );
               //hide the crop handles too
             }
             if( selectedLayersTarget.length === 1 ) {
               //show all our tools
-              transformToolOptionsRow.querySelector( ".rotation-slider" ).classList.remove( "hidden" );
-              transformToolOptionsRow.querySelector( ".scale-slider" ).classList.remove( "hidden" );
-              transformToolOptionsRow.querySelector( ".x-slider" ).classList.remove( "hidden" );
-              transformToolOptionsRow.querySelector( ".y-slider" ).classList.remove( "hidden" );
-              transformToolOptionsRow.querySelector( ".width-slider" ).classList.remove( "hidden" );
-              transformToolOptionsRow.querySelector( ".height-slider" ).classList.remove( "hidden" );
+              toolNames.forEach( tn => transformToolOptionsRow.querySelector( tn ).classList.remove( "hidden" ) );
               //show the crop handles
             }
             if( selectedLayersTarget.length > 1 ) {
               //show just the rotation and scale tools
-              transformToolOptionsRow.querySelector( ".rotation-slider" ).classList.remove( "hidden" );
-              transformToolOptionsRow.querySelector( ".scale-slider" ).classList.remove( "hidden" );
-              transformToolOptionsRow.querySelector( ".x-slider" ).classList.remove( "hidden" );
-              transformToolOptionsRow.querySelector( ".y-slider" ).classList.remove( "hidden" );
-              transformToolOptionsRow.querySelector( ".width-slider" ).classList.add( "hidden" );
-              transformToolOptionsRow.querySelector( ".height-slider" ).classList.add( "hidden" );
-              //hide the crop handles too
+              toolNames.forEach( tn => transformToolOptionsRow.querySelector( tn ).classList.remove( "hidden" ) );
+              //hide the crop handles
             }
   
             //check if our selection has changed
@@ -8782,7 +9050,7 @@ function setupUI() {
               UI.deleteContext( "add-layers-panel-visible" );
               console.error( "Image import failed. Need to add error onscreen" );
             } else {
-              const imageLayer = await addCanvasLayer( "paint", img.width, img.height );
+              const imageLayer = addCanvasLayer( "paint", img.width, img.height );
               //draw image
               imageLayer.context.drawImage( img, 0, 0 );
               flagLayerTextureChanged( imageLayer );
@@ -9345,7 +9613,7 @@ function populateAPIFlowControls( apiFlow, selectedLayerInput = false ) {
         }
       }
       //cast source layer to generative layer's space
-      const previewLayer = layersStack.layers.find( l => l.layerType === "paint-preview" );
+      const previewLayer = layersStack.layers.find( l => l.layerType === "_temp" );
       sampleLayerInLayer( sourceLayer, selectedLayer, previewLayer, "rgb(0,0,0)" );
       const dataURL = previewLayer.canvas.toDataURL();
       controlValues[ control.controlName ] = dataURL;
@@ -9407,6 +9675,8 @@ function setupUIGenerativeToolsPanel() {
           if( image.width !== destLayer.w || image.height !== destLayer.h )
             cropLayerSizeAndRecordUndo( destLayer, image.width, image.height );
           history.pop();
+          //const lassoArea = getLassoLayerForLayer( destLayer );
+          //will ignore lasso? Doesn't make a ton of sense to modify only lassoed area IMO, especially since image size can change
           destLayer.context.drawImage( result[ "generated-image" ], 0, 0 );
 
           const newData = {
@@ -9500,7 +9770,7 @@ function setupUIGenerativeControls( apiFlowName ) {
   controlsPanel.apiFlowName = apiFlowName;
   
   //track layer for switch
-  setupUIGenerativeControls.currentSelectedLayer = selectedLayer;
+  setupUIGenerativeControls.currentSelectedLayer = getSelectedOrBatchedLayers()[0];
 
   let numberOfImageInputs = 0;
 
@@ -9900,7 +10170,7 @@ function exportPNG() {
   //TODO: calculate the bounding box of all layers and resize the export canvas
   let previewLayer;
   for( const l of layersStack.layers ) {
-    if( l.layerType === "paint-preview" ) {
+    if( l.layerType === "_temp" ) {
       previewLayer = l;
       break;
     }
@@ -9911,7 +10181,7 @@ function exportPNG() {
 
   const layersToDraw = [];
   for( const layer of layersStack.layers ) {
-    if( layer.layerType === "paint-preview" ) continue;
+    if( layer.layerType === "_temp" ) continue;
     if( layer.visibility === false ) continue;
     if( layer.layerGroupId !== null ) continue;
     layersToDraw.push( layer );
@@ -9964,20 +10234,21 @@ function cloneObjectForJSON( sourceObject, cloneTarget, ignorePath, path=[] ) {
       cloneTarget[ key ] ||= {};
       cloneObjectForJSON( sourceObject[ key ], cloneTarget[ key ], ignorePath, path.concat( key ) );
     }
+    //ignore functions
   }
 }
 
 function saveJSON() {
   let settingsClone = {};
-  const brushTipImages = uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages;
-  delete uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages;
+  //const brushTipImages = uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages;
+  //delete uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages;
   cloneObjectForJSON( uiSettings, settingsClone, nonSavedSettingsPaths );
-  uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages = brushTipImages;
+  //uiSettings.toolsSettings.paint.modeSettings.all.brushTipsImages = brushTipImages;
   console.log( settingsClone );
   const uiSettingsSave = JSON.parse( JSON.stringify( settingsClone ) );
   const layersSave = [];
   for( const layer of layersStack.layers ) {
-    if( layer.layerType === "paint-preview" ) continue;
+    if( layer.layerType === "_temp" ) continue;
     //drop the canvas, context, glTexture... linkNodes??? ...Yeah. Those don't save right now.
     const {
       layerType,
@@ -10128,7 +10399,7 @@ function loadJSON() {
       
         //if we opened over an existing file, we have to clear everything up
         for( const layer of layersStack.layers ) {
-          if( layer.layerType === "paint-preview" ) continue;
+          if( layer.layerType === "_temp" ) continue;
           deleteLayer( layer );
         }
         clearUndoHistory();
@@ -10136,7 +10407,7 @@ function loadJSON() {
         let lastLayer;
         for( const layer of layersSave ) {
           let doNotUpdate = true;
-          let newLayer = await addCanvasLayer( layer.layerType, layer.w, layer.h, lastLayer, doNotUpdate );
+          let newLayer = addCanvasLayer( layer.layerType, layer.w, layer.h, lastLayer, doNotUpdate );
           lastLayer = newLayer;
           const img = new Image();
           img.onload = () => {
@@ -10843,6 +11114,9 @@ const startHandler = p => {
     if( pointers.count === 1 ) {
         pincher.ongoing = false;
 
+        const point = [x,y,1];
+        const { selectedAndBatchedLayers, layerContainingPoint } = getSelectedOrBatchedLayerContainingPoint( point );
+
         if( keys[ " " ] === true ) {
             cursor.origin.x = x;
             cursor.origin.y = y;
@@ -10877,49 +11151,17 @@ const startHandler = p => {
 
                 cursor.mode = "zoom";
             }
-            //check if one of our points is inside the selected layer, and disable transform if not
+
+            //check if one of our points is inside the one of the selected layers, both for painting and transforming
             if( uiSettings.activeTool === "transform" ) {
-              const point = [cursor.current.x,cursor.current.y,1];
-
-              //collect transforming layers
-              const layersToTransform = [];
-              if( batchedLayers.size ) {
-                const transformableChildren = [];
-                for( const layer of batchedLayers ) {
-                  if( layer.layerType === "group" ) continue;
-                  transformableChildren.push( layer );
-                }
-                layersToTransform.push( ...transformableChildren );
-              }
-              else if( selectedLayer?.layerType === "group" ) {
-                const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
-                const transformableChildren = [];
-                for( const layer of groupChildren ) {
-                  if( layer.layerType === "group" ) continue;
-                  transformableChildren.push( layer );
-                }
-                layersToTransform.push( ...transformableChildren );
-              }
-              else if( selectedLayer ) {
-                layersToTransform.push( selectedLayer );
-              }
-
-              let foundPointInSelectedLayer = false;
-              for( const layer of layersToTransform ) {
-                if( testPointsInLayer( layer, [point], true ) ) {
-                  foundPointInSelectedLayer = true;
-                  break;
-                }
-              }
-
-              if( foundPointInSelectedLayer ) {
+              if( layerContainingPoint ) {
                 //activate transform
                 uiSettings.toolsSettings.transform.current = true;
                 uiSettings.toolsSettings.transform.transformingLayers.length = 0;
-                uiSettings.toolsSettings.transform.transformingLayers.push( ...layersToTransform );
+                uiSettings.toolsSettings.transform.transformingLayers.push( ...selectedAndBatchedLayers );
 
 
-                //get layer(s) center
+                //get layer(s) center(s)
                 if( cursor.mode === "rotate" || cursor.mode === "zoom" ) {
                   let lx=0, ly=0, i = 0;
                   for( const layer of uiSettings.toolsSettings.transform.transformingLayers ) {
@@ -10951,9 +11193,9 @@ const startHandler = p => {
               }
             }
         }
-        else if( p.pointerType !== "touch" && selectedLayer &&
+        else if( p.pointerType !== "touch" && layerContainingPoint &&
           ( uiSettings.activeTool === "paint" || uiSettings.activeTool === "mask" ) ) {
-          beginPaintGPU2( selectedLayer );
+          beginPaintGPU2( layerContainingPoint );
         }
     }
     else {
@@ -10997,35 +11239,22 @@ const startHandler = p => {
         //check if one of our points is inside the selected layer, and disable transform if not
         if( uiSettings.activeTool === "transform" ) {
           const points = [ [a.origin.x,a.origin.y,1], [b.origin.x,b.origin.y,1] ];
-          let pointInSelectedLayer = testPointsInLayer( selectedLayer, points, true );
+          const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
+          let layerContainingPoint = null;
+          for( const layer of selectedAndBatchedLayers ) {
+            if( testPointsInLayer( layer, points, true ) ) {
+              layerContainingPoint = layer;
+              break;
+            }
+          }
 
-          if( pointInSelectedLayer ) {
+          uiSettings.toolsSettings.transform.transformingLayers.length = 0;
+          if( layerContainingPoint ) {
             uiSettings.toolsSettings.transform.current = true;
-            uiSettings.toolsSettings.transform.transformingLayers.length = 0;
-            if( batchedLayers.size ) {
-              const transformableChildren = [];
-              for( const layer of batchedLayers ) {
-                if( layer.layerType === "group" ) continue;
-                transformableChildren.push( layer );
-              }
-              uiSettings.toolsSettings.transform.transformingLayers.push( ...transformableChildren );
-            }
-            if( selectedLayer.layerType === "group" ) {
-              const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
-              const transformableChildren = [];
-              for( const layer of groupChildren ) {
-                if( layer.layerType === "group" ) continue;
-                transformableChildren.push( layer );
-              }
-              uiSettings.toolsSettings.transform.transformingLayers.push( ...transformableChildren );
-            }
-            else {
-              uiSettings.toolsSettings.transform.transformingLayers.push( selectedLayer );
-            }
+            uiSettings.toolsSettings.transform.transformingLayers.push( ...selectedAndBatchedLayers );
           }
           else {
             uiSettings.toolsSettings.transform.current = false;
-            uiSettings.toolsSettings.transform.transformingLayers.length = 0;
           }
         }
     }
@@ -11089,7 +11318,7 @@ const moveHandler = ( p, pseudo = false ) => {
             mul3x1( _inverter , point , point );
 
             painter.queue.push( point );
-            paintGPU2( painter.queue, selectedLayer )
+            paintGPU2( painter.queue ); //paints onto layer set in beginPaintGPU2
         }
     }
     
@@ -11129,10 +11358,11 @@ const stopHandler = p => {
     moveHandler( p, true );
 
     if( pointers.count === 1 ) {
-        if( uiSettings.activeTool === "flood-fill" && painter.active === false && cursor.mode === "none" && selectedLayer?.layerType === "paint" ) {
+        const point = [ cursor.current.x , cursor.current.y, 1 ];
+        const { layerContainingPoint } = getSelectedOrBatchedLayerContainingPoint( point );
+
+        if( uiSettings.isActiveTool( "flood-fill" ) && painter.active === false && cursor.mode === "none" && layerContainingPoint?.layerType === "paint" ) {
           //get our global coordinate
-          
-          const point = [ cursor.current.x , cursor.current.y, 1 ];
           
           _originMatrix[ 2 ] = -view.origin.x;
           _originMatrix[ 5 ] = -view.origin.y;
@@ -11148,11 +11378,11 @@ const stopHandler = p => {
           //cast to our layer
           
           //get our selected layer's space (I should really put this in some kind of function? It's so duplicated)
-          let origin = { x:selectedLayer.topLeft[0], y:selectedLayer.topLeft[1] },
-            xLeg = { x:selectedLayer.topRight[0] - origin.x, y: selectedLayer.topRight[1] - origin.y },
+          let origin = { x:layerContainingPoint.topLeft[0], y:layerContainingPoint.topLeft[1] },
+            xLeg = { x:layerContainingPoint.topRight[0] - origin.x, y: layerContainingPoint.topRight[1] - origin.y },
             xLegLength = Math.sqrt( xLeg.x**2 + xLeg.y**2 ),
             normalizedXLeg = { x:xLeg.x/xLegLength, y:xLeg.y/xLegLength },
-            yLeg = { x:selectedLayer.bottomLeft[0] - origin.x, y: selectedLayer.bottomLeft[1] - origin.y },
+            yLeg = { x:layerContainingPoint.bottomLeft[0] - origin.x, y: layerContainingPoint.bottomLeft[1] - origin.y },
             yLegLength = Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
             normalizedYLeg = { x:yLeg.x/yLegLength, y:yLeg.y/yLegLength };
 
@@ -11165,14 +11395,14 @@ const stopHandler = p => {
             let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
             let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
             //unnormalize
-            xProjection *= selectedLayer.w / xLegLength;
-            yProjection *= selectedLayer.h / yLegLength;
+            xProjection *= layerContainingPoint.w / xLegLength;
+            yProjection *= layerContainingPoint.h / yLegLength;
             layerX = parseInt( xProjection );
             layerY = parseInt( yProjection );
           }
 
-          if( layerX >= 0 && layerY >= 0 && layerX <= selectedLayer.w && layerY <= selectedLayer.h )
-            floodFillLayer( selectedLayer, layerX, layerY );
+          if( layerX >= 0 && layerY >= 0 && layerX <= layerContainingPoint.w && layerY <= layerContainingPoint.h )
+            floodFillLayer( layerContainingPoint, layerX, layerY );
           
         }
         if( cursor.mode !== "none" ) {
@@ -11194,7 +11424,7 @@ const stopHandler = p => {
         }
         if( painter.active === true ) {
             painter.active = false;
-            finalizePaintGPU2( selectedLayer );
+            finalizePaintGPU2();
             painter.queue.length = 0;
         }
     }
@@ -11468,10 +11698,14 @@ function transformLayerPoint( p ) {
 const paintGPUResources2 = {
 
   alphaLocked: 0,
+  currentPaintingLayer: null,
 
   brushTipTexture: null,
   brushTipCanvas: document.createElement( "canvas" ),
   brushTextureTexture: null,
+  lassoAreaTexture: null,
+  currentLassoAreaTexture: null,
+  invertLassoArea: false,
 
   blendSourceTexture: null, //this is a copy of the target layer
 
@@ -11487,12 +11721,9 @@ const paintGPUResources2 = {
   blendOriginsIndex: null,
   blendOriginsTexture: null,
   blendOriginsArray: [],
-  blendHLegsIndex: null,
-  blendHLegsTexture: null,
-  blendHLegsArray: [],
-  blendVLegsIndex: null,
-  blendVLegsTexture: null,
-  blendVLegsArray: [],
+  blendHVLegsIndex: null,
+  blendHVLegsTexture: null,
+  blendHVLegsArray: [],
 
   //paint program components
   program: null,
@@ -11509,9 +11740,11 @@ const paintGPUResources2 = {
   brushTipIndex: null,
   brushTextureIndex: null,
   blendSourceIndex: null,
+  lassoAreaIndex: null,
   blendAlphaIndex: null,
   eraseAmountIndex: null,
   alphaLockedIndex: null,
+  lassoAreaInvertIndex: null,
   
   modRect: {x:0,y:0,x2:0,y2:0,w:0,h:0},
   blendDistanceTraveled: 0,
@@ -11555,14 +11788,15 @@ function setupPaintGPU2() {
   uniform sampler2D brushTip;
   uniform sampler2D blendSource;
   uniform sampler2D blendOrigins;
-  uniform sampler2D blendHLegs;
-  uniform sampler2D blendVLegs;
+  uniform sampler2D blendHVLegs;
   uniform sampler2D brushTexture;
+  uniform sampler2D lassoArea;
   
   uniform float blendAlpha; //blendAlpha is a mixture ratio. 0=pure pigment; 1=pure blend
   uniform float eraseAmount;
   uniform int blendPull;
   uniform float alphaLocked;
+  uniform int lassoAreaInvert;
   
   flat in int pointBlendIndex;
   in vec2 brushTipUV;
@@ -11583,12 +11817,16 @@ function setupPaintGPU2() {
     for( int i = max( 0, ( pointBlendIndex - blendPull ) ), j = pointBlendIndex; i < j; i++ ) {
       //get our origin and legs 
       highp vec4 origin = texelFetch( blendOrigins, ivec2(i,0), 0 );
-      highp vec4 hLeg = texelFetch( blendHLegs, ivec2(i,0), 0 );
-      highp vec4 vLeg = texelFetch( blendVLegs, ivec2(i,0), 0 );
+      highp vec4 hvLegs = texelFetch( blendHVLegs, ivec2(i,0), 0 );
+      highp vec2 hLeg = hvLegs.xy;
+      highp vec2 vLeg = hvLegs.zw;
       //get our coordinate along the trail
       vec2 blendTrailUV = ( ( origin.xy + (hLeg.xy * uv.x) + (vLeg.xy * uv.y) ) + 1.0 ) / 2.0;
       vec4 blendTrailLookup = texture( blendSource, blendTrailUV );
       if( blendTrailLookup.a == 0.0 ) continue;
+      vec4 lassoLookup = texture( lassoArea, blendTrailUV );
+      if( lassoLookup.a == 0.0 ) continue;
+      //blendTrailLookup.a *= lassoLookup.a; //For now, we're just going binary exclude non-lassoed blend sources; no messing with their alpha
       count += 1.0;
       totalCount += count;
       blendColor += blendTrailLookup * count;
@@ -11616,6 +11854,12 @@ function setupPaintGPU2() {
     );
 
     vec4 brushTipLookup = texture( brushTip, brushTipUV );
+    vec4 lassoAreaLookup = texture( lassoArea, ( blendUV + 1.0 ) / 2.0 );
+
+    if( lassoAreaInvert == 1 ) {
+      lassoAreaLookup.a = 1.0 - lassoAreaLookup.a;
+    }
+
     vec4 brushTextureLookup = texture(
       brushTexture,
       vec2(
@@ -11623,7 +11867,7 @@ function setupPaintGPU2() {
         mod( brushTextureUV.y + brushTextureOffset.y, 1.0 )
       )
     );
-    vec4 paint = vec4( paintColor.rgb, paintColor.a * brushTipLookup.a );
+    vec4 paint = vec4( paintColor.rgb, paintColor.a * brushTipLookup.a * lassoAreaLookup.a );
   
     //when my paint alpha nears zero, my brush textureweight is at its max
     //when my paint alpha nears one, my brush textureweight nears nothing
@@ -11871,21 +12115,23 @@ function setupPaintGPU2() {
     paintGPUResources2.brushTipIndex = gl.getUniformLocation( paintGPUResources2.program, "brushTip" );
     paintGPUResources2.brushTextureIndex = gl.getUniformLocation( paintGPUResources2.program, "brushTexture" );
     paintGPUResources2.blendSourceIndex = gl.getUniformLocation( paintGPUResources2.program, "blendSource" );
+    paintGPUResources2.lassoAreaIndex = gl.getUniformLocation( paintGPUResources2.program, "lassoArea" );
+
     paintGPUResources2.eraseAmountIndex = gl.getUniformLocation( paintGPUResources2.program, "eraseAmount" );
     paintGPUResources2.blendAlphaIndex = gl.getUniformLocation( paintGPUResources2.program, "blendAlpha" );
     paintGPUResources2.blendPullIndex = gl.getUniformLocation( paintGPUResources2.program, "blendPull" );
     paintGPUResources2.alphaLockedIndex = gl.getUniformLocation( paintGPUResources2.program, "alphaLocked" );
+    paintGPUResources2.lassoAreaInvertIndex = gl.getUniformLocation( paintGPUResources2.program, "lassoAreaInvert" );
     
     paintGPUResources2.brushTipTexture = gl.createTexture();
     paintGPUResources2.brushTextureTexture = gl.createTexture();
     paintGPUResources2.blendSourceTexture = gl.createTexture();
+    paintGPUResources2.lassoAreaTexture = gl.createTexture();
     
     paintGPUResources2.blendOriginsIndex = gl.getUniformLocation( paintGPUResources2.program, "blendOrigins" );
-    paintGPUResources2.blendHLegsIndex = gl.getUniformLocation( paintGPUResources2.program, "blendHLegs" );
-    paintGPUResources2.blendVLegsIndex = gl.getUniformLocation( paintGPUResources2.program, "blendVLegs" );
+    paintGPUResources2.blendHVLegsIndex = gl.getUniformLocation( paintGPUResources2.program, "blendHVLegs" );
     paintGPUResources2.blendOriginsTexture = gl.createTexture();
-    paintGPUResources2.blendHLegsTexture = gl.createTexture();
-    paintGPUResources2.blendVLegsTexture = gl.createTexture();
+    paintGPUResources2.blendHVLegsTexture = gl.createTexture();
 
     const framebuffer = gl.createFramebuffer();
     paintGPUResources2.framebuffer = framebuffer;
@@ -11943,13 +12189,35 @@ function setupPaintGPU2() {
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, paintGPUResources2.depthTexture, level);
     }
 
+    //set up the lasso area texture
+    {
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.lassoAreaTexture );
+      // define size and format of level 0
+      const level = 0;
+      const internalFormat = gl.RGBA;
+      const border = 0;
+      const format = gl.RGBA;
+      const type = gl.UNSIGNED_BYTE;
+      const data = new Uint8ClampedArray([
+        255,255,255,255, 255,255,255,255,
+        255,255,255,255, 255,255,255,255,
+      ]);
+      gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, 2, 2, border, format, type, data );
+
+      //set filtering
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
     //set up the blend coordinate data textures
-    for( const texture of [ paintGPUResources2.blendOriginsTexture, paintGPUResources2.blendHLegsTexture, paintGPUResources2.blendVLegsTexture ] ){
+    for( const texture of [ paintGPUResources2.blendOriginsTexture, paintGPUResources2.blendHVLegsTexture ] ){
       gl.bindTexture( gl.TEXTURE_2D, texture )
       const level = 0;
-      const internalFormat = gl.RG32F;
+      const internalFormat = gl.RGBA32F;
       const border = 0;
-      const format = gl.RG;
+      const format = gl.RGBA;
       const type = gl.FLOAT;
       const data = null;
       gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, 64, 64, border, format, type, data);
@@ -11971,6 +12239,8 @@ function beginPaintGPU2( layer ) {
   //  always copy our source to our preview (and hide our source in loop draw)
 
   //const layer = selectedLayer;
+
+  paintGPUResources2.currentPaintingLayer = layer;
 
   if( layer.alphaLocked === true ) paintGPUResources2.alphaLocked = 1;
   else paintGPUResources2.alphaLocked = 0;
@@ -12099,10 +12369,42 @@ function beginPaintGPU2( layer ) {
     }
   }
 
+  //upload our lasso area texture
+  {
+    const lassoLayer = getLassoLayerForLayer( layer );
+    if( lassoLayer === null ) {
+      paintGPUResources2.currentLassoAreaTexture = null;
+      paintGPUResources2.invertLassoArea = false;
+      const mipLevel = 0,
+      internalFormat = gl.RGBA,
+      width = 2,
+      height = 2,
+      border = 0,
+      srcFormat = gl.RGBA,
+      srcType = gl.UNSIGNED_BYTE;
+      const data = new Uint8ClampedArray( [
+        255,255,255,255, 255,255,255,255,
+        255,255,255,255, 255,255,255,255,
+      ] )
+      gl.texImage2D( gl.TEXTURE_2D, mipLevel, internalFormat, width, height, border, srcFormat, srcType, data );
+  
+      //gl.generateMipmap( paintGPUResources.brushTipTexture );
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    } else {
+      paintGPUResources2.currentLassoAreaTexture = lassoLayer.glTexture;
+      paintGPUResources2.invertLassoArea = lassoLayer.invert;
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.currentLassoAreaTexture );
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+  }
+
   //reset our point histories arrays
   paintGPUResources2.blendOriginsArray.length = 0;
-  paintGPUResources2.blendHLegsArray.length = 0;
-  paintGPUResources2.blendVLegsArray.length = 0;
+  paintGPUResources2.blendHVLegsArray.length = 0;
   paintGPUResources2.indicesCount = 0;
 
   //reset our modrect
@@ -12123,7 +12425,9 @@ function beginPaintGPU2( layer ) {
   paintGPUResources2.brushDistanceTraveled = 0;
 
 }
-function paintGPU2( points, layer ) {
+function paintGPU2( points ) {
+
+  const layer = paintGPUResources2.currentPaintingLayer;
 
   if( points.length < 4 ) return; //spline interpolating, minimum 3
 
@@ -12256,7 +12560,7 @@ function paintGPU2( points, layer ) {
   //the blend data buffers are cumulative, and indicesCount is cumulative,
   //but the indices we upload to the GPU each draw call are reset each draw call
   indices.length = 0;
-  const { blendOriginsArray, blendHLegsArray, blendVLegsArray } = paintGPUResources2;
+  const { blendOriginsArray, blendHVLegsArray } = paintGPUResources2;
 
   //vector math and draw calls
   {
@@ -12412,9 +12716,8 @@ function paintGPU2( points, layer ) {
         paintGPUResources2.indicesCount += 1;
 
         //push the coordinate space for this point
-        blendOriginsArray.push( xyuvs[0],xyuvs[1] );
-        blendHLegsArray.push( xyuvs[4]-xyuvs[0],xyuvs[5]-xyuvs[1] );
-        blendVLegsArray.push( xyuvs[8]-xyuvs[0],xyuvs[9]-xyuvs[1] );
+        blendOriginsArray.push( xyuvs[0],xyuvs[1], 0,0 ); //two unused slots
+        blendHVLegsArray.push( xyuvs[4]-xyuvs[0],xyuvs[5]-xyuvs[1] , xyuvs[8]-xyuvs[0],xyuvs[9]-xyuvs[1] );
 
       }
 
@@ -12520,8 +12823,8 @@ function paintGPU2( points, layer ) {
     gl.uniform1i( paintGPUResources2.blendSourceIndex, 1 );
 
     //upload our blend origin and legs textures
-    let textureIndex = 2; //2, 3, and 4
-    for( const mode of [ "blendOrigins", "blendHLegs", "blendVLegs" ] ) {
+    let textureIndex = 2; //2 and 3
+    for( const mode of [ "blendOrigins", "blendHVLegs" ] ) {
       const texture = paintGPUResources2[ mode + "Texture" ],
         data = paintGPUResources2[ mode + "Array" ];
 
@@ -12530,11 +12833,11 @@ function paintGPU2( points, layer ) {
       gl.uniform1i( paintGPUResources2[ mode + "Index" ], textureIndex );
 
       const level = 0;
-      const internalFormat = gl.RG32F;
+      const internalFormat = gl.RGBA32F;
       const border = 0;
-      const format = gl.RG;
+      const format = gl.RGBA;
       const type = gl.FLOAT;
-      gl.texImage2D( gl.TEXTURE_2D, level, internalFormat, data.length/2, 1, border, format, type, new Float32Array(data) );
+      gl.texImage2D( gl.TEXTURE_2D, level, internalFormat, data.length/4, 1, border, format, type, new Float32Array(data) );
 
       //set filtering
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -12545,10 +12848,19 @@ function paintGPU2( points, layer ) {
       textureIndex += 1;
     }
     
-    //set our brush texture as the texture texture (index 5)
-    gl.activeTexture( gl.TEXTURE0 + 5 );
+    //set our brush texture as the texture texture (index 4)
+    gl.activeTexture( gl.TEXTURE0 + 4 );
     gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.brushTextureTexture );
-    gl.uniform1i( paintGPUResources2.brushTextureIndex, 5 );
+    gl.uniform1i( paintGPUResources2.brushTextureIndex, 4 );
+    
+    //set our lasso area texture as the texture texture (index 5)
+    gl.activeTexture( gl.TEXTURE0 + 5 );
+    if( paintGPUResources2.currentLassoAreaTexture === null ) {
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.lassoAreaTexture );
+    } else {
+      gl.bindTexture( gl.TEXTURE_2D, paintGPUResources2.currentLassoAreaTexture );
+    }
+    gl.uniform1i( paintGPUResources2.lassoAreaIndex, 5 );
   
     //set our blend alpha
     gl.uniform1f( paintGPUResources2.blendAlphaIndex, blendAlpha );
@@ -12558,6 +12870,8 @@ function paintGPU2( points, layer ) {
     gl.uniform1i( paintGPUResources2.blendPullIndex, blendPull );
     //set our alphaLocked
     gl.uniform1f( paintGPUResources2.alphaLockedIndex, alphaLocked );
+    //set our lasso area invert
+    gl.uniform1i( paintGPUResources2.lassoAreaInvertIndex, paintGPUResources2.invertLassoArea );
 
     //draw the triangles
     {
@@ -12570,8 +12884,10 @@ function paintGPU2( points, layer ) {
   }
   
 }
-function finalizePaintGPU2( layer ) {
+function finalizePaintGPU2() {
   
+  const layer = paintGPUResources2.currentPaintingLayer;
+
   //readpixels for our modrect from the old gltexture and this new one,
   //store those pixels in the undo buffer
   //put those pixels in a dataimage and blit onto the layer's preview canvas
@@ -12670,8 +12986,8 @@ function finalizePaintGPU2( layer ) {
 /* 
 
 After all, I really don't think I should replicate layercode.
-I think it's not that expensive to call addCanvasLayer, and I will add a new generic instead of "paint-preview"
-I could replace every reference to "paint-preview" with "..." hmm.
+I think it's not that expensive to call addCanvasLayer, and I will add a new generic instead of "_temp"
+I could replace every reference to "_temp" with "..." hmm.
 Okay. Then absolutely no building my own independent layerstack code to maintain.
   We're using paint-preview layers by the gobs to implement selections. They don't even make layerbuttons. 
   Checked, and we only ever reference .layers[0] directly (in export PNG).
@@ -12729,84 +13045,173 @@ I need to delete / restart the code below. Some of it makes sense though.
 
 */
 
-const selectionsStack = {
-  //layers have { glTexture, <image>, topLeft,bottomLeft,topRight,bottomRight }
-  layers: [],
-  livePreviewLayer: {
-
-    topLeft:[0,0,1],
-    bottomLeft:[0,0,1],
-    topRight:[0,0,1],
-    bottomRight:[0,0,1],
-
-    canvas: document.createElement( "canvas" ),
-    context: null,
-    glTexture: null,
-    canvasBackData: null,
-
-  }
+const lassoResources = {
+  lassoPreview: null,
+  renderedLayers: new Map(),
+  lassoStack: [],
+  lassoLayers: [],
+  currentStackId: 0,
+  ready: false,
+  invert: false,
 }
-function setupSelectionCanvas() {
-  selectionsStack.livePreviewLayer.context = selectionsStack.livePreviewLayer.canvas.getContext( "2d" );
-  selectionsStack.livePreviewLayer.glTexture = gl.createTexture();
+
+function clearLassoStack() {
+  const layers = new Set( [
+    ...lassoResources.lassoStack,
+    ...lassoResources.renderedLayers.values(),
+    ...lassoResources.lassoLayers
+  ] );
+  lassoResources.lassoLayers.length = 0;
+  lassoResources.lassoLayers.push( layers );
+  lassoResources.lassoStack.length = 0;
+  lassoResources.renderedLayers.clear();
 }
-function beginPaintSelectionCanvas( booleanMode ) {
-  const layer = selectionsStack.livePreviewLayer;
-  const cnv = layer.canvas;
-  cnv.width = gnv.width;
-  cnv.height = gnv.height;
-  const screenPointRect = getScreenPointRect();
-
-  layer.topLeft = [...screenPointRect.topLeft];
-  layer.topRight = [...screenPointRect.topRight];
-  layer.bottomLeft = [...screenPointRect.bottomLeft];
-  layer.bottomRight = [...screenPointRect.bottomRight];
-
-  if( booleanMode === "add" || booleanMode === "subtract" ) {
-    //TODO replace this with fast (non-buffer-flipping, 1-draw-call) version
-    renderLayersIntoPointRect( layer, selectionsStack.layers, [], 0, layer, [0,0,0,0], false, true );
-    layer.canvasBackData = layer.context.getImageData( 0,0,cnv.width,cnv.height );
-  }
-
+//resizelayertoscreen is a general function. use anywhere as needed
+function resizeLayerToScreen( layer ) {
+  const screenRect = getScreenPointRect();
+  layer.topLeft = [ ...screenRect.topLeft ];
+  layer.topRight = [ ...screenRect.topRight ];
+  layer.bottomLeft = [ ...screenRect.bottomLeft ];
+  layer.bottomRight = [ ...screenRect.bottomRight ];
+  layer.w = layer.canvas.width = screenRect.w;
+  layer.h = layer.canvas.height = screenRect.h;
+  const level = 0;
+  const internalFormat = gl.RGBA;
+  const layerWidth = layer.w;
+  const layerHeight = layer.h;
+  const border = 0;
+  const format = gl.RGBA;
+  const type = gl.UNSIGNED_BYTE;
+  const data = null;
+  gl.bindTexture( gl.TEXTURE_2D, layer.glTexture );
+  gl.texImage2D(gl.TEXTURE_2D, level, internalFormat, layerWidth, layerHeight, border, format, type, data);
 }
-function paintSelectionCanvas( points, booleanMode, ) {
 
-  //this theory won't work
-  //it doesn't edit the existing layers, and it can't replace them without clipping their off-canvas regions
+function renderLassoLayerForLayer( lassoLayer, layer, asImageData = false ) {
+  lassoLayer.topLeft = [ ...layer.topLeft ];
+  lassoLayer.topRight = [ ...layer.topRight ];
+  lassoLayer.bottomLeft = [ ...layer.bottomLeft ];
+  lassoLayer.bottomRight = [ ...layer.bottomRight ];
+  lassoLayer.w = lassoLayer.canvas.width = layer.w; //I never actually use the canvas though... only the glTexture and imageData
+  lassoLayer.h = lassoLayer.canvas.height = layer.h;
+  let imageData = null;
+  if( asImageData === true ) imageData = lassoLayer.context.createImageData( lassoLayer.w, lassoLayer.h );
+  renderLayersAlphasIntoPointRect( lassoLayer, lassoResources.lassoStack, lassoLayer, false, [255,255,255], imageData?.data );
+  lassoLayer.lassoImageData = imageData; //imageData | null
+}
 
-  //booleanMode === "replace" | "add" | "subtract"
-
-  if( points.length < 3 ) return;
-
-  const ctx = selectionsStack.livePreviewLayer.context;
-  const { width, height } = selectionsStack.livePreviewLayer.canvas;
-  if( booleanMode === "replace" ) {
-    ctx.clearRect( 0,0,width,height );
+function getLassoLayerForLayer( layer, asImageData = false ) {
+  if( lassoResources.lassoStack.length === 0 ) return null;
+  if( lassoResources.renderedLayers.has( layer ) ) {
+    const lassoLayer = lassoResources.renderedLayers.get( layer );
+    //check for transform
+    let transformed = false;
+    for( const d of [ "w", "h" ] )
+      if( layer[ d ] !== lassoLayer[ d ] ) {
+        transformed = true;
+        break;
+      }
+    for( const p of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] )
+      for( let i=0; i<3; i++ ) 
+        if( layer[ p ][ i ] !== lassoLayer[ p ][ i ] ) {
+          transformed = true;
+          break;
+        }
+    if( transformed || ( asImageData === true && ! lassoLayer.lassoImageData ) ) {
+      renderLassoLayerForLayer( lassoLayer, layer, asImageData );
+    }
+    lassoLayer.invert = lassoResources.invert;
+    return lassoLayer;
   }
-  //our points are in global coordinates (because I converted them)
-  //ok, point[6,7,8] is now an untransformed screen coordinate push
-  ctx.save();
-  if( booleanMode === "subtract" || booleanMode === "add" ) {
-    ctx.putImageData( selectionsStack.livePreviewLayer.canvasBackData, 0, 0 );
+  const lassoLayer = getNewLassoLayer( layer.w, layer.h );
+  renderLassoLayerForLayer( lassoLayer, layer, asImageData );
+  lassoResources.renderedLayers.set( layer, lassoLayer );
+  lassoLayer.invert = lassoResources.invert;
+  return lassoLayer;
+}
+
+function getNewLassoLayer( w = null, h = null ) {
+  if( lassoResources.lassoLayers.length === 0 ) {
+    if( w === null || h === null ) {
+      w = gnv.width; h = gnv.height;
+    }
+    lassoResources.lassoLayers.push( addCanvasLayer( "_temp", w, h ) );
   }
-  if( booleanMode === "subtract" ) {
-    ctx.globalCompositeOperation = "destination-out";
-  }
-  //just fill with white, will appearance in shader
-  ctx.fillStyle = "white";
-  ctx.beginPath();
-  ctx.moveTo( points[0][6],points[0][7] );
-  for( const p of points )
-    ctx.lineTo( p[6],p[7] );
-  ctx.fill();
-  ctx.restore();
+  return lassoResources.lassoLayers.pop();
+}
+function setupLassoStack() {
   
-}
-function finalizePaintSelectionCanvas() {
-  //record undo event
-  selectionsStack.livePreviewLayer.canvasBackData = null;
-}
+  lassoResources.lassoPreview = addCanvasLayer( "_temp" );
+  lassoResources.lassoPreview.opacity = 0.5;
+  resizeLayerToScreen( lassoResources.lassoPreview );
 
+  //this sets up 3 demo layer circles that fill up the screen
+  if( false ) {
+    //let's set up some demo lasso layers
+    const demoLayer1 = getNewLassoLayer();
+    resizeLayerToScreen( demoLayer1 );
+    const demoLayer2 = getNewLassoLayer();
+    resizeLayerToScreen( demoLayer2 );
+    const demoLayer3 = getNewLassoLayer();
+    resizeLayerToScreen( demoLayer3 );
+  
+    const { w,h } = demoLayer1;
+  
+    //let's draw a demo white circle on each, and re-upload
+    //we have three circles. The center one should be touching the top of the screen if my y-flip is correct
+    for( const [l,x,y] of [ [demoLayer1, w/4, h*0.55], [demoLayer2, 2*w/4, h*0.45], [demoLayer3,3*w/4, h*0.55] ] ){
+      const ctx = l.context;
+      ctx.save();
+      ctx.fillStyle = "white";
+      ctx.fillRect( 0,0,w,h );
+      ctx.globalCompositeOperation = "destination-in";
+      ctx.beginPath();
+      ctx.translate( x, y );
+      ctx.arc( 0, 0, h*0.9 / 2, 0, 6.284, false );
+      ctx.fill();
+      ctx.restore();
+      gl.bindTexture( gl.TEXTURE_2D, l.glTexture );
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, l.canvas );
+    }
+  
+    //now let's try drawing them to the preview layer
+    renderLayersAlphasIntoPointRect( lassoResources.lassoPreview, [ demoLayer1, demoLayer2, demoLayer3 ], lassoResources.lassoPreview, false );
+    //we have circles on the screen.
+    //and there are no hard-edges between them, by ignoring everything but alpha channel
+  
+    //what's next?
+    //those layer alphas on-screen are what we need technically, in the background
+    //we also, however, need a usable preview onscreen for artsy stuff
+    //put that on the todo.
+    //for now, let's switch to just 1 demo layer
+    
+  }
+  if( false ) {
+    const demoLayer1 = getNewLassoLayer( 1024, 1024 );
+    lassoResources.lassoStack.push( demoLayer1 );
+    //resizeLayerToScreen( demoLayer1 ); //leaving at 1024*1024
+    const { w,h } = demoLayer1;
+    const ctx = demoLayer1.context;
+    ctx.save();
+    ctx.fillStyle = "white";
+    ctx.fillRect( 0,0,w,h );
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.beginPath();
+    ctx.translate( w/2, h/2 );
+    ctx.arc( 0, 0, h*0.9 / 2, 0, 6.284, false );
+    ctx.fill();
+    ctx.restore();
+    gl.bindTexture( gl.TEXTURE_2D, demoLayer1.glTexture );
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, demoLayer1.canvas );
+
+    renderLayersAlphasIntoPointRect( lassoResources.lassoPreview, [ demoLayer1 ], lassoResources.lassoPreview, false, [255,255,255] );
+  
+  }
+  console.log( "Finished setting up lasso demo. Flagging ready for render." );
+
+  lassoResources.ready = true;
+
+}
 
 const viewMatrices = {
     current: [
