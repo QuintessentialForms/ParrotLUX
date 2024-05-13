@@ -3116,7 +3116,10 @@ function Loop( t ) {
       }
 
 
-      if( lassoResources.ready ) visibleLayers.push( lassoResources.lassoPreview );
+      if( lassoResources.ready ) {
+        const preview = updateLassoPreview();
+        if( preview ) visibleLayers.push( preview );
+      }
 
       getTransform();
 
@@ -3601,6 +3604,7 @@ function renderLayersAlphasIntoPointRect( pointRect, visibleLayers, targetLayer 
     normalizedYLeg = { x:yLeg.x * yLegLengthInverse, y:yLeg.y * yLegLengthInverse };
     
   gl.useProgram( glStateAlphaRender.program );
+
   //resize the destination texture
   let targetWidth = gnv.width,
     targetHeight = gnv.height;
@@ -3717,6 +3721,143 @@ function renderLayersAlphasIntoPointRect( pointRect, visibleLayers, targetLayer 
   if( readPixelsArray ) {
     gl.readPixels( 0, 0, targetWidth, targetHeight, gl.RGBA, gl.UNSIGNED_BYTE, readPixelsArray );
   }
+
+}
+
+function renderLassoPreviewIntoPointRect( pointRect, lassoLayers, floatTime, targetLayer = null, flipY = true, invert = false ) {
+
+  //we need basically the code from samplelayerinlayer
+  //for every layer, we need to cast it to pointRect's space
+  //from there, we can calculate rotation and scale, but in this case that casting is all we need.
+  
+  //Note that the scale of our pointRect is independent of the canvas dims of our targetLayer (or screen)
+
+  if( ! renderLayersAlphasIntoPointRect.framebuffer ) {
+    renderLayersAlphasIntoPointRect.framebuffer = gl.createFramebuffer();
+  }
+
+  //get our rectLayer's coordinate space
+  const origin = { x:pointRect.topLeft[0], y:pointRect.topLeft[1] },
+    xLeg = { x:pointRect.topRight[0] - origin.x, y: pointRect.topRight[1] - origin.y },
+    xLegLengthInverse = 1 / Math.sqrt( xLeg.x**2 + xLeg.y**2 ),
+    normalizedXLeg = { x:xLeg.x * xLegLengthInverse, y:xLeg.y * xLegLengthInverse },
+    yLeg = { x:pointRect.bottomLeft[0] - origin.x, y: pointRect.bottomLeft[1] - origin.y },
+    yLegLengthInverse = 1 / Math.sqrt( yLeg.x**2 + yLeg.y**2 ),
+    normalizedYLeg = { x:yLeg.x * yLegLengthInverse, y:yLeg.y * yLegLengthInverse };
+    
+  gl.useProgram( glStateLassoPreview.program );
+  
+  //resize the destination texture
+  let targetWidth = gnv.width,
+    targetHeight = gnv.height;
+  if( targetLayer !== null ) {
+    targetWidth = targetLayer.canvas.width;
+    targetHeight = targetLayer.canvas.height;
+  }
+
+  if( targetLayer === null ) {
+    gl.bindFramebuffer( gl.FRAMEBUFFER, null );
+  } else {
+    gl.bindTexture( gl.TEXTURE_2D, targetLayer.glTexture );
+    gl.bindFramebuffer( gl.FRAMEBUFFER, renderLayersAlphasIntoPointRect.framebuffer );
+    const attachmentPoint = gl.COLOR_ATTACHMENT0, level = 0;
+    gl.framebufferTexture2D( gl.FRAMEBUFFER, attachmentPoint, gl.TEXTURE_2D, targetLayer.glTexture, level);
+  }
+
+  //set drawing behavior and clear
+  gl.disable(gl.DEPTH_TEST);
+  gl.enable( gl.BLEND );
+  gl.blendFunc( gl.ONE, gl.ONE );
+
+  gl.viewport( 0, 0, targetWidth, targetHeight );
+  gl.clearColor(0,0,0,0);
+  gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+
+  gl.bindVertexArray(glStateLassoPreview.vao);
+
+  for( const layer of lassoLayers ) {
+
+    const castPoints = {};
+    for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+      let [x,y] = layer[ pointName ];
+      //translate from origin
+      x -= origin.x; y -= origin.y;
+      //project on normals
+      let xProjection = x*normalizedXLeg.x + y*normalizedXLeg.y;
+      let yProjection = x*normalizedYLeg.x + y*normalizedYLeg.y;
+      //unnormalize
+      xProjection *= targetWidth * xLegLengthInverse;
+      yProjection *= targetHeight * yLegLengthInverse;
+      castPoints[ pointName ] = [ xProjection, yProjection, 1 ];
+    }
+
+    let xy = castPoints.topLeft,
+      xy2 = castPoints.topRight,
+      xy3 = castPoints.bottomLeft,
+      xy4 = castPoints.bottomRight;
+
+    //we're ignoring active layer transforms! that's not what this render function is for
+
+    //get the layer's pixel size on the destination
+    //(Not used until later, but must calculate before gl-transforming points)
+    let layerSizePixels;
+    {
+      const dx = xy2[0] - xy[0], dy = xy2[1] - xy[1];
+      layerSizePixels = Math.sqrt( dx**2 + dy**2 );
+    }
+
+    //convert that screenspace to GL space
+    const glOriginX = targetWidth/2, glOriginY = targetHeight/2;
+    for( const p of [xy,xy2,xy3,xy4] ) {
+      p[0] -= glOriginX; p[1] -= glOriginY;
+      p[0] /= glOriginX;
+      //We're flipping the y coordinate! OpenGL NDC space defines the bottom of the screen as -1 y, and the top as +1 y (center 0).
+      if( flipY === true ) p[1] /= -glOriginY;
+      else p[1] /= glOriginY;
+    }
+
+    //update the vertex data
+    //top-left triangle
+    glStateLassoPreview.vertices[0] = xy[0]; glStateLassoPreview.vertices[1] = xy[1];
+    glStateLassoPreview.vertices[4] = xy2[0]; glStateLassoPreview.vertices[5] = xy2[1];
+    glStateLassoPreview.vertices[8] = xy3[0]; glStateLassoPreview.vertices[9] = xy3[1];
+    //bottom-right triangle
+    glStateLassoPreview.vertices[12] = xy2[0]; glStateLassoPreview.vertices[13] = xy2[1];
+    glStateLassoPreview.vertices[16] = xy4[0]; glStateLassoPreview.vertices[17] = xy4[1];
+    glStateLassoPreview.vertices[20] = xy3[0]; glStateLassoPreview.vertices[21] = xy3[1];
+    //push the updated vertex data to the GPU
+    gl.bindBuffer( gl.ARRAY_BUFFER, glStateLassoPreview.vertexBuffer );
+    gl.bufferData( gl.ARRAY_BUFFER, glStateLassoPreview.vertices, gl.STREAM_DRAW );
+
+    //do I need to re-enable the vertex array??? Let's assume so, then try coding this out later
+    gl.enableVertexAttribArray( glStateLassoPreview.xyuvInputIndex );
+    {
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( glStateLassoPreview.xyuvInputIndex, size, dType, normalize, stride, offset );
+    }
+
+    //let's bind the layer's texture
+    gl.activeTexture( gl.TEXTURE0 + 0 );
+    gl.bindTexture( gl.TEXTURE_2D, layer.glTexture );
+    //we're not reuploading the layer's texture on flag change!
+    //point the layer's source image at texture 0
+    gl.uniform1i( gl.getUniformLocation( glStateLassoPreview.program, "img" ), 0 );
+    gl.uniform1f( gl.getUniformLocation( glStateLassoPreview.program, "invert" ), invert ? 0 : 1 );
+    gl.uniform1f( gl.getUniformLocation( glStateLassoPreview.program, "time" ), floatTime );
+
+    //ignoring layer mask, this isn't for that
+
+    {
+      //and draw our triangles
+      const primitiveType = gl.TRIANGLES,
+        structStartOffset = 0,
+        structCount = 6;
+      gl.drawArrays( primitiveType, structStartOffset, structCount );
+    }
+
+  }
+
+  //and that's it for our drawing
 
 }
 
@@ -4139,6 +4280,7 @@ async function setup() {
       //setup GL temporarily inside img onload for texture test
       setupGL( img );  
       setupGLAlphaRender(); //no errors on setup, good sign
+      setupGLLassoPreview();
       setupPaintGPU2();
       await setupLassoStack();
   
@@ -4587,6 +4729,106 @@ function setupGLAlphaRender() {
 
 }
 
+const glStateLassoPreview = {
+  ready: false,
+  program: null,
+  vertices: null,
+  vertexBuffer: null,
+  vao: null,
+  xyuvInputIndex: null,
+};
+function setupGLLassoPreview() {
+
+  gl.disable(gl.DEPTH_TEST);
+  
+  gl.enable( gl.BLEND );
+  gl.blendFunc( gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA );
+
+  gl.clearColor(0,0,0,0);
+  gl.clear( gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT );
+
+  //push some code to the GPU
+  const vertexShaderSource = `#version 300 es
+    in vec4 xyuv;
+
+    out vec2 xy;
+    out vec2 uv;
+    
+    void main() {
+      xy = xyuv.xy;
+      uv = xyuv.zw;
+      gl_Position = vec4(xyuv.xy,0.5,1);
+    }`;
+  const fragmentShaderSource = `#version 300 es
+    precision highp float;
+    
+    uniform sampler2D img;
+    uniform float time;
+    uniform float invert;
+
+    in vec2 xy;
+    in vec2 uv;
+
+    out vec4 outColor;
+    
+    void main() {
+
+      vec4 lookup = texture( img, uv );
+      
+      float borderShade = abs( mod( ( ( time - ( uv.x + uv.y ) ) * 0.1 / 0.002 ), 2.0 ) - 1.0 );
+
+      outColor = vec4( vec3( borderShade ), clamp( abs( invert - lookup.a ), 0.0, 1.0 ) * 0.25 );
+
+    }`;
+
+    const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vertexShader,vertexShaderSource);
+    gl.compileShader(vertexShader);
+    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fragmentShader,fragmentShaderSource);
+    gl.compileShader(fragmentShader);
+
+    const program = gl.createProgram();
+    gl.attachShader(program,vertexShader);
+    gl.attachShader(program,fragmentShader);
+    gl.linkProgram(program);
+    glStateLassoPreview.program = program;
+
+    //push some vertex and UV data to the GPU
+    const ccs = new Float32Array([
+      //top-left triangle
+      0,0, 0,0,
+      1,0, 1,0,
+      0,1, 0,1,
+      //bottom-right triangle
+      1,0, 1,0,
+      1,1, 1,1,
+      0,1, 0,1,
+    ]);
+    const xyuvInputIndex = gl.getAttribLocation( program, "xyuv" );
+    glStateLassoPreview.xyuvInputIndex = xyuvInputIndex;
+    const xyBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER,xyBuffer);
+    gl.bufferData( gl.ARRAY_BUFFER, ccs, gl.STATIC_DRAW );
+    glStateLassoPreview.vertices = ccs;
+    glStateLassoPreview.vertexBuffer = xyBuffer;
+
+    //set up a data-descriptor
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    glStateLassoPreview.vao = vao;
+
+    //push a description of our vertex data's structure
+    gl.enableVertexAttribArray( xyuvInputIndex );
+    {
+      const size = 4, dType = gl.FLOAT, normalize=false, stride=0, offset=0;
+      gl.vertexAttribPointer( xyuvInputIndex, size, dType, normalize, stride, offset );
+    }
+
+    glStateLassoPreview.ready = true;
+
+}
+
 
 const airInput = {
   active: false,
@@ -4830,12 +5072,12 @@ let uiSettings = {
   nodeSnappingDistance: Math.min( innerWidth, innerHeight ) * 0.04, //~50px on a 1080p screen
 
   setActiveTool: tool => {
-    //console.error( "Set active tool: ", tool );
+    console.error( "Set active tool: ", tool );
     uiSettings.activeTool = tool;
     UI.updateContext();
   },
   unsetActiveTool: tool => {
-    //console.error( "SUnet active tool: ", tool );
+    console.error( "Unset active tool: ", tool );
     if( uiSettings.activeTool === tool )
       uiSettings.activeTool = null;
   },
@@ -4843,7 +5085,7 @@ let uiSettings = {
     return uiSettings.activeTool === tool;
   },
 
- //null | generate | paint | vector | select | mask | transform | flood-fill | text | pose | color-adjust | lasso-tool
+ //null | generate | paint | vector | mask | transform | flood-fill | text | pose | color-adjust | lasso
   activeTool: null,
   toolsSettings: {
     "generate": {},
@@ -5542,7 +5784,7 @@ function setupUI() {
       const canvasToolsButton = document.createElement( "div" );
       canvasToolsButton.classList.add( "tools-column-paint-button", "round-toggle", "animated", "unavailable" );
       toolsColumn.appendChild( canvasToolsButton );
-      const canvasTools = [ "paint", "mask", "select", "flood-fill", "color-adjust" ];
+      const canvasTools = [ "paint", "mask", "lasso", "flood-fill", "color-adjust" ];
       const canvasLayerTypes = [ "paint", "generative", "text", "vector" ];
       let lastActiveCanvasTool = "paint";
       window.declareLastActiveTool = () => console.log( lastActiveCanvasTool );
@@ -5819,7 +6061,7 @@ function setupUI() {
       canvasControlsOptionsRow,
       {
         updateContext: () => {
-          if( [ "paint", "mask", "select", "flood-fill", "color-adjust" ].includes( uiSettings.activeTool ) ) {
+          if( [ "paint", "mask", "lasso", "flood-fill", "color-adjust" ].includes( uiSettings.activeTool ) ) {
 
             canvasControlsOptionsRow.classList.remove( "hidden" );
 
@@ -5951,15 +6193,16 @@ function setupUI() {
         //we're keeping this under the canvas tools. those are the only ones that need it; because we'll have a unique transform? hmm.
         console.error( "enable lasso tool controls here (and rename from select to lasso)" );
         const lassoCanvasControlsButton = document.createElement( "div" );
-        lassoCanvasControlsButton.classList.add( "round-toggle", "on", "unimplemented", "unavailable" );
+        //lassoCanvasControlsButton.classList.add( "round-toggle", "on", "unimplemented", "unavailable" );
+        lassoCanvasControlsButton.classList.add( "round-toggle", "on", "unavailable" );
         lassoCanvasControlsButton.style.backgroundImage = "url('icon/select-free.png')";
         const activateLassoCanvasControls = () => {
           const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
           let nonPaintLayer = (selectedAndBatchedLayers.length === 0) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
           if( ! lassoCanvasControlsButton.classList.contains( "unavailable" ) && ! lassoCanvasControlsButton.classList.contains( "unimplemented" ) && ! nonPaintLayer ) {
-            uiSettings.setActiveTool( "lasso-tool" )
+            uiSettings.setActiveTool( "lasso" )
           }
-          else if( uiSettings.activeTool === "lasso-tool" ) {
+          else if( uiSettings.activeTool === "lasso" ) {
             uiSettings.setActiveTool( null );
           }
         }
@@ -5986,7 +6229,7 @@ function setupUI() {
               else {
                 lassoCanvasControlsButton.classList.remove( "unavailable" );
                 lassoCanvasControlsButton.querySelector(".tooltip" ).textContent = "Canvas Lasso";
-                if( uiSettings.activeTool === "lasso-tool" ) lassoCanvasControlsButton.classList.add( "on" );
+                if( uiSettings.activeTool === "lasso" ) lassoCanvasControlsButton.classList.add( "on" );
                 else lassoCanvasControlsButton.classList.remove( "on" );
               }
             }
@@ -6108,6 +6351,7 @@ function setupUI() {
       const toolOptionsRow = document.createElement( "div" );
       toolOptionsRow.classList.add( "tool-options-container", "flex-row" );
       canvasControlsOptionsRow.appendChild( toolOptionsRow );
+
       //the paint and mask tool options
       {
         const paintAndMaskOptionsRow = document.createElement( "div" );
@@ -6818,6 +7062,53 @@ function setupUI() {
   
       }
   
+      //the lasso tool options
+      {
+        const lassoOptionsRow = document.createElement( "div" );
+        lassoOptionsRow.classList.add( "flex-row", "hidden", "animated" );
+        lassoOptionsRow.id = "lasso-tools-options-row";
+        toolOptionsRow.appendChild( lassoOptionsRow );
+        UI.registerElement(
+          lassoOptionsRow,
+          {
+            updateContext: () => {
+              if( uiSettings.isActiveTool( "lasso" ) ) {
+                lassoOptionsRow.classList.remove( "hidden" );
+              }
+              else {
+                lassoOptionsRow.classList.add( "hidden" );
+              }
+            }
+          },
+          {
+            zIndex: 1000,
+          }
+        );
+  
+        //the cancel lasso button
+        {
+          const cancelLasso = document.createElement( "div" );
+          //brushSelectBrowseButton.classList.add( "asset-browser-button" );
+          cancelLasso.classList.add( "lasso-options-cancel-lasso", "round-toggle" );
+          UI.registerElement(
+            cancelLasso,
+            {
+              onclick: () => {
+                clearLassoStack();
+              },
+              updateContext: () => {}
+            },
+            {
+              tooltip: [ "Cancel Lasso", "below", "to-right-of-center" ],
+              zIndex:10000,
+              bindings: {
+                "Cancel Lasso": clearLassoStack
+              }
+            }
+          );
+          lassoOptionsRow.appendChild( cancelLasso );
+        }
+      }
     }
 
     //a vertical spacer divider
@@ -11194,8 +11485,18 @@ const startHandler = p => {
             }
         }
         else if( p.pointerType !== "touch" && layerContainingPoint &&
-          ( uiSettings.activeTool === "paint" || uiSettings.activeTool === "mask" ) ) {
+          ( uiSettings.isActiveTool( "paint" ) || uiSettings.isActiveTool( "mask" ) ) ) {
           beginPaintGPU2( layerContainingPoint );
+          //reset and activate the painter
+          painter.queue.length = 0;
+          painter.active = true;
+        }
+        else if( p.pointerType !== "touch" && uiSettings.isActiveTool( "lasso" ) ) {
+          //point need not be contained in layer, and layerContainingPoint is irrelevant
+          beginLasso();
+          //reset and activate the painter
+          painter.queue.length = 0;
+          painter.active = true;
         }
     }
     else {
@@ -11304,21 +11605,24 @@ const moveHandler = ( p, pseudo = false ) => {
           cursor.current.y = y;
         }
         if( painter.active === true ) {
-            const point = [ x , y , 1, p.pressure, p.altitudeAngle || 1.5707963267948966, p.azimuthAngle || 0, x, y, 1 ];
-            
-            _originMatrix[ 2 ] = -view.origin.x;
-            _originMatrix[ 5 ] = -view.origin.y;
-            _positionMatrix[ 2 ] = view.origin.x;
-            _positionMatrix[ 5 ] = view.origin.y;
+          const point = [ x , y , 1, p.pressure, p.altitudeAngle || 1.5707963267948966, p.azimuthAngle || 0, x, y, 1 ];
+          
+          _originMatrix[ 2 ] = -view.origin.x;
+          _originMatrix[ 5 ] = -view.origin.y;
+          _positionMatrix[ 2 ] = view.origin.x;
+          _positionMatrix[ 5 ] = view.origin.y;
 
-            mul3x3( viewMatrices.current , _originMatrix , _inverter );
-            mul3x3( _inverter , viewMatrices.moving , _inverter );
-            mul3x3( _inverter , _positionMatrix , _inverter );
-            inv( _inverter , _inverter );
-            mul3x1( _inverter , point , point );
+          mul3x3( viewMatrices.current , _originMatrix , _inverter );
+          mul3x3( _inverter , viewMatrices.moving , _inverter );
+          mul3x3( _inverter , _positionMatrix , _inverter );
+          inv( _inverter , _inverter );
+          mul3x1( _inverter , point , point );
 
-            painter.queue.push( point );
+          painter.queue.push( point );
+          if( uiSettings.isActiveTool( "paint" ) || uiSettings.isActiveTool( "mask" ) )
             paintGPU2( painter.queue ); //paints onto layer set in beginPaintGPU2
+          else if( uiSettings.isActiveTool( "lasso" ) )
+            updateLasso( painter.queue );
         }
     }
     
@@ -11423,9 +11727,12 @@ const stopHandler = p => {
             cursor.mode = "none";
         }
         if( painter.active === true ) {
-            painter.active = false;
+          if( uiSettings.isActiveTool( "paint" ) || uiSettings.isActiveTool( "mask" ) )
             finalizePaintGPU2();
-            painter.queue.length = 0;
+          else if( uiSettings.isActiveTool( "lasso" ) )
+            finalizeLasso();
+          painter.active = false;
+          painter.queue.length = 0;
         }
     }
     if( pointers.count === 2 && existsVisibleLayer()  ) {
@@ -12417,10 +12724,6 @@ function beginPaintGPU2( layer ) {
   modRect.w = 0;
   modRect.h = 0;
 
-  //reset and activate the painter
-  painter.queue.length = 0;
-  painter.active = true;
-
   //reset our distance traveled
   paintGPUResources2.brushDistanceTraveled = 0;
 
@@ -13046,24 +13349,42 @@ I need to delete / restart the code below. Some of it makes sense though.
 */
 
 const lassoResources = {
-  lassoPreview: null,
-  renderedLayers: new Map(),
-  lassoStack: [],
-  lassoLayers: [],
+  lassoPreview: null, //this is the full-screen layer alphas-render of the current lasso stack
+  lassoShaderPreview: null, //this is the full-screen fancy shader render of lassoPreview
+  lassoActive: null, //this is a redrawn-every-frame canvas2d target layer for lassoing a selection
+  renderedLayers: new Map(), //this is a collection of stack-renders within the box of a specific layer
+    //renderedLayers.get( keyLayer ) -> render-target layer aligned/sized with keyLayer, containing render of stack
+    //these are re-used unless our lasso stack changes or the keylayer is transformed
+  lassoStack: [], //this is the stack of real / active lasso areas
+  lassoLayers: [], //these are recycleable layers
   currentStackId: 0,
   ready: false,
   invert: false,
 }
 
+//this function resets everything about the lasso stack (it's the normal "clear selection" feature)
 function clearLassoStack() {
+  console.error( "Need to add cancel lasso undo!" );
   const layers = new Set( [
     ...lassoResources.lassoStack,
     ...lassoResources.renderedLayers.values(),
     ...lassoResources.lassoLayers
   ] );
   lassoResources.lassoLayers.length = 0;
-  lassoResources.lassoLayers.push( layers );
+  lassoResources.lassoLayers.push( ...layers );
   lassoResources.lassoStack.length = 0;
+  lassoResources.renderedLayers.clear();
+}
+
+//this function resents any lasso layers for keylayers we've pre-rendered
+//it's used when our lasso are has changed, and we need to re-render any layer's specific lasso area
+function invalidateLassoLayersForLayers() {
+  const layers = new Set( [
+    ...lassoResources.renderedLayers.values(),
+    ...lassoResources.lassoLayers
+  ] );
+  lassoResources.lassoLayers.length = 0;
+  lassoResources.lassoLayers.push( ...layers );
   lassoResources.renderedLayers.clear();
 }
 //resizelayertoscreen is a general function. use anywhere as needed
@@ -13142,8 +13463,12 @@ function getNewLassoLayer( w = null, h = null ) {
 function setupLassoStack() {
   
   lassoResources.lassoPreview = addCanvasLayer( "_temp" );
-  lassoResources.lassoPreview.opacity = 0.5;
+  //lassoResources.lassoPreview.opacity = 0.5;
   resizeLayerToScreen( lassoResources.lassoPreview );
+
+  lassoResources.lassoShaderPreview = addCanvasLayer( "_temp" );
+  //lassoResources.lassoPreview.opacity = 0.5;
+  resizeLayerToScreen( lassoResources.lassoShaderPreview );
 
   //this sets up 3 demo layer circles that fill up the screen
   if( false ) {
@@ -13207,10 +13532,84 @@ function setupLassoStack() {
     renderLayersAlphasIntoPointRect( lassoResources.lassoPreview, [ demoLayer1 ], lassoResources.lassoPreview, false, [255,255,255] );
   
   }
-  console.log( "Finished setting up lasso demo. Flagging ready for render." );
-
   lassoResources.ready = true;
 
+}
+
+//Now we should be showing an updated preview.
+function updateLassoPreview() {
+  if( lassoResources.lassoStack.length === 0 && lassoResources.lassoActive === null )
+    return null;
+
+  //this renders the stack alphas into one layer as an alpha channel
+  if( lassoResources.previewUpToDate === true ) {
+    const screenPoints = getScreenPointRect();
+    const { lassoPreview } = lassoResources;
+    for( const pointName of [ "topLeft", "topRight", "bottomLeft", "bottomRight" ] ) {
+      for( const n of [0,1,2] ) {
+        if( lassoPreview[pointName][n] !== screenPoints[pointName][n] ) {
+          lassoResources.previewUpToDate = false;
+          break;
+        }
+      }
+    }
+  }
+  if( lassoResources.previewUpToDate === false ) {
+    resizeLayerToScreen( lassoResources.lassoPreview );
+    resizeLayerToScreen( lassoResources.lassoShaderPreview );
+    const layersToRender = [ ...lassoResources.lassoStack ];
+    if( lassoResources.lassoActive ) layersToRender.push( lassoResources.lassoActive );
+    renderLayersAlphasIntoPointRect( lassoResources.lassoPreview, layersToRender, lassoResources.lassoPreview, false, [255,255,255] );
+    lassoResources.previewUpToDate = true;
+  }
+
+  //render our preview with a fancy shader
+  const floatTime = ( performance.now() % 50000 ) / 50000;
+  renderLassoPreviewIntoPointRect( lassoResources.lassoShaderPreview, [ lassoResources.lassoPreview ], floatTime, lassoResources.lassoShaderPreview, false );
+  return lassoResources.lassoShaderPreview;
+}
+
+//Okay, these functions are all done.
+function beginLasso() {
+  //1. add a new layer to the lassoStack (so we're drawing it right away), sized to the screen
+  //2. track that layer in a variable on resources{}
+  lassoResources.lassoActive = getNewLassoLayer();
+  resizeLayerToScreen( lassoResources.lassoActive );
+  //hmm. I don't think we need to clear keylayer map until finalize
+}
+function updateLasso( points ) {
+  //get the current lasso canvas from where it's stored in a variable on resources{}
+  const { lassoActive } = lassoResources;
+  //clear lasso canvas
+  const { context, w, h } = lassoActive;
+  context.clearRect( 0,0,w,h );
+  //redraw lasso canvas fill from points
+  context.fillStyle = "white";
+  context.beginPath();
+  let start = true;
+  for( const p of points ) {
+    //the last entries in points are the screen xy
+    const x = p[6], y = p[7];
+    if( start === true ) {
+      start = false;
+      context.moveTo( x,y );
+    }
+    context.lineTo(x,y);
+  }
+  context.fill();
+  //re-upload lasso canvas to its texture
+  gl.bindTexture( gl.TEXTURE_2D, lassoActive.glTexture );
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, lassoActive.canvas );
+  lassoResources.previewUpToDate = false;
+}
+function finalizeLasso() {
+  console.error( "Need to add finalize lasso undo!" );
+  //hmm.
+  //just clear the tracking variable in resources, right?
+  //move the active lasso to the stack
+  lassoResources.lassoStack.push( lassoResources.lassoActive );
+  lassoResources.lassoActive = null;
+  invalidateLassoLayersForLayers();
 }
 
 const viewMatrices = {

@@ -37,6 +37,7 @@ if( global.inAndroidApp !== true ) {
 }
 
 const http = require( 'http' );
+const https = require( 'https' );
 const fss = require( "fs" );
 const host = ipAddress;
 const port = 6789;

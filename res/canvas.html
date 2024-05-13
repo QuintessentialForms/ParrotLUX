@@ -1116,6 +1116,26 @@ body {
 .flood-fill-options-erase-toggle { background-image: url('icon/eraser-v2.png'); }
 .flood-fill-options-color-toggle { background-image: url('icon/three-circles.png'); }
 
+#lasso-tools-options-row.hidden {
+    opacity: 0;
+    transform: scale(0.9,0.9);
+}
+#lasso-tools-options-row > div {
+    position: relative;
+    z-index: 6000;
+}
+#lasso-tools-options-row {
+    position:absolute;
+    left: var(--file-row-width);
+    width:calc( 100vw - ( var(--layers-row-width) + var(--file-row-width) ) );
+    height:3.5rem;
+    justify-content: center;
+    align-items: center;
+    gap:var(--button-gap);
+    z-index: 5000;
+}
+.lasso-options-cancel-lasso { background-image: url('icon/cancel-lasso.png'); }
+
 #pose-tools-options-row.hidden {
     opacity: 0;
     transform: scale(0.9,0.9);

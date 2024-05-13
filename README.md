@@ -2,7 +2,7 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (Version: 2024.05.07-1-alpha)
+# ParrotLUX (Version: 2024.05.13-1-alpha)
 A Painting App for Open-Source AI
 
 This app is currently in Alpha version. Expect bugs and missing features. Tuturials and documentation will be added soon.
@@ -20,13 +20,20 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 
 (It may also work on MacOS and iOS. Untested.)
 
+# New Features in Version 2024.05.13-1-alpha
+
+## Major Feature: Lasso
+
+<p align="center" width="100%"><img width="100%" src="img/2024.05.13-alpha-1.jpg"></p>
+<p align="center" width="100%">The lasso tool allows you to draw a lasso area. Painting, masking, flood-filling, and color-adjusting will affect only the lassoed area. <i>(The abilities to transform, delete, and duplicate the lassoed area of the selected layer(s) will be added soon, as well as lasso-editing features including add/subtract, invert, expand/contract, feather, and transform.)</i></p>
+
 # New Features in Version 2024.05.07-1-alpha
 
 ## Multi-Layer Paint, Mask, and Flood-Fill
 <p align="center" width="100%">Paint, mask, and flood-fill now all work correctly when you have multiple layers selected, or a group selected. You will automatically paint, mask, or flood-fill whichever layer you click inside of. <i>Multi-layer color adjust, multi-layer AI-generate, and multi-layer AI-tools still do not work.</i></p>
 
 ## Bug Fixes
-<p align="center" width="100%">A few UI-glitches fixed.</p>
+<p align="center" width="100%">A few UI-glitches fixed, including tool-lock that was preventing masking generative layers.</p>
 
 # New Features in Version 2024.05.04-2-alpha
 
