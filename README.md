@@ -2,7 +2,7 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (Version: 2024.05.13-1-alpha)
+# ParrotLUX (Version: 2024.05.14-1-alpha)
 A Painting App for Open-Source AI
 
 This app is currently in Alpha version. Expect bugs and missing features. Tuturials and documentation will be added soon.
@@ -19,6 +19,24 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 (*Pen pressure is unavailable on Windows.)
 
 (It may also work on MacOS and iOS. Untested.)
+
+# New Features in Version 2024.05.14-1-alpha
+
+## User Interface Optimization
+
+<p align="center" width="100%">The user interface (hovering and clicking buttons) is now 30% to 50% faster depending on the device.</p>
+
+## Bug Fixes
+
+<p align="center" width="100%">Fixed bugs:
+    <ul>
+        <li>New layer names were sometimes skipping numbers. Now fixed.</li>
+        <li>Duplicating a pose layer now correctly copies its pose to the new layer.</li>
+        <li>The alpha-lock button now displays correctly depending on each layer's activation status.</li>
+        <li>Duplicated layer names now show "(copy)" to indicate which is the original.</li>
+        <li>Duplicated groups were glitching when closed. Now fixed.</li>
+    </ul>
+</p>
 
 # New Features in Version 2024.05.13-1-alpha
 

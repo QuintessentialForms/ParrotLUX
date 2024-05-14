@@ -493,7 +493,8 @@ const Pixels = {
 
 }
 
-let layersAddedCount = -2;
+let layersAddedCount = 0,
+  tempLayersAddedCount = 0;
 function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibling=null, doNotUpdate=false ) {
   
   //layerType === "paint" | "_temp" | "generative" | "group" | "text" | "pose" | "filter" | "model" | ...
@@ -555,12 +556,15 @@ function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibli
   if( filterName === null ) filterName = uiSettings.defaultFilterName;
 
   //create the back-end layer info
+  let layerId;
+  if( layerType === "_temp" ) layerId = -1 * (++tempLayersAddedCount);
+  else layerId = ++layersAddedCount;
 
   const newLayer = {
     //layerOrder: layersStack.layers.length, //not implemented
     layerType,
-    layerName: "Layer " + (++layersAddedCount),
-    layerId: layersAddedCount,
+    layerName: "Layer " + layerId,
+    layerId: layerId,
     layerGroupId: null,
     groupCompositeUpToDate: false,
     groupClosed: false,
@@ -897,7 +901,11 @@ function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibli
         {
           onclick: () => newLayer.setAlphaLocked( !newLayer.alphaLocked ),
           updateContext: () => {
-            if( newLayer.layerType === "paint" ) alphaLockButton.classList.remove( "hidden" );
+            if( newLayer.layerType === "paint" ) {
+              if( layerButton.classList.contains( "active" ) )
+                alphaLockButton.classList.remove( "hidden" );
+              else alphaLockButton.classList.add( "hidden" );
+            }
             else alphaLockButton.classList.add( "hidden" );
           }
         },
@@ -915,88 +923,20 @@ function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibli
         {
           onclick: async () => {
 
-            //Hooo boy. I can already feel the RAM hurting.
+            //duplicate layer(s)
+            //when the duplicate button is clicked from here, it ignores multiple-selected layers
+            
+            const groupedLayers = [ newLayer ];
             if( newLayer.layerType === "group" ) {
-              const groupedLayers = [ newLayer ];
               for( let i = layersStack.layers.indexOf( newLayer )-1; i>=0; i-- ) {
                 const layer = layersStack.layers[ i ];
                 if( ! getLayerGroupChain( layer ).includes( newLayer.layerId ) ) break;
                 groupedLayers.push( layer );
               }
-
-              const copyMap = [], 
-                historyEntries = [];
-
-              //we're going to catch our historyEntries
-              for( const layer of groupedLayers ) {
-                //adding all copies as siblings directly above the current layer, one by one
-                const copy = addCanvasLayer( layer.layerType, layer.w, layer.h, newLayer, true );
-                //by altering the properties without registering a new undo, the creation undo is a copy
-                copy.layerName = layer.layerName;
-                if( layer === newLayer ) copy.layerGroupId = newLayer.layerGroupId;
-                //will set layerGroupId later for rest
-                copy.groupCompositeUpToDate = false;
-                copy.groupClosed = layer.groupClosed;
-                copy.context.drawImage( layer.canvas, 0, 0 );
-                if( layer.maskInitialized ) {
-                  copy.maskContext.drawImage( layer.maskCanvas, 0, 0 );
-                  copy.maskInitialized = true;
-                  flagLayerMaskChanged( copy );
-                }
-                flagLayerTextureChanged( copy );
-                copy.setVisibility( layer.visible );
-                copy.setOpacity( layer.opacity );
-                copy.topLeft = [ ...layer.topLeft ];
-                copy.topRight = [ ...layer.topRight ];
-                copy.bottomLeft = [ ...layer.bottomLeft ];
-                copy.bottomRight = [ ...layer.bottomRight ];
-                copyMap.push( { layer, copy } );
-                //steal the undo entry
-                const historyEntry = history.pop();
-                historyEntries.push( historyEntry );
-              }
-              //match up the layergroup structures
-              for( let i=0; i<copyMap.length; i++ ) {
-                const originalParentMap = copyMap.find( ({layer}) => layer.layerId === copyMap[ i ].layer.layerGroupId );
-                //top-level layer has no parent
-                if( ! originalParentMap ) continue;
-                copyMap[ i ].copy.layerGroupId = originalParentMap.copy.layerId;
-              }
-              //build the superconglomerate undo
-              const historyEntry = {
-                historyEntries,
-                undo: () => {
-                  for( let i = historyEntry.historyEntries.length-1; i>=0; i-- ) {
-                    historyEntry.historyEntries[ i ].undo();
-                  }
-                },
-                redo: () => {
-                  for( const entry of historyEntry.historyEntries )
-                    entry.redo();
-                }
-              }
-              //In the end, we'll push out max 1 old undo history record. The math adds up.
-              recordHistoryEntry( historyEntry );
             }
-            else {
-              //adding the new layer inherently adds the undo component
-              const copy = addCanvasLayer( newLayer.layerType, newLayer.w, newLayer.h, newLayer, true )
-              //by altering the properties without registering a new undo, the creation undo is a copy
-              copy.layerName = newLayer.layerName;
-              copy.layerGroupId = newLayer.layerGroupId;
-              copy.context.drawImage( newLayer.canvas, 0, 0 );
-              if( newLayer.maskInitialized )
-                copy.maskContext.drawImage( newLayer.maskCanvas, 0, 0 );
-              copy.textureChanged = true;
-              copy.setVisibility( newLayer.visible );
-              copy.setOpacity( newLayer.opacity );
-              copy.topLeft = [ ...newLayer.topLeft ];
-              copy.topRight = [ ...newLayer.topRight ];
-              copy.bottomLeft = [ ...newLayer.bottomLeft ];
-              copy.bottomRight = [ ...newLayer.bottomRight ];
-            }
-            reorganizeLayerButtons();
-            UI.updateContext();
+
+            duplicateLayersAndRecordUndo( groupedLayers, true, false );
+
           },
           updateContext: () => {
             if( layerButton.classList.contains( "active" ) )
@@ -1830,6 +1770,113 @@ function reorganizeLayerButtons() {
 
 }
 
+//TODO: Add jsdoc description here (read about how to define layer types? Hmm. Maybe typedefs can be loose? IDK.)
+function duplicateLayersAndRecordUndo( groupedLayers, organizeDuplicatesTogether = true, clipToLasso = false ) {
+  const copyMap = [], 
+  historyEntries = [];
+
+  //we're going to catch our historyEntries
+  for( const layer of groupedLayers ) {
+    let copy;
+    if( organizeDuplicatesTogether === false && layer.layerType === "group" ) {
+      //don't duplicate layer groups when inserting into current structure
+      continue;
+    }
+    if( organizeDuplicatesTogether === true ) {
+      //adding all copies as siblings directly above the first layer, one by one
+      //(this won't actually work though, because for layer groups, addCanvasLayer will put us inside the group)
+      copy = addCanvasLayer( layer.layerType, layer.w, layer.h, groupedLayers[ 0 ], true );
+    } else {
+      //adding each copy as a sibling directly above its copied layer
+      copy = addCanvasLayer( layer.layerType, layer.w, layer.h, layer, true );
+    }
+    //by altering the properties without registering a new undo, the creation undo is a copy
+    let copyCount = 1;
+    const sourceLayerName = layer.layerName.replace( / \(copy\s{0,1}\d*\)$/gmi, "");
+    copy.layerName = sourceLayerName + ` (copy)`;
+    while( layersStack.layers.find( l => ( l !== copy && l.layerName === copy.layerName ) ) )
+      copy.layerName = sourceLayerName + ` (copy ${++copyCount})`;
+    if( organizeDuplicatesTogether === false )
+      copy.layerGroupId = layer.layerGroupId;
+    //will set layerGroupId later for rest
+    copy.groupCompositeUpToDate = false;
+    copy.groupClosed = layer.groupClosed;
+    copy.context.drawImage( layer.canvas, 0, 0 );
+    if( layer.maskInitialized ) {
+      copy.maskContext.drawImage( layer.maskCanvas, 0, 0 );
+      copy.maskInitialized = true;
+      flagLayerMaskChanged( copy );
+    }
+    flagLayerTextureChanged( copy );
+    copy.setVisibility( layer.visible );
+    copy.setOpacity( layer.opacity );
+    copy.topLeft = [ ...layer.topLeft ];
+    copy.topRight = [ ...layer.topRight ];
+    copy.bottomLeft = [ ...layer.bottomLeft ];
+    copy.bottomRight = [ ...layer.bottomRight ];
+    copyMap.push( { layer, copy } );
+    if( layer.layerType === "paint" && clipToLasso === true ) {
+      console.error( "Need to clip to lasso." );
+    }
+    if( layer.layerType === "pose" ) {
+      copy.rig = JSON.parse( JSON.stringify( layer.rig ) );
+      renderLayerPose( copy );
+    }
+    //if( layer.layerType === "text" ) {}
+    //if( layer.layerType === "vector" ) {}
+    //steal the undo entry
+    const historyEntry = history.pop();
+    historyEntries.push( historyEntry );
+  }
+
+  if( organizeDuplicatesTogether === true ) {
+    //match up the layergroup structures
+    //I can't just directly copy the old layergroupids, because we have new layer groups
+    //have to match each copied layer with the equivalent copy of a layer group
+    for( let i=0; i<copyMap.length; i++ ) {
+      const originalParentMap = copyMap.find( ({layer}) => layer.layerId === copyMap[ i ].layer.layerGroupId );
+      //top-level layer's parent imitates source (this line will not execute during copy phase when organizeDuplicatesTogether===true)
+      if( ! originalParentMap ) {
+        copyMap[ i ].copy.layerGroupId = copyMap[ i ].layer.layerGroupId;
+        continue;
+      }
+      copyMap[ i ].copy.layerGroupId = originalParentMap.copy.layerId;
+    }
+
+    //reorganize the layers so we're outside the top-level group
+    //remove all our copies
+    for( const {copy} of copyMap ) {
+      layersStack.layers.splice( layersStack.layers.indexOf( copy ), 1 );
+    }
+    layersStack.layers.splice( layersStack.layers.indexOf( groupedLayers[ 0 ] )+1, 0, ...(copyMap.map(({copy})=>copy).reverse()) );
+
+    //update our history entry stack indices (and we'll see if this works)
+    for( const historyEntry of historyEntries ) {
+      historyEntry.stackIndex = layersStack.layers.indexOf( historyEntry.newLayer );
+    }
+
+  }
+
+  //build the superconglomerate undo
+  const historyEntry = {
+    historyEntries,
+    undo: () => {
+      for( let i = historyEntry.historyEntries.length-1; i>=0; i-- ) {
+        historyEntry.historyEntries[ i ].undo();
+      }
+    },
+    redo: () => {
+      for( const entry of historyEntry.historyEntries )
+        entry.redo();
+    }
+  }
+  //In the end, we'll push out max 1 old undo history record. The math adds up.
+  recordHistoryEntry( historyEntry );
+
+  reorganizeLayerButtons();
+  UI.updateContext();
+}
+
 //after sampleLayerInLayer, we'll swap out the img2img pull code with sampling like this
 function sampleLayerInLayer( sourceLayer, rectLayer, compositingLayer, backgroundColorStyle = null ) {
 
@@ -1953,10 +2000,7 @@ let selectionChanged = false;
 function declareSelectionChanged() {
   selectionChanged = true;
 }
-function getSelectedOrBatchedLayers() {
-  //TODO: optimize this to not rebuild unless the selection has changed or rearranged (track layer Ids w/ array join?)
-  //can i hook the functions that change selection? yeah that's what to do
-  //selectionChanged = true; //temporary hack; implement selection change tracking!
+function getSelectedOrBatchedLayers( includeGroupLayers = false ) {
   if( ! getSelectedOrBatchedLayers.selectedAndBatchedLayers ) {
     getSelectedOrBatchedLayers.selectedAndBatchedLayers = [];
     selectionChanged = true;
@@ -1967,21 +2011,32 @@ function getSelectedOrBatchedLayers() {
   const selectedAndBatchedLayers = getSelectedOrBatchedLayers.selectedAndBatchedLayers;
   selectedAndBatchedLayers.length = 0;
   if( batchedLayers.size ) {
-    const transformableChildren = [];
-    for( const layer of batchedLayers ) {
-      if( layer.layerType === "group" ) continue;
-      transformableChildren.push( layer );
+    if( includeGroupLayers === false ) {
+      const nonGroupBatchedLayers = [];
+      for( const layer of batchedLayers ) {
+        if( layer.layerType === "group" ) continue;
+        nonGroupBatchedLayers.push( layer );
+      }
+      selectedAndBatchedLayers.push( ...nonGroupBatchedLayers );
+    } else {
+      selectedAndBatchedLayers.push( ...batchedLayers );
     }
-    selectedAndBatchedLayers.push( ...transformableChildren );
   }
+  //selected layer and batchedlayers should be exclusively populated (theoretically...)
+  //which means we shouldn't end up with duplicates in selectedAndBatchedLayers
   else if( selectedLayer?.layerType === "group" ) {
     const groupChildren = collectGroupedLayersAsFlatList( selectedLayer.layerId );
-    const transformableChildren = [];
-    for( const layer of groupChildren ) {
-      if( layer.layerType === "group" ) continue;
-      transformableChildren.push( layer );
+    if( includeGroupLayers === false ) {
+      const nonGroupChildren = [];
+      for( const layer of groupChildren ) {
+        if( layer.layerType === "group" ) continue;
+        nonGroupChildren.push( layer );
+      }
+      selectedAndBatchedLayers.push( ...nonGroupChildren );
     }
-    selectedAndBatchedLayers.push( ...transformableChildren );
+    else {
+      selectedAndBatchedLayers.push( ...groupChildren );
+    }
   }
   else if( selectedLayer ) {
     selectedAndBatchedLayers.push( selectedLayer );
@@ -2719,9 +2774,12 @@ function existsVisibleLayer() {
   return false;
 }
 function getLayerVisibility( layer ) {
-  if( layer.visible === false ) return false;
-  if( layer.layerGroupId === null && layer.visible === true ) return true;
-  return getLayerVisibility( layersStack.layers.find( l => l.layerId === layer.layerGroupId ) );
+  if( ! layer ) {return false;}
+  if( layer.layerType === "_temp" ) {return false;}
+  if( layer.visible === false ) {return false;}
+  if( layer.layerGroupId === null ) {return true;}
+  const parentLayer = layersStack.layers.find( l => l.layerId === layer.layerGroupId );
+  return getLayerVisibility( parentLayer );
 }
 function getLayerOpacity( layer ) {
   let alpha = layer.opacity;
@@ -6052,7 +6110,6 @@ function setupUI() {
 
   //the canvas tool options
   {
-    console.error( "UI.updateContext() needs to rebuild list of hidden elements, not check every mouse move." );
     const canvasControlsOptionsRow = document.createElement( "div" );
     canvasControlsOptionsRow.classList.add( "flex-row", "hidden", "animated" );
     canvasControlsOptionsRow.id = "paint-tools-options-row";
@@ -7572,7 +7629,6 @@ function setupUI() {
       if( poseRigContainer.classList.contains( "hidden" ) )
         return;
 
-      console.log( "Updating view on rig." );
       //update all the node positions
       //origin and legs already loaded
       const rig = currentLayer.rig;
@@ -11162,9 +11218,24 @@ const UI = {
     UI.context.delete( hint );
     UI.updateContext();
   },
+  visibleElements: [],
   updateContext: () => {
     for( const [,events] of UI.elements ) {
       events.updateContext?.( UI.context );
+    }
+
+    const { visibleElements } = UI;
+    visibleElements.length = 0;
+    for( const [element,events] of UI.elements ) {
+      if( element.classList.contains( "hidden" ) ||
+        element.parentElement?.classList.contains( "hidden" ) ||
+        element.parentElement?.parentElement?.classList.contains( "hidden" ) ||
+        element.parentElement?.parentElement?.parentElement?.classList.contains( "hidden" ) ) {
+          element.classList.remove( "hovering" );
+          continue;
+        }
+
+      visibleElements.push( [element,events] );
     }
   },
 
@@ -11207,13 +11278,9 @@ const UI = {
 
     let hovering = false;
 
-    for( const [element] of UI.elements ) {
+    for( const [element] of UI.visibleElements ) {
 
-      if( element.classList.contains( "no-hover" ) ||
-        element.classList.contains( "hidden" ) ||
-        element.parentElement?.classList.contains( "hidden" ) ||
-        element.parentElement?.parentElement?.classList.contains( "hidden" ) ||
-        element.parentElement?.parentElement?.parentElement?.classList.contains( "hidden" ) ) continue;
+      if( element.classList.contains( "no-hover" ) ) continue;
 
       const r = element.getClientRects()[0];
       if( ! r ) continue; //element is invisible or off-screen
@@ -11241,22 +11308,18 @@ const UI = {
   },
   cancelHover: () => {
     if( UI.hovering === false ) return;
-    for( const [element] of UI.elements )
+    for( const [element] of UI.visibleElements )
       element.classList.remove( "hovering" );
   },
 
   testElements: p => {
 
     const x = p.clientX, y = p.clientY;
-    const reverseElements = [ ...UI.elements ].reverse();
+    const reverseElements = [ ...UI.visibleElements ].reverse();
     reverseElements.sort( (a,b) => (( b[0].zIndex - a[0].zIndex ) || ( b[0].insertOrder - a[0].insertOrder )) );
     for( const [element,events] of reverseElements ) {
 
       if( ! element.uiActive ) continue;
-      if( element.classList.contains( "hidden" ) ||
-        element.parentElement?.classList.contains( "hidden" ) ||
-        element.parentElement?.parentElement?.classList.contains( "hidden" ) ||
-        element.parentElement?.parentElement?.parentElement?.classList.contains( "hidden" ) ) continue;
 
       const r = element.getClientRects()[0];
 
@@ -11327,49 +11390,6 @@ function unregisterUIElement( element ) {
   element.uiActive = false;
 }
 
-/* function testUIElements( p ) {
-  const x = p.clientX, y = p.clientY;
-  const reverseElements = [ ...uiElements ].reverse();
-  for( const [element,events] of reverseElements ) {
-    if( ! element.uiActive ) continue;
-    const r = element.getClientRects()[0];
-    if( ! r ) continue; //element is invisible or off-screen
-    if( x < r.left || x > r.right || y < r.top || y > r.bottom )
-      continue;
-    if( events.onclick ) {
-      let inrange = true;
-      uiHandlers[ p.pointerId ] = {
-        move: p => {
-          const x = p.clientX, y = p.clientY;
-          inrange = ! ( x < r.left || x > r.right || y < r.top || y > r.bottom );
-        },
-        end: p => {
-          if( inrange ) events.onclick();
-          delete uiHandlers[ p.pointerId ];
-        }
-      }
-    }
-    if( events.ondrag ) {
-      const rect = r,
-        start = {x,y},
-        current = {x,y};
-      uiHandlers[ p.pointerId ] = {
-        move: ( p, starting = false ) => {
-          current.x = p.clientX; current.y = p.clientY;
-          events.ondrag({ rect, start, current, ending: false, starting, element });
-        },
-        end: p => {
-          current.x = p.clientX; current.y = p.clientY;
-          events.ondrag({ rect, start, current, ending: true, starting: false, element });
-          delete uiHandlers[ p.pointerId ];
-        }
-      }
-      uiHandlers[ p.pointerId ].move( p, true );
-    }
-    return true;
-  }
-  return false;
-} */
 
 let info = "";
 
@@ -11417,8 +11437,6 @@ const startHandler = p => {
               cursor.mode = "pan";
             }
             if( p.buttons === 2 || ( keys[ "Shift" ] === true && keys[ "Control" ] !== true ) ) {
-                //must have offset for rotate (0-angle) to prevent shuddering (insta-moving to extreme angle with tiny mouse movement)
-                //cursor.origin.y -= cursor.zoomLength;
                 //get center of screen
                 cursor.origin.x = gnv.width/2;
                 cursor.origin.y = gnv.height/2;
@@ -11431,7 +11449,6 @@ const startHandler = p => {
                 cursor.mode = "rotate";
             }
             if( p.buttons === 4 || ( keys[ "Control" ] === true && keys[ "Shift" ] !== true ) ) {
-                //must have offset for zoom (cannot start on zero-length reference basis)
                 cursor.origin.x = gnv.width/2;
                 cursor.origin.y = gnv.height/2;
 
