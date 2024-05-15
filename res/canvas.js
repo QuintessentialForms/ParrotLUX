@@ -178,8 +178,11 @@ function makePaintFrameFromGenerativeFrame( frame ) {
 }
 
 function getLayerCanvasURLs( layer ) {
+  if( ! getLayerCanvasURLs.previewLayer ) {
+    getLayerCanvasURLs.previewLayer = addCanvasLayer( "_temp" );
+  }
   const fullSizeURL = layer.canvas.toDataURL( "png" );
-  const previewLayer = getPreviewLayer();
+  const previewLayer = getLayerCanvasURLs.previewLayer;
   const thumbnailSize = 84;
   //composeLayers( previewLayer, [layer], thumbnailSize / Math.max(layer.w,layer.h) );
   composeLayersGPU( previewLayer, [layer], thumbnailSize / Math.max(layer.w,layer.h) );
@@ -237,8 +240,11 @@ function flushLayerUpdates() {
 }
 
 function makeFrameMergingFrameOntoFrame( topLayer, topFrame, lowerLayer, lowerFrame, respectOpacity=true ) {
+  if( ! makeFrameMergingFrameOntoFrame.previewLayer ) {
+    makeFrameMergingFrameOntoFrame.previewLayer = addCanvasLayer( "_temp" );
+  }
   //all layertypes and frametypes must be "paint"
-  const preview = getPreviewLayer();
+  const preview = makeFrameMergingFrameOntoFrame.previewLayer;
   loadLayerFrame( topLayer, topFrame, false );
   loadLayerFrame( lowerLayer, lowerFrame, false );
   sampleLayerInLayer( topLayer, lowerLayer, preview );
@@ -250,10 +256,6 @@ function makeFrameMergingFrameOntoFrame( topLayer, topFrame, lowerLayer, lowerFr
   updateLayerFrame( lowerLayer, mergedFrame );
   //if you just merged a non-current frame, you need to reload the current!
   return mergedFrame;
-}
-
-function getPreviewLayer() {
-  return layersStack.layers.find( l => l.layerType === "_temp" );
 }
 
 //the pixels object
@@ -647,26 +649,29 @@ function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibli
   newLayer.maskContext.fillStyle = "rgb(255,255,255)";
   newLayer.maskContext.fillRect( 0,0,layerWidth,layerHeight );
 
-  if( selectedLayer && ! nextSibling )
-      nextSibling = selectedLayer;
-
-  if( nextSibling ) {
-    if( nextSibling === selectedLayer && selectedLayer.layerType === "group" ) {
-      const index = layersStack.layers.indexOf( nextSibling );
-      newLayer.layerGroupId = selectedLayer.layerId;
-      layersStack.layers.splice( index, 0, newLayer );
+  //add layer to stack
+  if( newLayer.layerType !== "_temp" ) {
+    if( selectedLayer && ! nextSibling )
+        nextSibling = selectedLayer;
+  
+    if( nextSibling ) {
+      if( nextSibling === selectedLayer && selectedLayer.layerType === "group" ) {
+        const index = layersStack.layers.indexOf( nextSibling );
+        newLayer.layerGroupId = selectedLayer.layerId;
+        layersStack.layers.splice( index, 0, newLayer );
+      }
+      else if( nextSibling === selectedLayer && selectedLayer.layerGroupId !== null ) {
+        const index = layersStack.layers.indexOf( nextSibling );
+        newLayer.layerGroupId = selectedLayer.layerGroupId;
+        layersStack.layers.splice( index+1, 0, newLayer );
+      }
+      else {
+        const index = layersStack.layers.indexOf( nextSibling );
+        layersStack.layers.splice( index+1, 0, newLayer );
+      }
+    } else {
+      layersStack.layers.push( newLayer );
     }
-    else if( nextSibling === selectedLayer && selectedLayer.layerGroupId !== null ) {
-      const index = layersStack.layers.indexOf( nextSibling );
-      newLayer.layerGroupId = selectedLayer.layerGroupId;
-      layersStack.layers.splice( index+1, 0, newLayer );
-    }
-    else {
-      const index = layersStack.layers.indexOf( nextSibling );
-      layersStack.layers.splice( index+1, 0, newLayer );
-    }
-  } else {
-    layersStack.layers.push( newLayer );
   }
 
   {
@@ -1200,8 +1205,6 @@ function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibli
               //(They can be flattened to paint layers though.)
 
               //sample this layer onto the lower layer
-              //let previewLayer = getPreviewLayer();
-              //sampleLayerInLayer( newLayer, lowerLayer, previewLayer );
               renderLayersIntoPointRect( lowerLayer, [ lowerLayer, newLayer ], [], 0, lowerLayer, [0,0,0,0], false, false );
 
               //merge the sampled area onto the lower layer
@@ -1733,7 +1736,7 @@ function reorganizeLayerButtons() {
   //reinstall in order
   for( let i=layersStack.layers.length-1; i>=0; i-- ) {
     const layer = layersStack.layers[ i ];
-    if( layer.layerType === "_temp" ) continue;
+    if( layer.layerType === "_temp" ) continue; //ommitted from list now, can remove line... theoretically...
 
     if( layer.layerButton.classList.contains( "dragging-layer-button" ) ) {
       uiContainer.appendChild( layer.layerButton );
@@ -1771,7 +1774,7 @@ function reorganizeLayerButtons() {
 }
 
 //TODO: Add jsdoc description here (read about how to define layer types? Hmm. Maybe typedefs can be loose? IDK.)
-function duplicateLayersAndRecordUndo( groupedLayers, organizeDuplicatesTogether = true, clipToLasso = false ) {
+function duplicateLayersAndRecordUndo( groupedLayers, organizeDuplicatesTogether = true ) {
   const copyMap = [], 
   historyEntries = [];
 
@@ -1782,13 +1785,16 @@ function duplicateLayersAndRecordUndo( groupedLayers, organizeDuplicatesTogether
       //don't duplicate layer groups when inserting into current structure
       continue;
     }
+    let historyEntry;
     if( organizeDuplicatesTogether === true ) {
       //adding all copies as siblings directly above the first layer, one by one
       //(this won't actually work though, because for layer groups, addCanvasLayer will put us inside the group)
       copy = addCanvasLayer( layer.layerType, layer.w, layer.h, groupedLayers[ 0 ], true );
+      historyEntry = history.pop();
     } else {
       //adding each copy as a sibling directly above its copied layer
       copy = addCanvasLayer( layer.layerType, layer.w, layer.h, layer, true );
+      historyEntry = history.pop();
     }
     //by altering the properties without registering a new undo, the creation undo is a copy
     let copyCount = 1;
@@ -1815,17 +1821,13 @@ function duplicateLayersAndRecordUndo( groupedLayers, organizeDuplicatesTogether
     copy.bottomLeft = [ ...layer.bottomLeft ];
     copy.bottomRight = [ ...layer.bottomRight ];
     copyMap.push( { layer, copy } );
-    if( layer.layerType === "paint" && clipToLasso === true ) {
-      console.error( "Need to clip to lasso." );
-    }
     if( layer.layerType === "pose" ) {
       copy.rig = JSON.parse( JSON.stringify( layer.rig ) );
       renderLayerPose( copy );
     }
     //if( layer.layerType === "text" ) {}
     //if( layer.layerType === "vector" ) {}
-    //steal the undo entry
-    const historyEntry = history.pop();
+    //steal and save the undo entry
     historyEntries.push( historyEntry );
   }
 
@@ -1875,6 +1877,55 @@ function duplicateLayersAndRecordUndo( groupedLayers, organizeDuplicatesTogether
 
   reorganizeLayerButtons();
   UI.updateContext();
+
+  //return duplicated layers
+  return copyMap.map( ({copy})=>copy );
+
+}
+
+function cutLayersToLassoAreas( layers, invert = false, recordUndo = false ) {
+  const undoRecords = [];
+  for( const layer of layers ) {
+    const lassoLayer = getLassoLayerForLayer( layer, true );
+    if( lassoLayer ) {
+      lassoLayer.context.putImageData( lassoLayer.lassoImageData, 0, 0 );
+      let originalImageData;
+      if( recordUndo === true ) {
+        originalImageData = layer.context.getImageData( 0,0, layer.w, layer.h );
+      }
+      let localInvert = lassoResources.invert;
+      if( invert ) localInvert = !localInvert;
+      const { context } = layer;
+      context.save();
+      if( localInvert === false ) context.globalCompositeOperation = "destination-out";
+      else context.globalCompositeOperation = "destination-in";
+      context.drawImage( lassoLayer.canvas, 0, 0 );
+      context.restore();
+      if( recordUndo === true ) {
+        let finalImageData = context.getImageData( 0,0,layer.w,layer.h );
+        undoRecords.push( [layer,originalImageData,finalImageData] );
+      }
+      flagLayerTextureChanged( layer );
+    }
+  }
+  if( recordUndo === true ) {
+    const historyEntry = {
+      undoRecords,
+      undo: () => {
+        for( const [layer,originalImageData] of historyEntry.undoRecords ) {
+          layer.context.putImageData( originalImageData, 0, 0 );
+          flagLayerTextureChanged( layer );
+        }
+      },
+      redo: () => {
+        for( const [layer,,finalImageData] of historyEntry.undoRecords ) {
+          layer.context.putImageData( finalImageData, 0, 0 );
+          flagLayerTextureChanged( layer );
+        }
+      }
+    };
+    recordHistoryEntry( historyEntry );
+  }
 }
 
 //after sampleLayerInLayer, we'll swap out the img2img pull code with sampling like this
@@ -4377,10 +4428,6 @@ async function setup() {
     gnv.addEventListener( "auxclick" , p => cancelEvent );
 
     enableKeyTrapping();
-
-    //setup two paint preview layers (these are actually still used for now)
-    addCanvasLayer( "_temp" );
-    addCanvasLayer( "_temp" );
 
     window.requestAnimationFrame( Loop );
 
@@ -7145,7 +7192,6 @@ function setupUI() {
         //the cancel lasso button
         {
           const cancelLasso = document.createElement( "div" );
-          //brushSelectBrowseButton.classList.add( "asset-browser-button" );
           cancelLasso.classList.add( "lasso-options-cancel-lasso", "round-toggle" );
           UI.registerElement(
             cancelLasso,
@@ -7165,6 +7211,161 @@ function setupUI() {
           );
           lassoOptionsRow.appendChild( cancelLasso );
         }
+        
+        //the invert lasso button
+        {
+          const invertLassoButton = document.createElement( "div" );
+          invertLassoButton.classList.add( "lasso-options-invert-lasso", "round-toggle" );
+
+          function invertLasso() {
+            lassoResources.invert = ! lassoResources.invert;
+          }
+
+          UI.registerElement(
+            invertLassoButton,
+            {
+              onclick: invertLasso,
+              updateContext: () => {
+                if( lassoResources.invert === true ) invertLassoButton.classList.add( "on" );
+                else invertLassoButton.classList.remove( "on" );
+              }
+            },
+            {
+              tooltip: [ "Invert Lasso", "below", "to-right-of-center" ],
+              zIndex:10000,
+              bindings: {
+                "Invert Lasso": invertLasso
+              }
+            }
+          );
+          lassoOptionsRow.appendChild( invertLassoButton );
+        }
+        
+        //the cut lassoed area button
+        {
+          const cutLassoedAreaButton = document.createElement( "div" );
+          cutLassoedAreaButton.classList.add( "lasso-options-cut-lassoed-area", "round-toggle" );
+
+          function duplicateLassoedArea() {
+            const selectedLayers = getSelectedOrBatchedLayers( false );
+            const selectedPaintLayers = selectedLayers.filter( l => l.layerType === "paint" );
+            if( selectedPaintLayers.length > 0 ) {
+              const copiedLayers = duplicateLayersAndRecordUndo( selectedPaintLayers, false );
+              const duplicateUndoEvent = history.pop();
+              cutLayersToLassoAreas( copiedLayers, true, true );
+              const cutToLassoUndoEvent = history.pop();
+              cutLayersToLassoAreas( selectedPaintLayers, false, true );
+              const cutOutLassoUndoEvent = history.pop();
+              const historyEntry = {
+                undo: () => {
+                  cutOutLassoUndoEvent.undo();
+                  cutToLassoUndoEvent.undo();
+                  duplicateUndoEvent.undo();
+                },
+                redo: () => {
+                  duplicateUndoEvent.redo();
+                  cutToLassoUndoEvent.redo();
+                  cutOutLassoUndoEvent.redo();
+                }
+              }
+              recordHistoryEntry( historyEntry );
+            }
+          }
+
+          UI.registerElement(
+            cutLassoedAreaButton,
+            {
+              onclick: duplicateLassoedArea,
+              updateContext: () => {}
+            },
+            {
+              tooltip: [ "Cut Out Lassoed Area", "below", "to-right-of-center" ],
+              zIndex:10000,
+              bindings: {
+                "Cut Out Lassoed Area": duplicateLassoedArea
+              }
+            }
+          );
+          lassoOptionsRow.appendChild( cutLassoedAreaButton );
+        }
+
+        //the duplicate lassoed area button
+        {
+          const duplicateLassoedAreaButton = document.createElement( "div" );
+          duplicateLassoedAreaButton.classList.add( "lasso-options-duplicate-lassoed-area", "round-toggle" );
+
+          function duplicateLassoedArea() {
+            const selectedLayers = getSelectedOrBatchedLayers( false );
+            const selectedPaintLayers = selectedLayers.filter( l => l.layerType === "paint" );
+            if( selectedPaintLayers.length > 0 ) {
+              const copiedLayers = duplicateLayersAndRecordUndo( selectedPaintLayers, false );
+              const duplicateUndoEvent = history.pop();
+              cutLayersToLassoAreas( copiedLayers, true, true );
+              const cutToLassoUndoEvent = history.pop();
+              const historyEntry = {
+                undo: () => {
+                  cutToLassoUndoEvent.undo();
+                  duplicateUndoEvent.undo();
+                  reorganizeLayerButtons();
+                  UI.updateContext();
+                },
+                redo: () => {
+                  duplicateUndoEvent.redo();
+                  cutToLassoUndoEvent.redo();
+                  reorganizeLayerButtons();
+                  UI.updateContext();
+                }
+              }
+              recordHistoryEntry( historyEntry );
+            }
+          }
+
+          UI.registerElement(
+            duplicateLassoedAreaButton,
+            {
+              onclick: duplicateLassoedArea,
+              updateContext: () => {}
+            },
+            {
+              tooltip: [ "Duplicate Lassoed Area", "below", "to-right-of-center" ],
+              zIndex:10000,
+              bindings: {
+                "Duplicate Lassoed Area": duplicateLassoedArea
+              }
+            }
+          );
+          lassoOptionsRow.appendChild( duplicateLassoedAreaButton );
+        }
+
+        //the delete lassoed area button
+        {
+          const deleteLassoedAreaButton = document.createElement( "div" );
+          deleteLassoedAreaButton.classList.add( "lasso-options-delete-lassoed-area", "round-toggle" );
+
+          function duplicateLassoedArea() {
+            const selectedLayers = getSelectedOrBatchedLayers( false );
+            const selectedPaintLayers = selectedLayers.filter( l => l.layerType === "paint" );
+            if( selectedPaintLayers.length > 0 )
+              cutLayersToLassoAreas( selectedPaintLayers, false, true );
+          }
+
+          UI.registerElement(
+            deleteLassoedAreaButton,
+            {
+              onclick: duplicateLassoedArea,
+              updateContext: () => {}
+            },
+            {
+              tooltip: [ "Delete Lassoed Area", "below", "to-right-of-center" ],
+              zIndex:10000,
+              bindings: {
+                "Delete Lassoed Area": duplicateLassoedArea
+              }
+            }
+          );
+          lassoOptionsRow.appendChild( deleteLassoedAreaButton );
+        }
+        
       }
     }
 
@@ -7274,7 +7475,7 @@ function setupUI() {
             sourcePoint = initial[ pointName ];
           const dx = sourcePoint[0] - x,
             dy = sourcePoint[1] - y,
-            initialAngle = Math.atan2( dy, dx ),
+            initialAngle = Math.atan2( -dy, dx ),
             l = Math.sqrt( dx**2 + dy**2 );
           destinationPoint[ 0 ] = x + l * Math.cos( initialAngle + angleChange );
           destinationPoint[ 1 ] = y + l * Math.sin( initialAngle + angleChange );
@@ -9960,7 +10161,10 @@ function populateAPIFlowControls( apiFlow, selectedLayerInput = false ) {
         }
       }
       //cast source layer to generative layer's space
-      const previewLayer = layersStack.layers.find( l => l.layerType === "_temp" );
+      if( ! populateAPIFlowControls.previewLayer ) {
+        populateAPIFlowControls.previewLayer = addCanvasLayer( "_temp" );
+      }
+      const previewLayer = populateAPIFlowControls.previewLayer;
       sampleLayerInLayer( sourceLayer, selectedLayer, previewLayer, "rgb(0,0,0)" );
       const dataURL = previewLayer.canvas.toDataURL();
       controlValues[ control.controlName ] = dataURL;
@@ -10515,13 +10719,11 @@ function resizeCanvases() {
 
 function exportPNG() {
   //TODO: calculate the bounding box of all layers and resize the export canvas
-  let previewLayer;
-  for( const l of layersStack.layers ) {
-    if( l.layerType === "_temp" ) {
-      previewLayer = l;
-      break;
-    }
+  if( ! exportPNG.previewLayer ) {
+    exportPNG.previewLayer = addCanvasLayer( "_temp" );
   }
+  const previewLayer = exportPNG.previewLayer;
+
   const ctx = previewLayer.context;
   const {w,h} = previewLayer;
   ctx.clearRect( 0, 0, w, h );
@@ -10745,11 +10947,16 @@ function loadJSON() {
         uiSettings.setActiveTool( null );
       
         //if we opened over an existing file, we have to clear everything up
+        //clear layers
         for( const layer of layersStack.layers ) {
           if( layer.layerType === "_temp" ) continue;
           deleteLayer( layer );
         }
+        //clear undo and redo
         clearUndoHistory();
+        //clear lasso
+        clearLassoStack();
+        //I think that's everything? :-O
         
         let lastLayer;
         for( const layer of layersSave ) {
@@ -13487,68 +13694,6 @@ function setupLassoStack() {
   //lassoResources.lassoPreview.opacity = 0.5;
   resizeLayerToScreen( lassoResources.lassoShaderPreview );
 
-  //this sets up 3 demo layer circles that fill up the screen
-  if( false ) {
-    //let's set up some demo lasso layers
-    const demoLayer1 = getNewLassoLayer();
-    resizeLayerToScreen( demoLayer1 );
-    const demoLayer2 = getNewLassoLayer();
-    resizeLayerToScreen( demoLayer2 );
-    const demoLayer3 = getNewLassoLayer();
-    resizeLayerToScreen( demoLayer3 );
-  
-    const { w,h } = demoLayer1;
-  
-    //let's draw a demo white circle on each, and re-upload
-    //we have three circles. The center one should be touching the top of the screen if my y-flip is correct
-    for( const [l,x,y] of [ [demoLayer1, w/4, h*0.55], [demoLayer2, 2*w/4, h*0.45], [demoLayer3,3*w/4, h*0.55] ] ){
-      const ctx = l.context;
-      ctx.save();
-      ctx.fillStyle = "white";
-      ctx.fillRect( 0,0,w,h );
-      ctx.globalCompositeOperation = "destination-in";
-      ctx.beginPath();
-      ctx.translate( x, y );
-      ctx.arc( 0, 0, h*0.9 / 2, 0, 6.284, false );
-      ctx.fill();
-      ctx.restore();
-      gl.bindTexture( gl.TEXTURE_2D, l.glTexture );
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, l.canvas );
-    }
-  
-    //now let's try drawing them to the preview layer
-    renderLayersAlphasIntoPointRect( lassoResources.lassoPreview, [ demoLayer1, demoLayer2, demoLayer3 ], lassoResources.lassoPreview, false );
-    //we have circles on the screen.
-    //and there are no hard-edges between them, by ignoring everything but alpha channel
-  
-    //what's next?
-    //those layer alphas on-screen are what we need technically, in the background
-    //we also, however, need a usable preview onscreen for artsy stuff
-    //put that on the todo.
-    //for now, let's switch to just 1 demo layer
-    
-  }
-  if( false ) {
-    const demoLayer1 = getNewLassoLayer( 1024, 1024 );
-    lassoResources.lassoStack.push( demoLayer1 );
-    //resizeLayerToScreen( demoLayer1 ); //leaving at 1024*1024
-    const { w,h } = demoLayer1;
-    const ctx = demoLayer1.context;
-    ctx.save();
-    ctx.fillStyle = "white";
-    ctx.fillRect( 0,0,w,h );
-    ctx.globalCompositeOperation = "destination-in";
-    ctx.beginPath();
-    ctx.translate( w/2, h/2 );
-    ctx.arc( 0, 0, h*0.9 / 2, 0, 6.284, false );
-    ctx.fill();
-    ctx.restore();
-    gl.bindTexture( gl.TEXTURE_2D, demoLayer1.glTexture );
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, demoLayer1.canvas );
-
-    renderLayersAlphasIntoPointRect( lassoResources.lassoPreview, [ demoLayer1 ], lassoResources.lassoPreview, false, [255,255,255] );
-  
-  }
   lassoResources.ready = true;
 
 }
@@ -13582,7 +13727,7 @@ function updateLassoPreview() {
 
   //render our preview with a fancy shader
   const floatTime = ( performance.now() % 50000 ) / 50000;
-  renderLassoPreviewIntoPointRect( lassoResources.lassoShaderPreview, [ lassoResources.lassoPreview ], floatTime, lassoResources.lassoShaderPreview, false );
+  renderLassoPreviewIntoPointRect( lassoResources.lassoShaderPreview, [ lassoResources.lassoPreview ], floatTime, lassoResources.lassoShaderPreview, false, lassoResources.invert );
   return lassoResources.lassoShaderPreview;
 }
 

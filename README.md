@@ -2,10 +2,10 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (Version: 2024.05.14-1-alpha)
+# ParrotLUX (Version: 2024.05.15-1-alpha)
 A Painting App for Open-Source AI
 
-This app is currently in Alpha version. Expect bugs and missing features. Tuturials and documentation will be added soon.
+This app is currently in the clean-up stages of Alpha version. Bugs are being fixed and minor missing features are being added. The beta version (publicly usable) will release soon. Tuturials and documentation will be added soon.
 
 <p align="center" width="100%">
     <img src="showcase-sketch.gif" width="30%"> <img src="showcase-pose.gif" width="30%"> <img src="showcase-paint.gif" width="30%"> 
@@ -19,6 +19,28 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 (*Pen pressure is unavailable on Windows.)
 
 (It may also work on MacOS and iOS. Untested.)
+
+# New Features in Version 2024.05.15-1-alpha
+
+## Lasso Features
+
+<p align="center" width="100%"><img width="100%" src="img/2024.05.15-alpha-1.jpg"></p>
+<p align="center" width="100%">Added more lasso minor features (all of these support multi-layer selections):
+    <ul>
+        <li>Invert Lasso - <i>While activated, the non-lassoed area becomes the lassoed area, and the lassoed area becomes the non-lassoed area.</i></li>
+        <li>Cut Out Lassoed Area - <i>Create new layer(s) containing the contents of lassoed area from selected layer(s). In the selected layer(s), the contents of the lassoed area are made transparent (clear).</i></li>
+        <li>Duplicate Lassoed Area - <i>Create new layer(s) containing copies of lassoed area from selected layer(s).</i></li>
+        <li>Delete Lassoed Area - <i>Delete contents of lassoed area inside selected layer(s).</i></li>
+    </ul>
+</p>
+
+## Bug Fixes
+
+<p align="center" width="100%">Fixed bugs:
+    <ul>
+        <li>Fixed bugged lasso state after re-opening project.</li>
+    </ul>
+</p>
 
 # New Features in Version 2024.05.14-1-alpha
 
