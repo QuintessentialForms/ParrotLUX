@@ -2,7 +2,7 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (Version: 2024.05.15-1-alpha)
+# ParrotLUX (Version: 2024.05.16-1-alpha)
 A Painting App for Open-Source AI
 
 This app is currently in the clean-up stages of Alpha version. Bugs are being fixed and minor missing features are being added. The beta version (publicly usable) will release soon. Tuturials and documentation will be added soon.
@@ -19,6 +19,31 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 (*Pen pressure is unavailable on Windows.)
 
 (It may also work on MacOS and iOS. Untested.)
+
+# New Features in Version 2024.05.16-1-alpha
+
+## Unsaved Data Warning
+
+<p align="center" width="100%">When closing or navigating away from the app, or when opening a new project, if there are any unsaved changes, the app will ask you to confirm before deleting those unsaved changes.</p>
+
+## Bug Fixes
+
+<p align="center" width="100%">Fixed bugs:
+    <ul>
+        <li>During transform, using the rotation and scale sliders after the pinch gesture would make the layer "jump". Now fixed.</li>
+        <li>During transform, the rotation and scale slider values would change slightly after being manually typed in (typed in "45", slider became "44"). Now fixed.</li>
+        <li>During transform, using the rotation slider to rotate a non-square layer would squash it (view height and view width would be swapped). Now fixed.</li>
+        <li>During transform, changing the X and Y transform sliders did not update the layer's position. Now fixed.</li>
+        <li>During transform, changing the layer selection did not update the slider's displayed values. Now fixed.</li>
+        <li>When transforming with multiple layers selected, crop-width and crop-height would still be displayed (cannot crop multiple layers). Now fixed.</li>
+        <li>Re-opening the same project twice would duplicate layers. Now fixed.</li>
+        <li>Pressing the "Escape" key would lock all layers in place and prevent painting. Now fixed.</li>
+        <li>"Escape" and "Enter" keys were not closing or applying on the asset browser window. Now fixed.</li>
+        <li>"Escape" and "Enter" keys were not closing the settings window. Now fixed.</li>
+        <li>Using "undo" after the first paint stroke of a layer mask would turn the layer invisible. Now fixed.</li>
+        <li>After an image mask had been created, it could not be un-created with "undo". Now fixed.</li>
+    </ul>
+</p>
 
 # New Features in Version 2024.05.15-1-alpha
 

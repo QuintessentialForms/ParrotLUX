@@ -616,6 +616,8 @@ function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibli
     maskCanvas: document.createElement( "canvas" ),
     maskContext: null,
     maskInitialized: false,
+    maskInitializedState: null,
+    maskUnpainted: true,
 
     dataCache: [],
 
@@ -1692,6 +1694,8 @@ function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibli
     }
     recordHistoryEntry( historyEntry );
 
+    uiSettings.unsavedChanges = true;
+
     if( ! doNotUpdate ) {
       reorganizeLayerButtons();
       UI.updateContext();
@@ -2752,6 +2756,7 @@ function flagLayerTextureChanged( layer, rect=null, updateFrame=true ) {
   if( updateFrame === true ) updateAndMakeLayerFrame( layer );
   flagLayerGroupChanged( layer );
   flagLayerFilterChanged( layer );
+  uiSettings.unsavedChanges = true;
 }
 function flagLayerMaskChanged( layer, rect=null ) {
   layer.maskChanged = true;
@@ -2768,6 +2773,7 @@ function flagLayerMaskChanged( layer, rect=null ) {
   }
   flagLayerGroupChanged( layer );
   flagLayerFilterChanged( layer );
+  uiSettings.unsavedChanges = true;
 }
 
 function collectGroupedLayersAsFlatList( groupLayerId ) {
@@ -3098,6 +3104,7 @@ function initializeLayerMask( layer, state ) {
     layer.maskContext.fillStyle = "rgb(255,255,255)";
     layer.maskContext.fillRect( 0,0,layer.w,layer.h );
   }
+  layer.maskInitializedState = state;
   layer.maskChanged = true;
   layer.maskChangedRect.x = 0;
   layer.maskChangedRect.y = 0;
@@ -3107,6 +3114,18 @@ function initializeLayerMask( layer, state ) {
   layer.layerButton.appendChild( layer.maskCanvas );
 
   layer.maskInitialized = true;
+  layer.maskUnpainted = true;
+}
+
+function uninitializeLayerMask( layer ) {
+  console.log( "Uninitialized mask." );
+  layer.layerButton.removeChild( layer.maskCanvas );
+
+  //opacify the mask
+  layer.maskContext.fillStyle = "rgb(255,255,255)";
+  layer.maskContext.fillRect( 0,0,layer.w,layer.h );
+  layer.maskInitialized = false;
+  layer.maskUnpainted = true;
 }
 
 function removeLayerFromSelection( layer ) {
@@ -4391,7 +4410,7 @@ async function setup() {
       setupGLAlphaRender(); //no errors on setup, good sign
       setupGLLassoPreview();
       setupPaintGPU2();
-      await setupLassoStack();
+      setupLassoStack();
   
     }
 
@@ -4401,6 +4420,11 @@ async function setup() {
     resizeCanvases();
 
     window.addEventListener( "resize", resizeCanvases );
+
+    window.addEventListener( "beforunload", () => {
+      if( uiSettings.unsavedChanges === true ) return "Close current project? Unsaved data will be lost.";
+      else return undefined;
+    } );
 
     //populate demopoints
     //for( let i=0; i<10; i++ ) { demoPoints.push( [ Math.random()*W , Math.random()*H , 1 ] ); }
@@ -4412,10 +4436,12 @@ async function setup() {
         demoPoints.push( [ x1, y1 , 1 ] , [ x2, y1 , 1 ] , [ x2, y2 , 1 ] , [ x1, y2 , 1 ] , [ x1, y1 , 1 ], null );
     }
 
-    window.onkeydown = k => { if( k.code === "Escape" ) {
-        looping = false; 
+    window.onkeydown = k => {
+      if( uiSettings.debugMode === true && k.code === "Escape" ) {
+        looping = false;
         console.log( "Stopped looping." );
-    } }
+      }
+    }
 
     gnv.addEventListener( "pointerdown" ,  p => startHandler( p ) );
     gnv.addEventListener( "pointermove" , p => moveHandler( p ) );
@@ -5076,6 +5102,8 @@ const nonSavedSettingsPaths = [
   "lockCanvasZoom",
   "lockTransformRotate",
   "lockTransformZoom",
+  "unsavedChanges",
+  "debugMode",
 ];
 
 //these settings persist across app close/open
@@ -5117,6 +5145,7 @@ let uiSettings = {
   lockCanvasZoom: false,
   lockTransformRotate: false,
   lockTransformZoom: false,
+  unsavedChanges: false,
 
   defaultAPIFlowName: null,
   generativeControls: {},
@@ -5133,6 +5162,7 @@ let uiSettings = {
   paintBusyTimeout: 1000,
   clickTimeMS: 350,
   retryAPIDelay: 2000,
+  debugMode: false,
 
   apiFlowVariables: [
     {
@@ -7420,8 +7450,25 @@ function setupUI() {
     //No, for readability, we need to see the on-screen handles.
     //That also means we need an onscreen gizmo for zoom/pan. But corner is no-go. Hmm.
 
+    let activeTransform = false;
+
+    function isActiveTransform() {
+      return uiSettings.isActiveTool( "transform" ) && (
+        layerTransform.pan.x !== 0 ||
+        layerTransform.pan.y !== 0 ||
+        layerTransform.zoom !== 1 ||
+        layerTransform.angle !== 0
+      );
+    }
+
     const updateView = ( updateCurrent = true ) => {
       if( uiSettings.activeTool !== "transform" || currentTransformInfos.length === 0 ) {
+        return;
+      }
+
+      if( activeTransform === true && isActiveTransform() === false ) {
+        activeTransform = false;
+        loadLayers( currentTransformInfos.map( info => info.layer ) );
         return;
       }
       //called by updateCycle() on layer transforming
@@ -7435,7 +7482,7 @@ function setupUI() {
       //get our aggregate info
       const aggregateInfo = getAggregateTransformInfo();
       //update our sliders
-      transformToolOptionsRow.querySelector(".rotation-slider").setValue( parseInt( (aggregateInfo.angle / (2*Math.PI)) * 360 ) );
+      transformToolOptionsRow.querySelector(".rotation-slider").setValue( parseInt( Math.round( (aggregateInfo.angle / (2*Math.PI)) * 360 ) ) );
       transformToolOptionsRow.querySelector(".scale-slider").setValue( aggregateInfo.scale );
       transformToolOptionsRow.querySelector(".x-slider").setValue( aggregateInfo.center.x );
       transformToolOptionsRow.querySelector(".y-slider").setValue( aggregateInfo.center.y );
@@ -7447,6 +7494,7 @@ function setupUI() {
     
     const loadLayers = layers => {
       currentTransformInfos.length = 0;
+      getLayerTransform();
       for( const layer of layers ) {
         currentTransformInfos.push( getInitialLayerTransformInfo( layer ) );
       }
@@ -7466,36 +7514,58 @@ function setupUI() {
       //  take it as a vector from the center
       //  rotate by rotation
       //  store the new point
-      const { center, angle } = getAggregateTransformInfo( true );
-      const { x, y } = center;
+      const fromInitial = true;
+      const { center, angle } = getAggregateTransformInfo( fromInitial );
+      const { x: centerX, y: centerY } = center;
       const angleChange = ( ( rotation / 360 ) * Math.PI * 2 ) - angle;
       for( const {layer,initial} of currentTransformInfos ) {
         for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
-          const destinationPoint = layer[ pointName ],
-            sourcePoint = initial[ pointName ];
-          const dx = sourcePoint[0] - x,
-            dy = sourcePoint[1] - y,
-            initialAngle = Math.atan2( -dy, dx ),
+          const layerPoint = layer[ pointName ],
+            initialPoint = initial[ pointName ];
+          const dx = initialPoint[0] - centerX,
+            dy = initialPoint[1] - centerY,
+            pointInitialAngle = Math.atan2( dy, dx ),
             l = Math.sqrt( dx**2 + dy**2 );
-          destinationPoint[ 0 ] = x + l * Math.cos( initialAngle + angleChange );
-          destinationPoint[ 1 ] = y + l * Math.sin( initialAngle + angleChange );
+          layerPoint[ 0 ] = centerX + l * Math.cos( pointInitialAngle + angleChange );
+          layerPoint[ 1 ] = centerY + l * Math.sin( pointInitialAngle + angleChange );
         }
       }
     }
-    const applyScaleToLayersFromInitial = scale => {
+    const applyScaleToLayersFromInitial = appliedScale => {
       //for every point in all our layers:
       //  take it as a vector from the center
       //  scale by scale
       //  store the new point
-      const { x, y } = getAggregateTransformInfo( true ).center;
+      const fromInitial = true;
+      const { center: { x: centerX, y: centerY }, scale: initialScale } = getAggregateTransformInfo( fromInitial );
+      const scale = appliedScale / initialScale;
       for( const {layer, initial} of currentTransformInfos ) {
         for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
-          const destinationPoint = layer[ pointName ],
-            sourcePoint = initial[ pointName ];
-          const dx = sourcePoint[0] - x,
-            dy = sourcePoint[1] - y;
-          destinationPoint[ 0 ] = x + dx * scale;
-          destinationPoint[ 1 ] = y + dy * scale;
+          const layerPoint = layer[ pointName ],
+            initialPoint = initial[ pointName ];
+          const dx = initialPoint[0] - centerX,
+            dy = initialPoint[1] - centerY;
+          layerPoint[ 0 ] = centerX + dx * scale;
+          layerPoint[ 1 ] = centerY + dy * scale;
+        }
+      }
+    }
+    const applyXYToLayersFromInitial = ( x = null, y = null ) => {
+      //for every point in all our layers:
+      //  take it as a vector from the center
+      //  scale by scale
+      //  store the new point
+      const fromInitial = true;
+      const { x: centerX, y: centerY } = getAggregateTransformInfo( fromInitial ).center;
+      if( x === null ) x = centerX;
+      if( y === null ) y = centerY;
+      const dx = x - centerX, dy = y - centerY;
+      for( const {layer, initial} of currentTransformInfos ) {
+        for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
+          const layerPoint = layer[ pointName ],
+            initialPoint = initial[ pointName ];
+          layerPoint[ 0 ] = initialPoint[0] + dx;
+          layerPoint[ 1 ] = initialPoint[1] + dy;
         }
       }
     }
@@ -7531,6 +7601,8 @@ function setupUI() {
         }
       }
       recordHistoryEntry( historyEntry );
+      //reload the layers
+      
     }
     const getAggregateTransformInfo = ( fromInitial = false ) => {
       let center = {x:0,y:0},
@@ -7540,14 +7612,17 @@ function setupUI() {
       if( currentTransformInfos.length > 1 ) {
         scale = layerTransform.zoom || 1;
         angle = ( layerTransform.angle + layerTransform.initialAngleOffset ) || 0;
+        //what about for initial? This doesn't make sense IMO
+        //Hmm. No, okay. It does. If we have multiple layers, absolute angle and scale don't make sense. So everything is relative to 1 / 100%.
       }
       const pointCountScale = 1 / (currentTransformInfos.length * 4);
       if( uiSettings.toolsSettings.transform.current ) getLayerTransform();
       for( const {layer,initial} of currentTransformInfos ) {
         //we want the live info from the layer, not our initial static info
         for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
-          const source = fromInitial ? initial : layer;
-          const [x,y] = ( uiSettings.toolsSettings.transform.current ) ? transformLayerPoint( source[pointName] ) : source[ pointName ];
+          let source = fromInitial ? initial : layer;
+          //const [x,y] = ( uiSettings.toolsSettings.transform.current ) ? transformLayerPoint( source[pointName] ) : source[ pointName ];
+          const [x,y] = ( fromInitial === false && uiSettings.toolsSettings.transform.current ) ? transformLayerPoint( source[pointName] ) : source[ pointName ];
           //we're overwriting the temporary variable "points".
           //We'll only use it in the case of 1 layer selected
           points[ pointName ] = {x,y};
@@ -7574,6 +7649,9 @@ function setupUI() {
       layerInfo.scale = scale;
       layerInfo.angle = angle;
       layerInfo.center = center;
+      if( isActiveTransform() === true ) {
+        activeTransform = true;
+      }
     }
     const getInitialLayerTransformInfo = layer => {
       const topLeft = [...layer.topLeft], bottomRight = [...layer.bottomRight],
@@ -7600,7 +7678,7 @@ function setupUI() {
           //3. On slider release/apply, record an undo event with pre-slide state and current state
           //4. On layer selection change, update the slider values (no undo/etc here)
 
-          if( uiSettings.activeTool === "transform" ) {
+          if( uiSettings.isActiveTool( "transform" ) ) {
 
             const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
 
@@ -7614,11 +7692,7 @@ function setupUI() {
             transformToolOptionsRow.classList.remove( "hidden" );
 
             //find out what layers are currently our transform targets
-            let selectedLayersTarget = [...uiSettings.toolsSettings.transform.transformingLayers];
-            if( selectedLayersTarget.length === 0 ) {
-              //means ready to transform, but not yet transforming batch of layers
-              selectedLayersTarget.push( ...selectedAndBatchedLayers );
-            }
+            let selectedLayersTarget = [ ...selectedAndBatchedLayers ];
 
             const toolNames = [".rotation-slider", ".scale-slider", ".x-slider", ".y-slider", ".width-slider", ".height-slider"];
 
@@ -7634,7 +7708,10 @@ function setupUI() {
             }
             if( selectedLayersTarget.length > 1 ) {
               //show just the rotation and scale tools
-              toolNames.forEach( tn => transformToolOptionsRow.querySelector( tn ).classList.remove( "hidden" ) );
+              toolNames.forEach( tn => {
+                if( tn === ".width-slider" || tn === ".height-slider" ) transformToolOptionsRow.querySelector( tn ).classList.add( "hidden" );
+                else transformToolOptionsRow.querySelector( tn ).classList.remove( "hidden" );
+              } );
               //hide the crop handles
             }
   
@@ -7654,7 +7731,7 @@ function setupUI() {
                 }
               }
             }
-            
+
             //load the updated selection (this will clear datacaches)
             if( foundChange === true )
               loadLayers( selectedLayersTarget );
@@ -7714,6 +7791,14 @@ function setupUI() {
         label: "X", slideMode: "contain-step",
         value: 0, min: -1000, max: 1000, step: 1,
         bindingsName: " Layer X Position",
+        onupdate: x => {
+          applyXYToLayersFromInitial( x, null );
+        },
+        onend: x => {
+          applyXYToLayersFromInitial( x, null );
+          recordTransformUndo();
+          loadLayers( currentTransformInfos.map( info => info.layer ) );
+        }
       });
       xSlider.classList.add( "x-slider" );
       transformToolOptionsRow.appendChild( xSlider );
@@ -7724,6 +7809,14 @@ function setupUI() {
         label: "Y", slideMode: "contain-step",
         value: 0, min: -1000, max: 1000, step: 1,
         bindingsName: " Layer Y Position",
+        onupdate: y => {
+          applyXYToLayersFromInitial( null, y );
+        },
+        onend: y => {
+          applyXYToLayersFromInitial( null, y );
+          recordTransformUndo();
+          loadLayers( currentTransformInfos.map( info => info.layer ) );
+        }
       });
       ySlider.classList.add( "y-slider" );
       transformToolOptionsRow.appendChild( ySlider );
@@ -8314,11 +8407,24 @@ function setupUI() {
       settingsControlPanelOverlay.classList.add( "overlay-background", "hidden", "real-input", "animated" );
       //settingsControlPanelOverlay.classList.add( "overlay-background", "real-input", "animated" );
       settingsControlPanelOverlay.id = "settings-controlpanel-overlay";
+
+      const settingsKeyTrap = e => {
+        if( e.code === "Escape" ) closeButton.onclick();
+        if( e.code === "Enter" ) closeButton.onclick();
+      }
+      function enableSettingsKeyTrapping() {
+        window.addEventListener( "keydown", settingsKeyTrap );
+      }
+      function disableSettingsKeyTrapping() {
+        window.removeEventListener( "keydown", settingsKeyTrap );
+      }
+
       settingsControlPanelOverlay.onapply = () => {};
       settingsControlPanelOverlay.show = () => {
         settingsControlPanelOverlay.classList.remove( "hidden" );
         controlPanel.focus();
         disableKeyTrapping();
+        enableSettingsKeyTrapping();
         const apiKeysPanel = controlPanel.querySelector(".apikeys-panel");
         apiKeysPanel.classList.add( "blur" );
         apiKeysPanel.onclick = apiKeysPanel.removeBlur;
@@ -8330,6 +8436,7 @@ function setupUI() {
       closeButton.onclick = () => {
         closeButton.classList.add( "pushed" );
         setTimeout( ()=>closeButton.classList.remove("pushed"), UI.animationMS );
+        disableSettingsKeyTrapping();
         enableKeyTrapping();
         settingsControlPanelOverlay.classList.add( "hidden" );
       }
@@ -9872,6 +9979,7 @@ function setupUI() {
       closeButton.classList.add( "overlay-close-button", "overlay-element", "animated" );
       closeButton.onclick = () => {
         enableKeyTrapping();
+        openAssetBrowser.disableKeyTrapping();
         assetBrowserContainer.classList.add( "hidden" );
       }
       assetBrowserContainer.appendChild( closeButton );
@@ -9950,6 +10058,17 @@ function setupUI() {
 }
 
 function openAssetBrowser( assets, callback, assetName=null, multiSelectBatch=null ) {
+
+  if( ! openAssetBrowser.keyTrap ) {
+    openAssetBrowser.keyTrap = e => {
+      console.log( "Keydown: ", e );
+      if( e.code === "Escape" ) assetBrowserContainer.querySelector( ".overlay-close-button" ).onclick();
+      if( e.code === "Enter" ) assetBrowserContainer.querySelector( ".overlay-apply-button" ).onclick();
+    }
+    openAssetBrowser.enableKeyTrapping = () => window.addEventListener( "keydown", openAssetBrowser.keyTrap );
+    openAssetBrowser.disableKeyTrapping = () => window.removeEventListener( "keydown", openAssetBrowser.keyTrap );
+  }
+  
 
   const assetBrowserContainer = document.querySelector( "#asset-browser-container" );
   //const assetBrowserPreview = document.querySelector( "#asset-browser-preview" );
@@ -10032,6 +10151,7 @@ function openAssetBrowser( assets, callback, assetName=null, multiSelectBatch=nu
 
   assetBrowserContainer.classList.remove( "hidden" );
   disableKeyTrapping();
+  openAssetBrowser.enableKeyTrapping();
 
 }
 
@@ -10580,10 +10700,12 @@ const keyBindings = {
   "ctrl+y": { state: false, action: () => redo() },
 };
 function enableKeyTrapping() {
+  console.log( "Reactivated key trapping." );
   window.addEventListener( "keydown" , keyDownHandler );
   window.addEventListener( "keyup" , keyUpHandler );
 }
 function disableKeyTrapping() {
+  console.log( "Disabled key trapping." );
   window.removeEventListener( "keydown" , keyDownHandler );
   window.removeEventListener( "keyup" , keyUpHandler );
 }
@@ -10893,6 +11015,8 @@ function saveJSON() {
   document.body.removeChild( a );
   URL.revokeObjectURL( b );
 
+  uiSettings.unsavedChanges = false;
+
 }
 
 function loadImage() {
@@ -10920,6 +11044,11 @@ function loadImage() {
 }
 
 function loadJSON() {
+
+  if( uiSettings.unsavedChanges === true && confirm( "Close current project? Unsaved data will be lost." ) === false ) {
+    return false;
+  }
+
   console.error( "Need to lock UI for async file load." );
   looping = false;
 
@@ -10948,7 +11077,8 @@ function loadJSON() {
       
         //if we opened over an existing file, we have to clear everything up
         //clear layers
-        for( const layer of layersStack.layers ) {
+        const layersToDelete = [ ...layersStack.layers ];
+        for( const layer of layersToDelete ) {
           if( layer.layerType === "_temp" ) continue;
           deleteLayer( layer );
         }
@@ -10976,6 +11106,10 @@ function loadJSON() {
               initializeLayerMask( newLayer, "transparent" );
               newLayer.maskContext.drawImage( mask, 0, 0 );
               newLayer.maskChanged = true;
+              //technically not necessary, set in initializeLayerMask:
+              newLayer.maskInitialized = true;
+              //necessary override unpainted on normal init:
+              newLayer.maskUnpainted = false;
             }
             mask.src = layer.saveMaskDataURL;
           }
@@ -11064,6 +11198,8 @@ function loadJSON() {
         reorganizeLayerButtons();
 
         UI.updateContext();
+
+        uiSettings.unsavedChanges = false;
 
         looping = true;
 
@@ -13066,11 +13202,11 @@ function paintGPU2( points ) {
 
   //get our brush color
   let currentRGBFloat = [0,0,0];
-  if( uiSettings.activeTool === "mask" ) {
+  if( uiSettings.isActiveTool( "mask" ) ) {
     //currentColorStyle = uiSettings.toolsSettings.mask.maskColor;
     currentRGBFloat = [ ...uiSettings.toolsSettings.mask.maskRGBFloat ];
   }
-  if( uiSettings.activeTool === "paint" ) {
+  if( uiSettings.isActiveTool( "paint" ) ) {
     //currentColorFloat = [ ...colorRGB, 1.0 ];
     currentRGBFloat = [ ...colorRGB ]; //multiply brushOpacity by relevant opacity curves later
   }
@@ -13263,8 +13399,8 @@ function paintGPU2( points ) {
     //bind our layer as the color attachment for the framebuffer
     {
       let sourceTexture;
-      if( uiSettings.activeTool === "paint" ) sourceTexture = layer.glTexture;
-      if( uiSettings.activeTool === "mask" ) sourceTexture = layer.glMask;
+      if( uiSettings.isActiveTool( "paint" ) ) sourceTexture = layer.glTexture;
+      if( uiSettings.isActiveTool( "mask" ) ) sourceTexture = layer.glMask;
       gl.bindTexture( gl.TEXTURE_2D, sourceTexture );
       gl.bindFramebuffer(gl.FRAMEBUFFER, paintGPUResources2.framebuffer);
       
@@ -13419,14 +13555,18 @@ function finalizePaintGPU2() {
   //store those pixels in the undo buffer
   //put those pixels in a dataimage and blit onto the layer's preview canvas
 
-  let affectedTexture, affectedContext;
-  if( uiSettings.activeTool === "paint" ) {
+  let affectedTexture, affectedContext, uninitializeMask = false;
+  if( uiSettings.isActiveTool( "paint" ) ) {
     affectedTexture = layer.glTexture;
     affectedContext = layer.context;
   }
-  if( uiSettings.activeTool === "mask" ) {
+  if( uiSettings.isActiveTool( "mask" ) ) {
     affectedTexture = layer.glMask;
     affectedContext = layer.maskContext;
+    if( layer.maskUnpainted === true ) {
+      uninitializeMask = true;
+      layer.maskUnpainted = false;
+    }
   }
 
   //bind our framebuffer
@@ -13475,7 +13615,7 @@ function finalizePaintGPU2() {
   //put the new imagedata onto the texture (since it's still just on the GPU)
 
   //call flag texture changed because this triggers upstream changes
-  if( uiSettings.activeTool === "mask" ) {
+  if( uiSettings.isActiveTool( "mask" ) ) {
     flagLayerMaskChanged( layer, modRect );
     layer.maskChanged = false; //but don't reupload to gpu; no need
   }
@@ -13489,16 +13629,24 @@ function finalizePaintGPU2() {
   const historyEntry = {
     targetLayer: layer,
     affectedContext,
-    isMask: uiSettings.activeTool === "mask",
+    isMask: uiSettings.isActiveTool( "mask" ),
+    uninitializeMask,
+    maskInitializedState: layer.maskInitializedState,
     oldData,
     newData,
     at: { x:modRect.x, y:modRect.y },
     undo: () => {
       historyEntry.affectedContext.putImageData( historyEntry.oldData, historyEntry.at.x, historyEntry.at.y );
-      if( historyEntry.isMask === true ) flagLayerMaskChanged( historyEntry.targetLayer );
+      if( historyEntry.isMask === true ) {
+        if( historyEntry.uninitializeMask ) uninitializeLayerMask( historyEntry.targetLayer );
+        flagLayerMaskChanged( historyEntry.targetLayer );
+      }
       if( historyEntry.isMask === false ) flagLayerTextureChanged( historyEntry.targetLayer );
     },
     redo: () => {
+      if( historyEntry.isMask === true && historyEntry.uninitializeMask ) {
+        initializeLayerMask( historyEntry.targetLayer, historyEntry.maskInitializedState );
+      }
       historyEntry.affectedContext.putImageData( historyEntry.newData, historyEntry.at.x, historyEntry.at.y );
       if( historyEntry.isMask === true ) flagLayerMaskChanged( historyEntry.targetLayer );
       if( historyEntry.isMask === false ) flagLayerTextureChanged( historyEntry.targetLayer );
@@ -13506,6 +13654,8 @@ function finalizePaintGPU2() {
   }
 
   recordHistoryEntry( historyEntry );
+
+  uiSettings.unsavedChanges = true;
 
 }
 
@@ -13916,6 +14066,8 @@ function finalizeLayerTransform() {
   layerTransform.initialAngleOffset = 0;
   layerTransform.initialZoomLength = 0;
 
+  getLayerTransform(); //reset matrices pipeline
+
   if( selectedLayer?.layerType === "group" )
     updateLayerGroupCoordinates( selectedLayer );
   
@@ -13945,6 +14097,10 @@ function finalizeLayerTransform() {
     },
   };
   recordHistoryEntry( historyEntry );
+  
+  UI.updateView();
+
+  uiSettings.unsavedChanges = true;
 
 }
 
