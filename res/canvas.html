@@ -1095,6 +1095,25 @@ body {
     background-color: red;
 }
 
+#transform-handles-container {
+    position: absolute;
+    left: 0; top:0;
+    width: 100vw;
+    height: 100vh;
+}
+#transform-handles-container > .transform-handle {
+    position: absolute;
+    width: 1rem; height: 1rem;
+    border-radius: 0.5rem;
+    border:1px solid white;
+    box-shadow: 0 0 1rem 1px var(--very-dark);
+    box-sizing: border-box;
+
+    /* Properties set from JS */
+    left: 0; top:0;
+    background-color: var(--high-mid);
+}
+
 #flood-fill-tools-options-row.hidden {
     opacity: 0;
     transform: scale(0.9,0.9);
@@ -1134,11 +1153,57 @@ body {
     gap:var(--button-gap);
     z-index: 5000;
 }
+.lasso-options-lasso-change-shape.free-shape { background-image: url('icon/lasso-shape-free.png'); }
+.lasso-options-lasso-change-shape.ellipse-shape { background-image: url('icon/lasso-shape-ellipse.png'); }
+.lasso-options-lasso-change-shape.rect-shape { background-image: url('icon/lasso-shape-rect.png'); }
+.lasso-options-lasso-change-shape.eyedropper-shape { background-image: url('icon/lasso-shape-eyedropper.png'); }
 .lasso-options-cancel-lasso { background-image: url('icon/cancel-lasso.png'); }
 .lasso-options-invert-lasso { background-image: url('icon/invert-lasso.png'); }
 .lasso-options-cut-lassoed-area { background-image: url('icon/cut-lassoed-area.png'); }
 .lasso-options-duplicate-lassoed-area { background-image: url('icon/duplicate-lassoed-area.png'); }
 .lasso-options-delete-lassoed-area { background-image: url('icon/delete-lassoed-area.png'); }
+
+#lasso-shape-panel {
+    --lasso-shape-panel-width: 17rem;
+    position: absolute;
+    right: calc( ( var(--lasso-shape-panel-width) / -2.0 ) + 0.707rem );
+    top: calc( 100% + 1rem );
+    width: var(--lasso-shape-panel-width);
+    height:10rem;
+    background-color: var(--dark);
+    overflow: visible;
+    border-radius: 1rem;
+    border-top-right-radius: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
+    padding: 0.5rem;
+    box-sizing: border-box;
+    gap:0.5rem;
+    z-index: 22000;
+    box-shadow: 0 0 1rem 1px black;
+}
+#lasso-shape-panel > .summon-marker {
+    position: absolute;
+    right:calc( 50% - 0.5rem ); top:0;
+    width:1rem; height:1rem;
+    transform-origin: top right;
+    transform: rotate( 45deg );
+    background-color:  var(--dark);
+}
+#lasso-shape-panel.hidden {
+    opacity: 0;
+    transform: scale(0.9,0.9) translate( 5%, -10% );
+}
+#lasso-shape-panel > .spacer {
+    flex-grow: 0;
+    flex-shrink: 0;
+    width:100%;
+    height:2px;
+    background-color: var(--low-mid);
+}
+
 
 #pose-tools-options-row.hidden {
     opacity: 0;
@@ -1537,7 +1602,7 @@ body {
 }
 #ai-tools-panel > .summon-marker {
     position: absolute;
-    left:-1rem; top:50%;
+    left:-0.707rem; top:50%;
     width:1rem; height:1rem;
     transform-origin: top left;
     transform: rotate( -45deg );
@@ -1769,10 +1834,94 @@ body {
     color: var(--white);
     font-size: 10px;
 }
+
+.layer-blend-mode .layer-blend-mode-text {
+    display: block;
+    position: relative;
+    width:100%;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0;
+    white-space: nowrap;
+}
+.layer-blend-mode.hovering { border:1px solid var(--white);}
+.layer-blend-mode.hidden {
+    opacity: 0;
+    transform: scale(0.9,0.9);
+}
+.layer-blend-mode {
+    background-color: var(--low); 
+    text-shadow:
+        0 0 0.125rem black,
+        0 0 0.25rem black,
+        0 0 0.5rem black;
+    border-radius: 0.5rem;
+    border:1px solid transparent;
+    height:var(--layer-button-size);
+    flex-grow: 1;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    color: var(--white);
+    font-size: 10px;
+    flex-grow: 1;
+    flex-basis: 1rem;
+}
 .layer-button > canvas {
     max-height: 3.5rem;
     max-width: 3.5rem;
     box-shadow: 0 0 1rem 0 black;
+}
+
+.blend-mode-panel {
+    position: absolute;
+    right: calc( 100% + 3rem );
+    --blend-mode-panel-height:9.3rem;
+    width: 12rem;
+    height:var(--blend-mode-panel-height);
+    background-color: var(--dark);
+    overflow: visible;
+    border-radius: 1rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
+    padding: 0.5rem;
+    box-sizing: border-box;
+    gap:var(--button-gap);
+    z-index: 22000;
+    box-shadow: 0 0 1rem 1px black;
+}
+.blend-mode-panel.center { top: calc( 50% - ( var(--blend-mode-panel-height) / 2.0 ) ); }
+.blend-mode-panel.center > .summon-marker { top:50%; }
+.blend-mode-panel.above { bottom: calc( 100% - 1.5rem ); }
+.blend-mode-panel.above > .summon-marker { bottom:0.0625rem; }
+.blend-mode-panel.below { top: calc( 100% - 1.5rem ); }
+.blend-mode-panel.below > .summon-marker { top:1.0625rem; }
+.blend-mode-panel > .summon-marker {
+    position: absolute;
+    right:-0.5rem;
+    width:1rem; height:1rem;
+    transform-origin: top right;
+    transform: rotate( 45deg );
+    background-color:  var(--dark);
+}
+.blend-mode-panel.hidden {
+    opacity: 0;
+    transform: scale(0.9,0.9) translate( 5%, 0 );
+}
+.blend-mode-panel > .spacer {
+    flex-grow: 0;
+    flex-shrink: 0;
+    width:100%;
+    height:2px;
+    background-color: var(--low-mid);
 }
 
 .layer-button .layer-type-icon {

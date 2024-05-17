@@ -577,6 +577,8 @@ function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibli
     setOpacity: null,
     alphaLocked: false,
     setAlphaLocked: null,
+    blendMode: glState.layerBlendModes[ 0 ],
+    setBlendMode: null,
 
     generativeSettings: { apiFlowName },
     generativeControls: {},
@@ -1156,6 +1158,101 @@ function addCanvasLayer( layerType, layerWidth=null, layerHeight=null, nextSibli
         { tooltip: [ "Reorganize Layer", "to-left", "vertical-center" ], zIndex:1000 },
       )
       footerRow.appendChild( moveHandle );
+    }
+
+    //the layer blend mode
+    {
+      const layerBlendModeButton = document.createElement( "div" );
+      layerBlendModeButton.classList.add( "layer-blend-mode", "animated"  );
+      const layerBlendModeText = layerBlendModeButton.appendChild( document.createElement( "span" ) );
+      layerBlendModeText.classList.add( "layer-blend-mode-text" );
+      layerBlendModeText.textContent = newLayer.blendMode;
+      let showingBlendModePanel = false;
+      UI.registerElement(
+        layerBlendModeButton,
+        {
+          onclick: () => {
+            showingBlendModePanel = ! showingBlendModePanel;
+            UI.updateContext();
+          },
+          updateContext: () => {
+            layerBlendModeText.textContent = newLayer.blendMode;
+            layerBlendModeButton.querySelector( ".tooltip" ).textContent = `Set Layer Blend Mode [${newLayer.blendMode}]`;
+            if( layerButton.classList.contains( "active" ) ) layerBlendModeButton.classList.remove( "hidden" );
+            else layerBlendModeButton.classList.add( "hidden" );
+          }
+        },
+        { tooltip: [ `Set Layer Blend Mode [${newLayer.blendMode}]`, "above", "to-left-of-center" ], zIndex:1000 },
+      )
+      footerRow.appendChild( layerBlendModeButton );
+
+      //the blend mode hovering panel
+      {
+        const blendModePanel = document.createElement( "div" );
+        blendModePanel.classList.add( "blend-mode-panel", "center", "animated" );
+        layerBlendModeButton.appendChild( blendModePanel );
+
+        //add the stylized summon marker arrow to the top-right
+        const summonMarker = document.createElement( "div" );
+        summonMarker.classList.add( "summon-marker" );
+        blendModePanel.appendChild( summonMarker );
+
+        UI.registerElement( blendModePanel, {
+          onclickout: () => {
+            showingBlendModePanel = false;
+            UI.updateContext();
+          },
+          updateContext: () => {
+            if( showingBlendModePanel === true ) {
+              blendModePanel.classList.remove( "hidden" );
+              //can't set height from here? Hmm. I mean, I could if I could edit CSS rules... Let's call it todo
+              const y = layerBlendModeButton.getClientRects()[ 0 ].y / window.innerHeight;
+              if( y < 0.4 ) {
+                layerBlendModeButton.querySelector( ".blend-mode-panel" ).classList.remove( "above", "center" );
+                layerBlendModeButton.querySelector( ".blend-mode-panel" ).classList.add( "below" );
+              }
+              else if( y > 0.6 ) {
+                layerBlendModeButton.querySelector( ".blend-mode-panel" ).classList.remove( "below", "center" );
+                layerBlendModeButton.querySelector( ".blend-mode-panel" ).classList.add( "above" );
+              }
+              else {
+                layerBlendModeButton.querySelector( ".blend-mode-panel" ).classList.remove( "below", "above" );
+                layerBlendModeButton.querySelector( ".blend-mode-panel" ).classList.add( "center" );
+              }
+            }
+            else blendModePanel.classList.add( "hidden" );
+          },
+        }, { zIndex: 10000 } );
+
+        for( const blendModeName of glState.layerBlendModes ) {
+
+          //the blend mode button
+          {
+            const blendModeButton = blendModePanel.appendChild( document.createElement( "div" ) );
+            blendModeButton.classList.add( "rounded-line-button", "animated" );
+            blendModeButton.appendChild( document.createElement("span") ).textContent = blendModeName;
+            UI.registerElement( blendModeButton, {
+              onclick: () => {
+                blendModeButton.classList.add( "pushed" );
+                setTimeout( () => blendModeButton.classList.remove( "pushed" ), UI.animationMS );
+                newLayer.blendMode = blendModeName;
+                showingBlendModePanel = false;
+                UI.updateContext();
+              }
+            }, { 
+              tooltip: [ `Set Layer Blend Mode to "${blendModeName}"`, "to-left", "vertical-center" ],
+              zIndex: 11000
+            } );
+          }
+
+          //add a spacer if more blend modes to follow
+          if( blendModeName !== glState.layerBlendModes.at(-1) )
+            blendModePanel.appendChild( document.createElement( "div" ) ).className = "spacer";    
+
+        }
+
+      }
+
     }
 
     //add the opacity slider
@@ -3581,6 +3678,9 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
       maskVisibility = 0.5;
     gl.uniform1f( glState.alphaMaskIndex, maskVisibility );
     gl.uniform1f( glState.timeIndex, floatTime );
+    const blendMode = glState.layerBlendModes.indexOf( layer.blendMode || "normal" );
+    //console.log( "Setting blend mode ", blendMode, " for layer id ", layer.layerId );
+    gl.uniform1i( glState.blendModeIndex, blendMode );
 
     let borderIsVisible = layer === selectedLayer;
 
@@ -3692,6 +3792,7 @@ function renderLayersIntoPointRect( pointRect, visibleLayers, layersWithVisibleB
     gl.uniform1f( glState.timeIndex, 0.0 );
     gl.uniform1f( glState.borderVisibilityIndex, 0.0 );
     gl.uniform1f( glState.borderWidthIndex, 2.0 / targetWidth ); //2 pixel border width (avoid div by zero can change IDK)
+    gl.uniform1i( glState.blendModeIndex, glState.layerBlendModes.indexOf( "normal" ) ); //set normal blend mode
 
     {
       //and draw our screen-triangle
@@ -4479,6 +4580,17 @@ const glState = {
   vao: null,
   paperTexture: null,
   xyuvInputIndex: null,
+
+  alphaInputIndex: null,
+  alphaMaskIndex: null,
+  timeIndex: null,
+  borderVisibilityIndex: null,
+  borderWidthIndex: null,
+  blendModeIndex: null,
+
+  //these indices are an enum DO NOT REORGANIZE unless updating shader code
+  layerBlendModes: [ "normal", "multiply", "add", "light & shadow" ],
+
 };
 function setupGL( testImageTexture ) {
 
@@ -4513,7 +4625,146 @@ function setupGL( testImageTexture ) {
       uv = xyuv.zw;
       gl_Position = vec4(xyuv.xy,0.5,1);
     }`;
-  const fragmentShaderSource = `#version 300 es
+    const fragmentShaderSource = `#version 300 es
+      precision highp float;
+      
+      uniform sampler2D img;
+      uniform sampler2D imgMask;
+      uniform sampler2D canvas;
+  
+      uniform float alpha;
+      uniform float mask;
+      uniform float time;
+      uniform float borderVisibility;
+      uniform float borderWidth;
+      uniform int blendMode; //0 - normal, 1 - multiply
+      in vec2 xy;
+      in vec2 uv;
+      out vec4 outColor;
+      
+      vec3 hsl2rgb( vec3 c ) {
+          vec3 rgb = clamp( abs(mod(c.x*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0, 0.0, 1.0 );
+          return c.z + c.y * (rgb-0.5)*(1.0-abs(2.0*c.z-1.0));
+      }
+      vec3 rgb2hsl( vec3 c ){
+        float h = 0.0;
+        float s = 0.0;
+        float l = 0.0;
+        float r = c.r;
+        float g = c.g;
+        float b = c.b;
+        float cMin = min( r, min( g, b ) );
+        float cMax = max( r, max( g, b ) );
+      
+        l = ( cMax + cMin ) / 2.0;
+        if ( cMax > cMin ) {
+          float cDelta = cMax - cMin;
+              
+              //s = l < .05 ? cDelta / ( cMax + cMin ) : cDelta / ( 2.0 - ( cMax + cMin ) ); Original
+          s = l < .0 ? cDelta / ( cMax + cMin ) : cDelta / ( 2.0 - ( cMax + cMin ) );
+              
+          if ( r == cMax ) {
+            h = ( g - b ) / cDelta;
+          } else if ( g == cMax ) {
+            h = 2.0 + ( b - r ) / cDelta;
+          } else {
+            h = 4.0 + ( r - g ) / cDelta;
+          }
+      
+          if ( h < 0.0) {
+            h += 6.0;
+          }
+          h = h / 6.0;
+        }
+        return vec3( h, s, l );
+      }
+  
+      void main() {
+  
+        vec4 canvasLookup = texture( canvas, ( xy + 1.0 ) * 0.5 );
+  
+        vec4 lookup = texture( img, uv );
+        vec4 maskLookup = texture( imgMask, uv );
+        lookup.a *= alpha * maskLookup.a;
+  
+        float borderShade = abs( mod( ( ( time - ( uv.x + uv.y ) ) * 0.1 / borderWidth ), 2.0 ) - 1.0 );
+  
+        float onBorder = float( uv.x < borderWidth || uv.x > (1.0-borderWidth) || uv.y < borderWidth || uv.y > (1.0-borderWidth) );
+  
+        vec4 mainColor = mix( lookup, vec4( vec3(borderShade), 1.0 ), onBorder * borderVisibility );
+        vec4 maskColor = vec4( mix( vec3( 1.0 ), vec3( borderShade ), 0.5 ), mask * maskLookup.a );
+  
+        //draw the mask under our mainColor, and with the mask 50% opacity, still see the layer beneath
+        vec4 compositeColor = vec4(
+          mix(
+            mix(
+              maskColor.rgb,
+              mainColor.rgb,
+              ( 1.0 - maskColor.a )
+            ),
+            mainColor.rgb,
+            mainColor.a
+          ),
+          clamp( mainColor.a + maskColor.a, 0.0, 1.0 )
+        );
+  
+        /* vec3 adjustedColor = rgb2hsl( compositeColor.rgb );
+        //hsl
+        //have to think through how to scale these toward 100% though
+        //adjustedColor.x = clamp( mod( adjustedColor.x + time, 1.0 ), 0.0, 1.0 );
+        //adjustedColor.y = clamp( mod( adjustedColor.y + time * 10.0, 1.0 ), 0.0, 1.0 );
+        //adjustedColor.z = clamp( mod( adjustedColor.z + time * 10.0, 1.0 ), 0.0, 1.0 );
+        adjustedColor = hsl2rgb( adjustedColor );
+        contrastFactor = 1.0; //Just increase for more contrast. Probably a better way though.
+        adjustedColor.r = clamp( contrastFactor * ( adjustedColor.r - 0.5 ) + 0.5, 0.0, 1.0 );
+        adjustedColor.g = clamp( contrastFactor * ( adjustedColor.g - 0.5 ) + 0.5, 0.0, 1.0 );
+        adjustedColor.b = clamp( contrastFactor * ( adjustedColor.b - 0.5 ) + 0.5, 0.0, 1.0 );
+  
+        compositeColor = vec4( adjustedColor, compositeColor.a ); */
+  
+        if( compositeColor.a == 0.0 && canvasLookup.a == 0.0 ) discard;
+  
+        //float totalAlpha = clamp( compositeColor.a + canvasLookup.a, 0.0, 1.0 );
+        float totalAlpha = clamp( compositeColor.a + canvasLookup.a, 0.0, 1.0 );
+        float compositeWeight = compositeColor.a / totalAlpha;
+        float canvasWeight = ( totalAlpha - compositeColor.a ) / totalAlpha;
+
+        if( blendMode == 1 ) {
+          compositeColor.r *= canvasLookup.r;
+          compositeColor.g *= canvasLookup.g;
+          compositeColor.b *= canvasLookup.b;
+        }
+        if( blendMode == 2 ) {
+          compositeColor.r = clamp( compositeColor.r + canvasLookup.r, 0.0, 1.0 );
+          compositeColor.g = clamp( compositeColor.g + canvasLookup.g, 0.0, 1.0 );
+          compositeColor.b = clamp( compositeColor.b + canvasLookup.b, 0.0, 1.0 );
+        }
+        if( blendMode == 3 ) {
+          compositeColor.r = clamp( compositeColor.r*2.0 * canvasLookup.r, 0.0, 1.0 );
+          compositeColor.g = clamp( compositeColor.g*2.0 * canvasLookup.g, 0.0, 1.0 );
+          compositeColor.b = clamp( compositeColor.b*2.0 * canvasLookup.b, 0.0, 1.0 );
+        }
+  
+        outColor = vec4(
+          sqrt( ( compositeWeight * pow( compositeColor.r, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.r, 2.0 ) ) ),
+          sqrt( ( compositeWeight * pow( compositeColor.g, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.g, 2.0 ) ) ),
+          sqrt( ( compositeWeight * pow( compositeColor.b, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.b, 2.0 ) ) ),
+          totalAlpha
+        );
+  
+        //totalAlpha = clamp( mainColor.a + canvasLookup.a, 0.0, 1.0 );
+        /* compositeWeight = 0.0;
+        canvasWeight = 1.0 - mainColor.a;
+        outColor = vec4(
+          sqrt( ( compositeWeight * pow( mainColor.r, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.r, 2.0 ) ) ),
+          sqrt( ( compositeWeight * pow( mainColor.g, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.g, 2.0 ) ) ),
+          sqrt( ( compositeWeight * pow( mainColor.b, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.b, 2.0 ) ) ),
+          1.0
+        ); */
+  
+      }`;
+  
+  const old_fragmentShaderSource = `#version 300 es
     precision highp float;
     
     uniform sampler2D img;
@@ -4635,65 +4886,6 @@ function setupGL( testImageTexture ) {
 
     }`;
 
-    const old_fragmentShaderSource = `#version 300 es
-    precision highp float;
-    
-    uniform sampler2D img;
-    uniform sampler2D imgMask;
-    uniform sampler2D canvas;
-
-    uniform float alpha;
-    uniform float mask;
-    uniform float time;
-    uniform float borderVisibility;
-    uniform float borderWidth;
-    in vec2 xy;
-    in vec2 uv;
-    out vec4 outColor;
-    
-    void main() {
-
-      vec4 canvasLookup = texture( canvas, ( xy + 1.0 ) * 0.5 );
-
-      vec4 lookup = texture( img, uv );
-      vec4 maskLookup = texture( imgMask, uv );
-      lookup.a *= alpha * maskLookup.a;
-
-      float borderShade = abs( mod( ( ( time - ( uv.x + uv.y ) ) * 0.1 / borderWidth ), 2.0 ) - 1.0 );
-
-      float onBorder = float( uv.x < borderWidth || uv.x > (1.0-borderWidth) || uv.y < borderWidth || uv.y > (1.0-borderWidth) );
-
-      vec4 mainColor = mix( lookup, vec4( vec3(borderShade), 1.0 ), onBorder * borderVisibility );
-      vec4 maskColor = vec4( mix( vec3( 1.0 ), vec3( borderShade ), 0.5 ), mask * maskLookup.a );
-
-      //draw the mask under our mainColor, and with the mask 50% opacity, still see the layer beneath
-      vec4 compositeColor = vec4( mix( mix( maskColor.rgb, mainColor.rgb, ( 1.0 - maskColor.a ) ), mainColor.rgb, mainColor.a ), clamp( mainColor.a + maskColor.a, 0.0, 1.0 ) );
-
-      if( compositeColor.a == 0.0 ) discard;
-
-      //float totalAlpha = clamp( compositeColor.a + canvasLookup.a, 0.0, 1.0 );
-      float compositeWeight = compositeColor.a;
-      float canvasWeight = 1.0 - compositeColor.a;
-
-      outColor = vec4(
-        sqrt( ( compositeWeight * pow( compositeColor.r, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.r, 2.0 ) ) ),
-        sqrt( ( compositeWeight * pow( compositeColor.g, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.g, 2.0 ) ) ),
-        sqrt( ( compositeWeight * pow( compositeColor.b, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.b, 2.0 ) ) ),
-        1.0
-      );
-
-      //totalAlpha = clamp( mainColor.a + canvasLookup.a, 0.0, 1.0 );
-      /* compositeWeight = 0.0;
-      canvasWeight = 1.0 - mainColor.a;
-      outColor = vec4(
-        sqrt( ( compositeWeight * pow( mainColor.r, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.r, 2.0 ) ) ),
-        sqrt( ( compositeWeight * pow( mainColor.g, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.g, 2.0 ) ) ),
-        sqrt( ( compositeWeight * pow( mainColor.b, 2.0 ) ) + ( canvasWeight * pow( canvasLookup.b, 2.0 ) ) ),
-        1.0
-      ); */
-
-    }`;
-
     const vertexShader = gl.createShader(gl.VERTEX_SHADER);
     gl.shaderSource(vertexShader,vertexShaderSource);
     gl.compileShader(vertexShader);
@@ -4731,6 +4923,7 @@ function setupGL( testImageTexture ) {
     glState.timeIndex = gl.getUniformLocation( program, "time" );
     glState.borderVisibilityIndex = gl.getUniformLocation( program, "borderVisibility" );
     glState.borderWidthIndex = gl.getUniformLocation( program, "borderWidth" );
+    glState.blendModeIndex = gl.getUniformLocation( program, "blendMode" );
 
     //set up a data-descriptor
     const vao = gl.createVertexArray();
@@ -5341,6 +5534,9 @@ let uiSettings = {
     "transform": {
       current: true,
       transformingLayers: [],
+    },
+    "lasso": {
+      shape: "free",
     },
     "flood-fill": {
       opacity: 1, //unimplemented
@@ -6325,11 +6521,10 @@ function setupUI() {
       //the lasso-canvas controls button
       {
         //we're keeping this under the canvas tools. those are the only ones that need it; because we'll have a unique transform? hmm.
-        console.error( "enable lasso tool controls here (and rename from select to lasso)" );
         const lassoCanvasControlsButton = document.createElement( "div" );
         //lassoCanvasControlsButton.classList.add( "round-toggle", "on", "unimplemented", "unavailable" );
         lassoCanvasControlsButton.classList.add( "round-toggle", "on", "unavailable" );
-        lassoCanvasControlsButton.style.backgroundImage = "url('icon/select-free.png')";
+        lassoCanvasControlsButton.style.backgroundImage = "url('icon/lasso-shape-free.png')";
         const activateLassoCanvasControls = () => {
           const selectedAndBatchedLayers = getSelectedOrBatchedLayers();
           let nonPaintLayer = (selectedAndBatchedLayers.length === 0) || selectedAndBatchedLayers.some( l => l.layerType !== "paint" );
@@ -7219,6 +7414,141 @@ function setupUI() {
           }
         );
   
+        //the shape select button
+        {
+          const lassoChangeShapeButton = document.createElement( "div" );
+          lassoChangeShapeButton.classList.add( "lasso-options-lasso-change-shape", "free-shape", "round-toggle", "on" );
+          lassoChangeShapeButton.id = "lasso-change-shape-button";
+          let showingLassoShapesPanel = false;
+          UI.registerElement(
+            lassoChangeShapeButton,
+            {
+              onclick: () => {
+                if( showingLassoShapesPanel === true ) {
+                  UI.deleteContext( "lasso-change-shape-panel-visible" );
+                } else {
+                  UI.addContext( "lasso-change-shape-panel-visible" );
+                }
+                lassoChangeShapeButton.classList.add( "pushed" );
+                setTimeout( () => lassoChangeShapeButton.classList.remove( "pushed" ), UI.animationMS );
+              },
+              updateContext: () => {
+                if( uiSettings.toolsSettings.lasso.shape === "free" ) {
+                  lassoChangeShapeButton.classList.remove( "free-shape", "ellipse-shape", "rect-shape", "eyedropper-shape" );
+                  lassoChangeShapeButton.classList.add( "free-shape" );
+                }
+                else if( uiSettings.toolsSettings.lasso.shape === "ellipse" ) {
+                  lassoChangeShapeButton.classList.remove( "free-shape", "rect-shape", "eyedropper-shape" );
+                  lassoChangeShapeButton.classList.add( "ellipse-shape" );
+                }
+                else if( uiSettings.toolsSettings.lasso.shape === "rect" ) {
+                  lassoChangeShapeButton.classList.remove( "free-shape", "ellipse-shape", "eyedropper-shape" );
+                  lassoChangeShapeButton.classList.add( "rect-shape" );
+                }
+                else if( uiSettings.toolsSettings.lasso.shape === "eyedropper" ) {
+                  lassoChangeShapeButton.classList.remove( "free-shape", "ellipse-shape", "rect-shape" );
+                  lassoChangeShapeButton.classList.add( "eyedropper-shape" );
+                }
+              }
+            },
+            {
+              tooltip: [ "Change Lasso Shape: Free", "below", "to-right-of-center" ], zIndex:10000,
+            }
+          );
+          lassoOptionsRow.appendChild( lassoChangeShapeButton );
+
+          
+          //the lasso shape hovering panel
+          {
+
+            const lassoShapePanel = document.createElement( "div" );
+            lassoShapePanel.classList.add( "animated" );
+            lassoShapePanel.id = "lasso-shape-panel";
+            lassoChangeShapeButton.appendChild( lassoShapePanel );
+
+            //add the stylized summon marker arrow to the top-right
+            const summonMarker = document.createElement( "div" );
+            summonMarker.classList.add( "summon-marker" );
+            lassoShapePanel.appendChild( summonMarker );
+
+            UI.registerElement( lassoShapePanel, {
+              onclickout: () => {
+                UI.deleteContext( "lasso-change-shape-panel-visible" );
+              },
+              updateContext: context => {
+                if( context.has( "lasso-change-shape-panel-visible" ) ) lassoShapePanel.classList.remove( "hidden" );
+                else lassoShapePanel.classList.add( "hidden" );
+              },
+            }, { zIndex: 10000 } );
+
+            //the lasso free shape button
+            {
+              const lassoFreeShapeButton = lassoShapePanel.appendChild( document.createElement( "div" ) );
+              lassoFreeShapeButton.classList.add( "rounded-line-button", "animated" );
+              lassoFreeShapeButton.appendChild( new Image() ).src = "icon/lasso-shape-free.png";
+              lassoFreeShapeButton.appendChild( document.createElement("span") ).textContent = "Lasso Free Draw";
+              UI.registerElement( lassoFreeShapeButton, {
+                onclick: () => {
+                  lassoFreeShapeButton.classList.add( "pushed" );
+                  setTimeout( () => lassoFreeShapeButton.classList.remove( "pushed" ), UI.animationMS );
+                  uiSettings.toolsSettings.lasso.shape = "free";
+                  UI.deleteContext( "lasso-change-shape-panel-visible" ); //calls update context
+                }
+              }, { 
+                tooltip: [ "Set Lasso Shape to Free Draw", "to-left", "vertical-center" ],
+                zIndex: 11000
+              } );
+            }
+
+            //add a spacer
+            lassoShapePanel.appendChild( document.createElement( "div" ) ).className = "spacer";
+
+            //the lasso rect shape button
+            {
+              const lassoRectShape = lassoShapePanel.appendChild( document.createElement( "div" ) );
+              lassoRectShape.classList.add( "rounded-line-button", "animated" );
+              lassoRectShape.appendChild( new Image() ).src = "icon/lasso-shape-rect.png";
+              lassoRectShape.appendChild( document.createElement("span") ).textContent = "Lasso Rectangle";
+              UI.registerElement( lassoRectShape, {
+                onclick: () => {
+                  lassoRectShape.classList.add( "pushed" );
+                  setTimeout( () => lassoRectShape.classList.remove( "pushed" ), UI.animationMS );
+                  uiSettings.toolsSettings.lasso.shape = "rect";
+                  UI.deleteContext( "lasso-change-shape-panel-visible" ); //calls update context
+                }
+              }, { 
+                tooltip: [ "Set Lasso Shape to Rectangle", "to-left", "vertical-center" ],
+                zIndex: 11000
+              } );
+            }
+
+            //add a spacer
+            lassoShapePanel.appendChild( document.createElement( "div" ) ).className = "spacer";
+
+            //the lasso ellipse shape button
+            {
+              const lassoEllipseShape = lassoShapePanel.appendChild( document.createElement( "div" ) );
+              lassoEllipseShape.classList.add( "rounded-line-button", "animated" );
+              lassoEllipseShape.appendChild( new Image() ).src = "icon/lasso-shape-ellipse.png";
+              lassoEllipseShape.appendChild( document.createElement("span") ).textContent = "Lasso Ellipse";
+              UI.registerElement( lassoEllipseShape, {
+                onclick: () => {
+                  lassoEllipseShape.classList.add( "pushed" );
+                  setTimeout( () => lassoEllipseShape.classList.remove( "pushed" ), UI.animationMS );
+                  uiSettings.toolsSettings.lasso.shape = "ellipse";
+                  UI.deleteContext( "lasso-change-shape-panel-visible" ); //calls update context
+                }
+              }, { 
+                tooltip: [ "Set Lasso Shape to Ellipse", "to-left", "vertical-center" ],
+                zIndex: 11000
+              } );
+            }
+
+          }
+
+
+        }
+      
         //the cancel lasso button
         {
           const cancelLasso = document.createElement( "div" );
@@ -7821,8 +8151,6 @@ function setupUI() {
       ySlider.classList.add( "y-slider" );
       transformToolOptionsRow.appendChild( ySlider );
     }
-    console.error( "Add transform crop handles." );
-
     //cropping is done just with handles, not with sliders... for now at least
 
     //the width slider
@@ -7850,6 +8178,57 @@ function setupUI() {
       });
       heightSlider.classList.add( "height-slider" );
       transformToolOptionsRow.appendChild( heightSlider );
+    }
+    console.error( "Add transform crop handles." );
+
+    //the transform handles
+    {
+
+      const transformHandlesContainer = document.createElement( "div" );
+      //poseRigContainer.classList.add( "hidden" );
+      transformHandlesContainer.id = "transform-handles-container";
+  
+      const updateView = () => {
+
+        if( transformHandlesContainer.classList.contains( "hidden" ) )
+          return;
+  
+        //update the handle positions (not sure this is the place for this...)
+
+      }
+  
+      //make sure to call getTransform() before calling this
+      const updateHandlePosition = ( handle, globalX, globalY, offset ) => {
+
+        //cast our global points to the screen's pixel space
+        let [ screenX,screenY ] = transformPoint( [ globalX, globalY, 1 ] );
+        screenX -= offset;
+        screenY -= offset;
+  
+        handle.x = screenX;
+        handle.y = screenY;
+        handle.style.left = screenX / devicePixelRatio + "px";
+        handle.style.top = screenY / devicePixelRatio + "px";
+
+      }
+
+    }
+
+    const addHandle = () => {
+      //hmm. How do I want to add the handles?
+      //for the 4 transform corners, the ondrag function needs to update the rotation and scale of our layer(s)
+      //  (which reminds me I need to add locks for rotation and scale)
+      //the ondrag function ONLY needs to update the layer's rotation and scale. We'll auto-update all the nodes
+      //  on a loop by pulling from the rotation and scale info also for pinch gesture
+      //YEP it's a loop. The pose rig literally runs its own loop with animation request... uh no that does nothing nvmnd
+      //for the 4 crop handles, the ondrag function needs to update the crop. Live-sliding those just does nothing.
+      //  so I need to implement some kind of guide-preview hmm.
+      //the easiest way I can imagine to do a preview... Is either to add a rect div and update its xy rotation,
+      //  or else to make a screen-wide svg and add some lines and update their values
+
+      //For starters, just add the handles and have them update as the layers transform.
+      //  We can add the ondrag later. :-)
+
     }
 
   }
@@ -7927,9 +8306,6 @@ function setupUI() {
       //origin and legs already loaded
       const rig = currentLayer.rig;
       getTransform();
-      //Why is this translated along the yLeg by half its length???
-      //This is the ONLY place I call updateNodePosition.
-      //Regardless of view, the on-screen-points are always exactly translated along the layer's y-leg by 50%
       let offset;
       for( const node of poseRigHandles ) {
         if( ! offset ) {
@@ -7947,15 +8323,18 @@ function setupUI() {
       poseRigContainer,
       {
         updateContext: () => {
-          if( uiSettings.activeTool === "pose" ) {
-            if( selectedLayer?.layerType !== "pose" ) {
-              uiSettings.setActiveTool( null );
+          if( uiSettings.isActiveTool( "pose" ) ) {
+            const layers = getSelectedOrBatchedLayers();
+            const onePoseLayer = layers.length === 1 && layers[ 0 ].layerType === "pose";
+
+            if( ! onePoseLayer ) {
+              //uiSettings.setActiveTool( null );
               poseRigContainer.classList.add( "hidden" );
             }
-            if( selectedLayer.layerType === "pose" ) {
+            else if( onePoseLayer ) {
               poseRigContainer.classList.remove( "hidden" );
-              if( selectedLayer !== currentLayer )
-                poseRigContainer.loadLayer( selectedLayer );
+              if( layers[ 0 ] !== currentLayer )
+                poseRigContainer.loadLayer( layers[ 0 ] );
             }
           }
           else poseRigContainer.classList.add( "hidden" );
@@ -8254,9 +8633,9 @@ function setupUI() {
     }
     */
 
-    const handleUpdateLoop = t => {
+    /* const handleUpdateLoop = t => {
       if( showingHandles === true ) requestAnimationFrame( handleUpdateLoop );
-    }
+    } */
 
   }
 
@@ -9534,9 +9913,9 @@ function setupUI() {
     } );
 
     layersAboveRow.appendChild( addLayerButton );
-
+    
+    //the add layers hovering panel
     {
-      //the add layers hovering panel
       const addLayersPanel = document.createElement( "div" );
       addLayersPanel.classList.add( "animated" );
       addLayersPanel.id = "add-layers-panel";
@@ -9854,8 +10233,10 @@ function setupUI() {
       if( colorWheel.classList.contains( "hidden" ) ) {
         colorWheel.classList.remove( "hidden" );
         updateColorWheelPreview();
+        UI.updateContext(); //rebuild "hidden" list
       } else {
         colorWheel.classList.add( "hidden" );
+        UI.updateContext(); //rebuild "hidden" list
       }
     }
 
@@ -10061,7 +10442,6 @@ function openAssetBrowser( assets, callback, assetName=null, multiSelectBatch=nu
 
   if( ! openAssetBrowser.keyTrap ) {
     openAssetBrowser.keyTrap = e => {
-      console.log( "Keydown: ", e );
       if( e.code === "Escape" ) assetBrowserContainer.querySelector( ".overlay-close-button" ).onclick();
       if( e.code === "Enter" ) assetBrowserContainer.querySelector( ".overlay-apply-button" ).onclick();
     }
@@ -10931,6 +11311,7 @@ function saveJSON() {
       visible,
       opacity,
       alphaLocked,
+      blendMode,
 
       generativeSettings,
       generativeControls,
@@ -10965,6 +11346,7 @@ function saveJSON() {
       visible,
       opacity,
       alphaLocked,
+      blendMode,
 
       rig,
       textInfo,
@@ -11124,6 +11506,7 @@ function loadJSON() {
             visible,
             opacity,
             alphaLocked,
+            blendMode,
       
             generativeSettings,
             generativeControls,
@@ -11145,7 +11528,7 @@ function loadJSON() {
           } = layer;
 
           newLayer.layerType = layerType || "paint";
-          newLayer.layerName = layerName || "Unnamed Layer";
+          newLayer.layerName = layerName || "Unnamed Layer"; //update context will update this into label
           newLayer.layerId = layerId; //no pre-id versioning available
           layersAddedCount = Math.max( layersAddedCount, layerId )
           newLayer.layerGroupId = layerGroupId || null;
@@ -11156,8 +11539,9 @@ function loadJSON() {
           newLayer.setVisibility( visible || true ); //update icon
           //newLayer.opacity = opacity;
           newLayer.setOpacity( isNaN( opacity ) ? 1.0 : opacity ); //update slider position
-          //newLayer.alphaLocked = alphaLocked
+          //newLayer.alphaLocked = alphaLocked;
           newLayer.setAlphaLocked( alphaLocked || false ); //update lock icon
+          newLayer.blendMode = blendMode || "normal"; //update context will update this to label
 
           newLayer.generativeSettings = generativeSettings;
           newLayer.generativeControls = generativeControls;
@@ -13898,16 +14282,40 @@ function updateLasso( points ) {
   //redraw lasso canvas fill from points
   context.fillStyle = "white";
   context.beginPath();
-  let start = true;
-  for( const p of points ) {
-    //the last entries in points are the screen xy
-    const x = p[6], y = p[7];
-    if( start === true ) {
-      start = false;
-      context.moveTo( x,y );
+
+  if( uiSettings.toolsSettings.lasso.shape === "free" ) {
+    let start = true;
+    for( const p of points ) {
+      //the last entries in points are the screen xy
+      const x = p[6], y = p[7];
+      if( start === true ) {
+        start = false;
+        context.moveTo( x,y );
+      }
+      context.lineTo(x,y);
     }
-    context.lineTo(x,y);
   }
+  else if( uiSettings.toolsSettings.lasso.shape === "rect" ) {
+    const a = points[0], b = points[ points.length - 1 ];
+    const w = Math.abs( b[0] - a[0] ),
+      x = Math.min( a[0], b[0] ),
+      h = Math.abs( b[1] - a[1] ),
+      y = Math.min( a[1], b[1] );
+    context.rect( x, y, w, h );
+  }
+  else if( uiSettings.toolsSettings.lasso.shape === "ellipse" ) {
+    const a = points[0], b = points[ points.length - 1 ];
+    const w = Math.abs( b[0] - a[0] ),
+      x0 = Math.min( a[0], b[0] ),
+      h = Math.abs( b[1] - a[1] ),
+      y0 = Math.min( a[1], b[1] ),
+      x = x0 + w/2,
+      y = y0 + h/2,
+      radiusX = w/2,
+      radiusY = h/2;
+    context.ellipse( x, y, radiusX, radiusY, 0, 0, 6.284, false );
+  }
+
   context.fill();
   //re-upload lasso canvas to its texture
   gl.bindTexture( gl.TEXTURE_2D, lassoActive.glTexture );

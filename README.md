@@ -2,7 +2,7 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (Version: 2024.05.16-1-alpha)
+# ParrotLUX (Version: 2024.05.17-1-alpha)
 A Painting App for Open-Source AI
 
 This app is currently in the clean-up stages of Alpha version. Bugs are being fixed and minor missing features are being added. The beta version (publicly usable) will release soon. Tuturials and documentation will be added soon.
@@ -19,6 +19,34 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 (*Pen pressure is unavailable on Windows.)
 
 (It may also work on MacOS and iOS. Untested.)
+
+# New Features in Version 2024.05.17-1-alpha
+
+## Layer Blend Modes
+
+<p align="center" width="100%"><img width="100%" src="img/2024.05.17-alpha-2.jpg"></p>
+<p align="center" width="100%">You can now find a layer blend-mode selector on the bottom left-hand side of the layer button, beside the reorganize handle. Layer blend modes include:
+    <ul>
+        <li>Normal - The top-layer is blended normally with the bottom-layer (luminous power simulation, or root-mean-squared blending).</li>
+        <li>Multiply - The top-layer will darken the bottom-layer, while also tinting the bottom-layer with the top-layer's color. This might be useful for shadows.</li>
+        <li>Add - The top-layer will brighten the bottom-layer, while also tinting the bottom-layer with the top-layer's color. This might be useful for lighting and highlights.</li>
+        <li>Light & Shadow - The top-layer's dark colors will darken the bottom-layer, and the top-layer's bright colors will brighten the bottom-layer, both will also tint the bottom-layer with the top-layer's color. This might be useful for combining lighting and shadows on one layer. <i>(Although I think I would keep them separate, personally?)</i></li>
+    </ul>
+</p>
+<p align="center" width="100%"><i>(Most paint programs include a long list of blend modes that are never used. I will avoid adding bloat, but if you would like a particular blend mode, please mention it in the discussion tab. I will research to see if anything other than "multiply" is ever used in production by artists. Maybe "subtract"?)</i></p>
+
+## Lasso Shapes
+
+<p align="center" width="100%"><img width="100%" src="img/2024.05.17-alpha-1.jpg"></p>
+<p align="center" width="100%">The lasso tool now supports lassoing rectangles and ellipses in addition to free-hand drawing.</p>
+
+## Bug Fixes
+
+<p align="center" width="100%">Fixed bugs:
+    <ul>
+        <li>Fixed a visual glitch mis-aligning the single-click ai tools panel.</li>
+    </ul>
+</p>
 
 # New Features in Version 2024.05.16-1-alpha
 
