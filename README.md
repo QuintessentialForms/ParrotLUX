@@ -5,7 +5,7 @@
 # ParrotLUX (Version: 2024.05.17-1-alpha)
 A Painting App for Open-Source AI
 
-This app is currently in the clean-up stages of Alpha version. Bugs are being fixed and minor missing features are being added. The beta version (publicly usable) will release soon. Tuturials and documentation will be added soon.
+This app is currently in the clean-up stages of Alpha version. Bugs are being fixed and minor missing features are being added. The beta version (publicly usable binary packages) will release soon. Some documentation has been added. Complete documentation, including tutorials and videos, will be added soon.
 
 <p align="center" width="100%">
     <img src="showcase-sketch.gif" width="30%"> <img src="showcase-pose.gif" width="30%"> <img src="showcase-paint.gif" width="30%"> 
@@ -19,6 +19,29 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 (*Pen pressure is unavailable on Windows.)
 
 (It may also work on MacOS and iOS. Untested.)
+
+# New Features in Version 2024.05.18-1-alpha
+
+## User Interface Documentation
+
+[Documentation is now available here](documentation/documentation.md).
+
+Currently, only the user interface has been documented, including: the pinch gesture, stylus and mouse controls, and keyboard shortcuts.
+
+Complete documentation will be added soon.
+
+## Transform Handles
+
+<p align="center" width="100%"><img width="100%" src="img/2024.05.20-alpha-1.jpg"></p>
+<p align="center" width="100%">When transforming, there are now transform handles bounding the currently selected layer(s). Tap+Drag a transform handle to adjust the layer(s)' scale and rotation. <i>(These have been added in addition to existing options: You can also adjust the scale and rotation using the sliders on the top-controls row, using the multi-touch pinch-gesture, and using mouse/keyboard shortcuts as described in the documentation.)</i></p>
+
+## Bug Fixes
+
+<p align="center" width="100%">Fixed bugs:
+    <ul>
+        <li>When loading a project on top of a current project, the view's pan/zoom/rotate would not reset. Now fixed.</li>
+    </ul>
+</p>
 
 # New Features in Version 2024.05.17-1-alpha
 

@@ -7791,11 +7791,13 @@ function setupUI() {
       );
     }
 
-    const updateView = ( updateCurrent = true ) => {
+    const updateView = ( updateCurrent = true, updateSliders = true ) => {
       if( uiSettings.activeTool !== "transform" || currentTransformInfos.length === 0 ) {
         return;
       }
 
+      getTransform();
+      
       if( activeTransform === true && isActiveTransform() === false ) {
         activeTransform = false;
         loadLayers( currentTransformInfos.map( info => info.layer ) );
@@ -7805,20 +7807,31 @@ function setupUI() {
       //update all the values shown on our sliders.
       //if we only have one layer, update our crop handles
 
+      getLayerTransform();
+
       //update all our values via computation
-      if( updateCurrent === true )
+      if( updateCurrent === true ) {
         currentTransformInfos.forEach( info => updateLayerTransformInfoWithCurrent( info ) );
+      }
 
       //get our aggregate info
       const aggregateInfo = getAggregateTransformInfo();
-      //update our sliders
-      transformToolOptionsRow.querySelector(".rotation-slider").setValue( parseInt( Math.round( (aggregateInfo.angle / (2*Math.PI)) * 360 ) ) );
-      transformToolOptionsRow.querySelector(".scale-slider").setValue( aggregateInfo.scale );
-      transformToolOptionsRow.querySelector(".x-slider").setValue( aggregateInfo.center.x );
-      transformToolOptionsRow.querySelector(".y-slider").setValue( aggregateInfo.center.y );
-      if( currentTransformInfos.length === 1 ) {
-        transformToolOptionsRow.querySelector(".width-slider").setValue( currentTransformInfos[0].layer.w );
-        transformToolOptionsRow.querySelector(".height-slider").setValue( currentTransformInfos[0].layer.h );
+      if( updateSliders === true ) {
+        //update our sliders
+        transformToolOptionsRow.querySelector(".rotation-slider").setValue( parseInt( Math.round( (aggregateInfo.angle / (2*Math.PI)) * 360 ) ) );
+        transformToolOptionsRow.querySelector(".scale-slider").setValue( aggregateInfo.scale );
+        transformToolOptionsRow.querySelector(".x-slider").setValue( aggregateInfo.center.x );
+        transformToolOptionsRow.querySelector(".y-slider").setValue( aggregateInfo.center.y );
+        if( currentTransformInfos.length === 1 ) {
+          transformToolOptionsRow.querySelector(".width-slider").setValue( currentTransformInfos[0].layer.w );
+          transformToolOptionsRow.querySelector(".height-slider").setValue( currentTransformInfos[0].layer.h );
+        }
+      }
+
+      //update our transform handles
+      
+      for( const handle of document.querySelectorAll( ".transform-handle" ) ) {
+        handle.updateView( aggregateInfo );
       }
     }
     
@@ -7839,6 +7852,30 @@ function setupUI() {
     //The apply rotation and apply scale functions do not record undo.
     //Instead, we use them to update a live preview during the slider drag.
     //On the slider release (or number text entry etc.), we call recordTransformUndo()
+    const applyScaleAndRotationToLayersFromInitial = ( dRadians, dScale ) => {
+      //for every point in all our layers:
+      //  take it as a vector from the center
+      //  rotate by rotation
+      //  store the new point
+      const fromInitial = true;
+      //const { center, angle } = getAggregateTransformInfo( fromInitial );
+      const { center: { x: centerX, y: centerY } } = getAggregateTransformInfo( fromInitial );
+      
+      const angleChange = dRadians;
+      const scaleFactor = dScale;
+      for( const {layer,initial} of currentTransformInfos ) {
+        for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
+          const layerPoint = layer[ pointName ],
+            initialPoint = initial[ pointName ];
+          const dx = initialPoint[0] - centerX,
+            dy = initialPoint[1] - centerY,
+            pointInitialAngle = Math.atan2( dy, dx ),
+            l = Math.sqrt( dx**2 + dy**2 );
+          layerPoint[ 0 ] = centerX + l * Math.cos( pointInitialAngle + angleChange ) * scaleFactor;
+          layerPoint[ 1 ] = centerY + l * Math.sin( pointInitialAngle + angleChange ) * scaleFactor;
+        }
+      }
+    }
     const applyRotationToLayersFromInitial = rotation => {
       //for every point in all our layers:
       //  take it as a vector from the center
@@ -7936,38 +7973,172 @@ function setupUI() {
     }
     const getAggregateTransformInfo = ( fromInitial = false ) => {
       let center = {x:0,y:0},
-        points = {topLeft:null,bottomLeft: null,topRight: null,bottomRight: null},
+        transformedPoints = {topLeft:null,bottomLeft: null,topRight: null,bottomRight: null},
+        globalPoints = {topLeft:null,bottomLeft: null,topRight: null,bottomRight: null},
         scale = currentTransformInfos[0].scale,
         angle = currentTransformInfos[0].angle;
+        //minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+      //old naive approach to multi-scale-angle:
       if( currentTransformInfos.length > 1 ) {
         scale = layerTransform.zoom || 1;
         angle = ( layerTransform.angle + layerTransform.initialAngleOffset ) || 0;
         //what about for initial? This doesn't make sense IMO
         //Hmm. No, okay. It does. If we have multiple layers, absolute angle and scale don't make sense. So everything is relative to 1 / 100%.
       }
+
       const pointCountScale = 1 / (currentTransformInfos.length * 4);
       if( uiSettings.toolsSettings.transform.current ) getLayerTransform();
-      for( const {layer,initial} of currentTransformInfos ) {
+      for( const {current,initial} of currentTransformInfos ) {
         //we want the live info from the layer, not our initial static info
         for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
-          let source = fromInitial ? initial : layer;
-          //const [x,y] = ( uiSettings.toolsSettings.transform.current ) ? transformLayerPoint( source[pointName] ) : source[ pointName ];
-          const [x,y] = ( fromInitial === false && uiSettings.toolsSettings.transform.current ) ? transformLayerPoint( source[pointName] ) : source[ pointName ];
-          //we're overwriting the temporary variable "points".
-          //We'll only use it in the case of 1 layer selected
-          points[ pointName ] = {x,y};
+          let source = fromInitial ? initial : current;
+          const [x,y] =
+            ( fromInitial === false && uiSettings.toolsSettings.transform.current ) ?
+            transformLayerPoint( source[pointName] ) : source[ pointName ];
+          if( currentTransformInfos.length === 1 ) {
+            transformedPoints[ pointName ] = [ x, y, 1 ];
+            globalPoints[ pointName ] = [ ...source[ pointName ] ];
+          }
+          //global-space bounding box not used?
+          //else { minX = Math.min( minX, x ); maxX = Math.max( maxX, x ); minY = Math.min( minY, y ); maxY = Math.max( maxY, y ); }
           center.x += x * pointCountScale;
           center.y += y * pointCountScale;
         }
       }
-      return { center, points, scale, angle };
+      if( currentTransformInfos.length > 1 ) {
+
+        //find the biggest layer
+        let biggestPointSource = null, biggestLayer, size = 0;
+        for( const { initial, current, layer } of currentTransformInfos ) {
+          const source = fromInitial ? initial : current;
+          const w = Math.sqrt((source.topRight[0] - source.topLeft[0])**2 + (source.topRight[1] - source.topLeft[1])**2),
+            h = Math.sqrt((source.bottomLeft[0] - source.topLeft[0])**2 + (source.bottomLeft[1] - source.topLeft[1])**2);
+          if( w * h > size ) {
+            biggestPointSource = source;
+            biggestLayer = layer;
+            size = w * h;
+          }
+        }
+
+        const referencePoints = biggestPointSource;
+        //get its normalized coordinate space (we won't transform anything; want global coords)
+        const origin = [...referencePoints.topLeft];
+        const hAxis = [ referencePoints.topRight[0] - origin[0], referencePoints.topRight[1] - origin[1] ],
+          hAxisLength = Math.sqrt( hAxis[0]**2 + hAxis[1]**2 ),
+          hAxisNorm = [ hAxis[0] / hAxisLength, hAxis[1] / hAxisLength ],
+          vAxis = [ referencePoints.bottomLeft[0] - origin[0], referencePoints.bottomLeft[1] - origin[1] ],
+          vAxisLength = Math.sqrt( vAxis[0]**2 + vAxis[1]**2 ),
+          vAxisNorm = [ vAxis[0] / vAxisLength, vAxis[1] / vAxisLength ];
+
+        let minH = Infinity, maxH = -Infinity,
+          minV = Infinity, maxV = -Infinity;
+
+        for( const { initial, current } of currentTransformInfos ) {
+          const source = fromInitial ? initial : current;
+          //if( source === referencePoints ) continue;
+          for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
+            const [ globalX, globalY ] = source[ pointName ];
+            const dx = globalX - origin[ 0 ],
+              dy = globalY - origin[ 1 ];
+            const localHProj = dx * hAxisNorm[0] + dy * hAxisNorm[1],
+              localH = localHProj / hAxisLength,
+              localVProj = dx * vAxisNorm[0] + dy * vAxisNorm[1],
+              localV = localVProj / vAxisLength;
+              minH = Math.min( minH, localH );
+              maxH = Math.max( maxH, localH );
+              minV = Math.min( minV, localV );
+              maxV = Math.max( maxV, localV );
+          }
+        }
+
+        globalPoints = {
+          topLeft: [
+            origin[0] + minH * hAxis[0] + minV * vAxis[0],
+            origin[1] + minH * hAxis[1] + minV * vAxis[1],
+            1
+          ],
+          topRight: [
+            origin[0] + maxH * hAxis[0] + minV * vAxis[0],
+            origin[1] + maxH * hAxis[1] + minV * vAxis[1],
+            1
+          ],
+          bottomRight: [
+            origin[0] + maxH * hAxis[0] + maxV * vAxis[0],
+            origin[1] + maxH * hAxis[1] + maxV * vAxis[1],
+            1
+          ],
+          bottomLeft: [
+            origin[0] + minH * hAxis[0] + maxV * vAxis[0],
+            origin[1] + minH * hAxis[1] + maxV * vAxis[1],
+            1
+          ]
+        }
+
+        let scaleFactor = 1, angleOffset = 0;
+
+        if( fromInitial === false && uiSettings.toolsSettings.transform.current ) {
+          console.log( "here" );
+          transformedPoints.topLeft = [...transformLayerPoint( globalPoints.topLeft )];
+          transformedPoints.topRight = [...transformLayerPoint( globalPoints.topRight )];
+          transformedPoints.bottomRight = [...transformLayerPoint( globalPoints.bottomRight )];
+          transformedPoints.bottomLeft = [...transformLayerPoint( globalPoints.bottomLeft )];
+
+          //get the angleOffset
+          angleOffset = Math.atan2( -_layerTranform[ 1 ], _layerTranform[ 0 ] );
+          //get the scale factor
+          scaleFactor = Math.sqrt( _layerTranform[0]**2 + _layerTranform[1]**2 );
+
+        } else {
+          transformedPoints.topLeft = [...globalPoints.topLeft];
+          transformedPoints.topRight = [...globalPoints.topRight];
+          transformedPoints.bottomRight = [...globalPoints.bottomRight];
+          transformedPoints.bottomLeft = [...globalPoints.bottomLeft];
+        }
+
+        //set the scale and angle
+        scale = scaleFactor * hAxisLength / biggestLayer.w;
+        angle = Math.atan2( hAxis[1], hAxis[0] ) + angleOffset;
+
+        /* 
+          TODO:
+          1. find the biggest layer
+            1.a for layer, if w*h > biggest, set biggest
+          2. get its normalized coordinate vectors
+          3. for each other layer's point
+            3.a component-wise-product-sum (dot product) that point with the normalizedHorizontalVector to get full-sized X
+            3.b component-wise-product-sum (dot product) that point with the normalizedVerticalVector to get full-sized Y
+            3.c divide full-sized x and y by the horizontalAxisLength and verticalAxisLength, respectively
+            3.d that produces a range 0->1 (and beyond) point lying within (or beyond) the bounding box of the biggest layer
+            3.e use minH,minV,maxH,maxV to track all of these 0->1 points as a bounding box
+          4. create a set of new corners
+            4.a origin + (minX,minY); origin + (maxX,minY) ...
+            4.b to compute one point (minH,minV), do:
+              origin.x + minH * horizontalVector.x + minV * verticalVector.x
+              origin.y + minH * horizontalVector.y + minV * verticalVector.y
+          !. These set of corners are our global-coordinates bounding box
+            - transform with matrix function to cast to screen coordinates
+
+          When do we need to perform this operation?
+          Probably doesn't matter. Don't optimize for now. Make a note I guess.
+
+        */
+
+        //former naive box
+        /* points.topLeft = { x: minX, y: minY };
+        points.topRight = { x: maxX, y: minY };
+        points.bottomLeft = { x: minX, y: maxY };
+        points.bottomRight = { x: maxX, y: maxY }; */
+      }
+      return { center, transformedPoints, globalPoints, scale, angle };
     }
     const updateLayerTransformInfoWithCurrent = ( layerInfo ) => {
       //getLayerTransform(); //call this elsewhere for batching
       for( const pointName of ["topLeft","bottomLeft","topRight","bottomRight"] ) {
-        layerInfo.current[ pointName ] = [ ...transformLayerPoint( layerInfo.layer[ pointName ] ) ];
+        layerInfo.current[ pointName ] = [ ...layerInfo.layer[ pointName ] ];
+        layerInfo.currentTransformed[ pointName ] = [ ...transformLayerPoint( layerInfo.layer[ pointName ] ) ];
       }
-      const { topRight, topLeft, bottomRight, bottomLeft } = layerInfo.current;
+      const { topRight, topLeft, bottomRight, bottomLeft } = layerInfo.currentTransformed;
       const topEdge = [topRight[0]-topLeft[0],topRight[1]-topLeft[1]],
         topEdgeLength = Math.sqrt( topEdge[0]**2 + topEdge[1]**2 ),
         scale = topEdgeLength / layerInfo.layer.w,
@@ -7976,6 +8147,7 @@ function setupUI() {
         x:(topLeft[0] + topRight[0] + bottomLeft[0] + bottomRight[0]) / 4,
         y:(topLeft[1] + topRight[1] + bottomLeft[1] + bottomRight[1]) / 4,
       }
+      //scale, center, and angle are all transformed to the view
       layerInfo.scale = scale;
       layerInfo.angle = angle;
       layerInfo.center = center;
@@ -7990,6 +8162,7 @@ function setupUI() {
         layer,
         initial: { topLeft, bottomRight, topRight, bottomLeft },
         current: {},
+        currentTransformed: {},
         scale: null, angle: null, center: null
       }
       updateLayerTransformInfoWithCurrent( layerInfo );
@@ -8020,6 +8193,7 @@ function setupUI() {
             }
 
             transformToolOptionsRow.classList.remove( "hidden" );
+            document.querySelector( "#transform-handles-container" ).classList.remove( "hidden" );
 
             //find out what layers are currently our transform targets
             let selectedLayersTarget = [ ...selectedAndBatchedLayers ];
@@ -8084,7 +8258,10 @@ function setupUI() {
         label: "Rotation", slideMode: "contain-step",
         value: 0, min: 0, max: 360, step: 1, wrap: true,
         bindingsName: " Layer Rotation",
-        onupdate: rotation => applyRotationToLayersFromInitial( rotation ),
+        onupdate: rotation => {
+          applyRotationToLayersFromInitial( rotation ),
+          updateView( true, false );
+        },
         onend: rotation => {
           applyRotationToLayersFromInitial( rotation );
           recordTransformUndo();
@@ -8104,7 +8281,10 @@ function setupUI() {
         label: "Scale", slideMode: "contain-step",
         value: 1, min: 0.01, max: 2, step: .01,
         bindingsName: " Layer Scale",
-        onupdate: scale => applyScaleToLayersFromInitial( scale ),
+        onupdate: scale => {
+          applyScaleToLayersFromInitial( scale );
+          updateView( true, false );
+        },
         onend: scale => {
           applyScaleToLayersFromInitial( scale );
           recordTransformUndo();
@@ -8123,6 +8303,7 @@ function setupUI() {
         bindingsName: " Layer X Position",
         onupdate: x => {
           applyXYToLayersFromInitial( x, null );
+          updateView( true, false );
         },
         onend: x => {
           applyXYToLayersFromInitial( x, null );
@@ -8141,6 +8322,7 @@ function setupUI() {
         bindingsName: " Layer Y Position",
         onupdate: y => {
           applyXYToLayersFromInitial( null, y );
+          updateView( true, false );
         },
         onend: y => {
           applyXYToLayersFromInitial( null, y );
@@ -8187,29 +8369,73 @@ function setupUI() {
       const transformHandlesContainer = document.createElement( "div" );
       //poseRigContainer.classList.add( "hidden" );
       transformHandlesContainer.id = "transform-handles-container";
-  
-      const updateView = () => {
 
-        if( transformHandlesContainer.classList.contains( "hidden" ) )
-          return;
+      UI.registerElement(
+        transformHandlesContainer,
+        {
+          updateContext: () => {
+            if( uiSettings.isActiveTool( "transform" ) )
+              transformHandlesContainer.classList.remove( "hidden" );
+            else transformHandlesContainer.classList.add( "hidden" );
+          },
+          //updateView,
+        }
+      );
+      underlayContainer.appendChild( transformHandlesContainer );
   
-        //update the handle positions (not sure this is the place for this...)
+      for( const handleName of [ "topLeft", "topRight", "bottomRight", "bottomLeft" ] ){
+        let offset = null;
 
-      }
-  
-      //make sure to call getTransform() before calling this
-      const updateHandlePosition = ( handle, globalX, globalY, offset ) => {
-
-        //cast our global points to the screen's pixel space
-        let [ screenX,screenY ] = transformPoint( [ globalX, globalY, 1 ] );
-        screenX -= offset;
-        screenY -= offset;
-  
-        handle.x = screenX;
-        handle.y = screenY;
-        handle.style.left = screenX / devicePixelRatio + "px";
-        handle.style.top = screenY / devicePixelRatio + "px";
-
+        const transformHandle = document.createElement( "div" );
+        transformHandle.classList.add( "transform-handle" );
+        transformHandle.id = "transform-handle-" + handleName;
+        transformHandle.style.top = innerHeight / 2 + "px";
+        transformHandle.style.left = innerWidth / 2 + "px";
+        transformHandle.updateView = ( aggregateInfo ) => {
+          if( typeof offset !== "number" ) {
+            offset = transformHandle.getClientRects()?.[ 0 ]?.width;
+          }
+          const dxy = offset || 0; //must have at least 1 point appear on screen before I can get the offset.
+          const { globalPoints } = aggregateInfo;
+          const handlePoint = [...globalPoints[ handleName ] ];
+          let [ x, y ] = transformPoint( handlePoint );
+          [ x, y ] = transformLayerPoint( [ x,y,1 ] );
+          //Done and bug free!!! I thought rotate-to-zero was bugged, but I just had the view rotated. :-P
+          //Next is adding drag functionality to the handles.
+          transformHandle.style.left = ( x / devicePixelRatio ) - dxy / 2 + "px";
+          transformHandle.style.top = ( y / devicePixelRatio ) - dxy / 2 + "px";
+          {
+            let { x, y } = aggregateInfo.center;
+            [ x, y ] = transformPoint( [ x,y,1 ] );
+            [ x, y ] = transformLayerPoint( [ x,y,1 ] );
+            transformHandle.center = { x: x / devicePixelRatio, y: y / devicePixelRatio };
+          }
+        }
+        UI.registerElement(
+          transformHandle,
+          {
+            ondrag: ({ rect, start, current, ending, starting, element }) => {
+              const dx = current.x - start.x,
+                dy = current.y - start.y,
+                d = Math.sqrt( dx**2 + dy**2 );
+              const dxCenterStart = start.x - element.center.x,
+                dyCenterStart = start.y - element.center.y,
+                dCenterStart = Math.sqrt( dxCenterStart**2 + dyCenterStart**2 );
+              const dxCenterCurrent = current.x - element.center.x,
+                dyCenterCurrent = current.y - element.center.y,
+                dCenterCurrent = Math.sqrt( dxCenterCurrent**2 + dyCenterCurrent**2 );
+              const dScale = dCenterCurrent / dCenterStart;
+              const dAngle = Math.atan2( -dyCenterStart, dxCenterStart) - Math.atan2( -dyCenterCurrent, dxCenterCurrent );
+              applyScaleAndRotationToLayersFromInitial( dAngle, dScale );
+              UI.updateView();
+              if( ending ) {
+                recordTransformUndo();
+                loadLayers( currentTransformInfos.map( info => info.layer ) );
+              }
+            }
+          }
+        );
+        transformHandlesContainer.appendChild( transformHandle );
       }
 
     }
@@ -9784,6 +10010,7 @@ function setupUI() {
       const canvasZoomRotateReset = () => {
         viewMatrices.current[0] = 1; viewMatrices.current[1] = 0; viewMatrices.current[2] = 0;
         viewMatrices.current[3] = 0; viewMatrices.current[4] = 1; viewMatrices.current[5] = 0;
+        UI.updateView();
       }
       UI.registerElement(
         canvasZoomRotateResetButton,
@@ -11580,6 +11807,11 @@ function loadJSON() {
         clearUndoHistory();
 
         reorganizeLayerButtons();
+
+        //reset the view
+        viewMatrices.current[0] = 1; viewMatrices.current[1] = 0; viewMatrices.current[2] = 0;
+        viewMatrices.current[3] = 0; viewMatrices.current[4] = 1; viewMatrices.current[5] = 0;
+        UI.updateView();
 
         UI.updateContext();
 
