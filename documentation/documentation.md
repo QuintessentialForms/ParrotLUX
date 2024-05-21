@@ -85,14 +85,16 @@ Hide or show the layer-buttons column using the hide/show layers button in the t
 Layer Button Layout  
 Note: Any layer button control that makes a change to any layer(s) can be reversed using undo/redo, unless specifically stated otherwise.
 - **Layer Button**: Tap the layer button to make it the sole selection, and to activate its layer-button controls. For a group-layer, tapping the layer button while it is activated will fold/unfold the group. (Layer selection and group folding/unfolding are not affected by undo/redo.)
+    - <img src="img/layer-button.jpg">
 - **Layer Type Icon**: A visual indicator of the layer's type, see the icons below. In the case of a layer-group, this icon can also be tapped to fold or unfold the group. (Group folding/unfolding is not affected by undo/redo.)
-    - Generative
-    - Paint
-    - Vector
-    - Text
-    - Pose
-    - Filter
-    - Group
+    - <img src="img/layer-icon-generative.png" width="24pt"> Generative
+    - <img src="img/layer-icon-paint.png" width="24pt"> Paint
+    - <img src="img/layer-icon-vector.png" width="24pt"> Vector
+    - <img src="img/layer-icon-text.png" width="24pt"> Text
+    - <img src="img/layer-icon-pose.png" width="24pt"> Pose
+    - <img src="img/layer-icon-filter.png" width="24pt"> Filter
+    - <img src="img/layer-icon-group.png" width="24pt"> Group (Unfolded/Expanded)
+    - <img src="img/layer-icon-group-folded.png" width="24pt"> Group (Folded/Collapsed)
 - **Visibility**: Tap to make the layer visible or invisible. (This setting is not affected by undo/redo.)
 - **Alpha-lock**: (Paint layer only.) When locked, painting is only possible on parts of the layer already painted. Transparent parts of the layer will remain transparent. (This settings is not affected by undo/redo.)
 - **Duplicate**: Tap to create a copy of the layer, inserted into the layer-buttons column directly above the duplicated layer. It will be auto-assigned the same name as the duplicated layer, with the word `copy` appended to the name.
