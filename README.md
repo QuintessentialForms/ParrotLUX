@@ -2,7 +2,7 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (Version: 2024.05.21-1-alpha)
+# ParrotLUX (Version: 2024.05.23-1-alpha)
 A Painting App for Open-Source AI
 
 This app is currently in the clean-up stages of Alpha version. Bugs are being fixed and minor missing features are being added. The beta version (publicly usable binary packages) will release soon. Some documentation has been added. Complete documentation, including tutorials and videos, will be added soon.
@@ -19,6 +19,13 @@ This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
 (*Pen pressure is unavailable on Windows.)
 
 (It may also work on MacOS and iOS. Untested.)
+
+# New Features in Version 2024.05.23-1-alpha
+
+## ComfyUI APIFlow AutoBuilder
+
+<p align="center" width="100%"><img width="100%" src="img/2024.05.23-alpha-1.jpg"></p>
+<p align="center" width="100%">Created an auto-builder tool for designing APIFlows from ComfyUI workflows. Documentation for the auto-builder will be added soon.</p>
 
 # New Features in Version 2024.05.21-1-alpha
 

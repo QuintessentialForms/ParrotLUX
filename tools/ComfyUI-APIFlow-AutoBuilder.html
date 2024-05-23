@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>ComfyUI APIFlow AutoBuilder</title>
+    </head>
+    <body>
+        <script>
+            //remember to reset this when resetting everything.
+            //imageUploaders.length = 0;
+            const imageUploaders = [];
+            function addImageUploader( uniqueName, imageInputNodeNumber ) {
+                imageUploaders.push( {
+                    uniqueName,
+                    imageInputNodeNumber,
+                } );
+            }
+            //this is an example of the data we need to add an image input to the prompt
+            //(Actually, probably need to get whole path, not just node number.)
+            //addImageUploader( "i2i", 6 );
+
+            let importedWorkflowPrompt = null;
+            function importComfyWorkflowOrAPIFlow() {
+                if( !importComfyWorkflowOrAPIFlow.fileInput ) {
+                    const fileInput = document.createElement( "input" );
+                    fileInput.type = "file";
+                    fileInput.style.width = "0px";
+                    fileInput.style.height = "0px";
+                    fileInput.style.opacity = "0";
+                    document.body.appendChild( fileInput );
+                    importComfyWorkflowOrAPIFlow.fileInput = fileInput;
+                }
+                const fileInput = importComfyWorkflowOrAPIFlow.fileInput;
+                fileInput.onchange = e => {
+                    const reader = new FileReader();
+                    reader.onload = async e => {
+                        let loadedFile;
+                        try {
+                            loadedFile = JSON.parse( e.target.result );
+                        } catch( e ) {
+                            console.error( "Bad json" );
+                        }
+
+                        if( loadedFile ) {
+                            imageUploaders.length = 0;
+                            importedWorkflowPrompt = loadedFile;
+                            populateLinesFromWorkflow( loadedFile );
+                        }
+                    }
+                    reader.readAsText( e.target.files[0] );
+
+                }
+                fileInput.click();
+            }
+            function delve( indent, path, key, object, isLastEntry, lines ) {
+                const v = object[ key ];
+                    t = typeof v;
+                if( Array.isArray( v ) ) {
+                    //hmm.
+                    //we add 1 line per index
+                    //also a "key": [ opening line
+                    //and a ], closing line
+                    //unless length=0 then "key": []
+                    if( v.length === 0 ) {
+                        lines.push( [indent, `<span class="key">"${key}"</span>: []`] ); //no path?
+                    } else {
+                        lines.push( [indent, `<span class="key">"${key}"</span>: [`] ); //no path
+                        for( let i=0; i<v.length; i++ ) {
+                            const subv = v[ i ];
+                            const subt = typeof subv;
+                            if( Array.isArray( subv ) || subt === "object" ) {
+                                delve( indent+1, path.concat( key ), i, v, i===v.length-1, lines );
+                            } else {
+                                if( subt === "string" ) lines.push( [indent+1, `<span class="value">"${subv}"</span>${i===v.length-1?"":","}`, path.concat(i), subv ] );
+                                else lines.push( [indent+1, `<span class="value">${subv}</span>${i===v.length-1?"":","}`, path.concat(i), subv ] );
+                            }
+                        }
+                        lines.push( [indent, `]${isLastEntry?"":","}`] ); //no path
+                    }
+                }
+                else if( t === "object" ) {
+                    const keys = [...Object.keys( v )];
+                    if( keys.length === 0 ) {
+                        lines.push( [indent, `<span class="key">"${key}"</span>: {}`] ); //no path?
+                    } else {
+                        lines.push( [indent, `<span class="key">"${key}"</span>: {`] ); //no path
+                        for( const subkey of keys ) {
+                            delve( indent+1, path.concat( key ), subkey, v, subkey===keys.at(-1), lines );
+                        }
+                        lines.push( [indent, `}${isLastEntry?"":","}`] ); //no path
+                    }
+                    //"Key": {
+                    // delve
+                    //}
+                }
+                else {
+                    //is primitive
+                    if( t === "string" ) lines.push( [indent, `<span class="key">"${key}"</span>: <span class="value">"${v}"</span>${isLastEntry?"":","}`, path.concat( key ), v ] );
+                    else lines.push( [indent, `<span class="key">"${key}"</span>: <span class="value">${v}</span>${isLastEntry?"":","}`, path.concat( key ), v ] );
+                }
+            }
+
+            function delveJSON( indent, path, key, object, isLastEntry, lines, inArray = false ) {
+                const v = object[ key ],
+                    t = typeof v,
+                    indentString = new Array(indent).fill( "    " ).join( "" );
+                if( Array.isArray( v ) ) {
+                    if( v.length === 0 ) {
+                        if( inArray === false ) lines.push( indentString + `"${key}": []${isLastEntry?"":","}` );
+                        else lines.push( indentString + `[]${isLastEntry?"":","}` );
+                    } else {
+                        if( inArray === false ) lines.push( indentString + `"${key}": [` );
+                        else lines.push( indentString + `[` );
+
+                        for( let i=0; i<v.length; i++ ) {
+                            const subv = v[ i ];
+                            const subt = typeof subv;
+                            if( Array.isArray( subv ) || subt === "object" ) {
+                                delveJSON( indent+1, path.concat( key ), i, v, i===v.length-1, lines, true );
+                            } else {
+                                if( subt === "string" ) lines.push( indentString + "    " + `"${subv}"${i===v.length-1?"":","}` );
+                                else lines.push( indentString + "    " + `${subv}${i===v.length-1?"":","}` );
+                            }
+                        }
+
+                        lines.push( indentString + `]${isLastEntry?"":","}` );
+                    }
+                }
+                else if( v === undefined || v === null ) {
+                    if( inArray === false ) lines.push( indentString + `"${key}": null${isLastEntry?"":","}` );
+                    else lines.push( indentString + `null${isLastEntry?"":","}` );
+                }
+                else if( t === "object" ) {
+                    const keys = [...Object.keys( v )];
+                    if( keys.length === 0 ) {
+                        if( inArray === false ) lines.push( indentString + `"${key}": {}${isLastEntry?"":","}` );
+                        else lines.push( indentString + `{}${isLastEntry?"":","}` );
+                    } else {
+                        if( inArray === false ) lines.push( indentString + `"${key}": {` );
+                        else lines.push( indentString + `{` );
+                        for( const subkey of keys ) {
+                            delveJSON( indent+1, path.concat( key ), subkey, v, subkey===keys.at(-1), lines );
+                        }
+                        lines.push( indentString + `}${isLastEntry?"":","}` );
+                    }
+                }
+                else {
+                    //is primitive
+                    if( t === "string" ) lines.push( indentString + `"${key}": "${v}"${isLastEntry?"":","}` );
+                    else lines.push( indentString + `"${key}": ${v}${isLastEntry?"":","}` );
+                }
+            }
+
+            const apiFlowTemplate = {
+                "apiFlowName": "",
+                "apiFlowType": "generative",
+                "outputs": [
+                    {
+                        "outputName": "generated-image",
+                        "outputType": "image",
+                        "outputResultPath": [
+                            "view",
+                            "generated-image"
+                        ]
+                    }
+                ],
+                "controls": [],
+                "apiCalls": [],
+            };
+            function buildAPIFlow() {
+                const apiFlowName = document.querySelector("#apiflow-name").value || "Custom APIFlow " + parseInt( Math.random() * 999999999 );
+                apiFlowTemplate.apiFlowName = apiFlowName;
+                apiFlowTemplate.controls.length = 0;
+                apiFlowTemplate.apiCalls.length = 0;
+                //build the image uploader controls
+                const imageUploaders = [],
+                    hints = new Set();
+                const controlsElements = [ ...(document.querySelectorAll( ".controlled .controls" ) || []) ];
+                const imageControlsElements = controlsElements.filter( n => n.controlType === "image" );
+                for( const element of imageControlsElements ) {
+                    const {path} = element;
+                    let hint = element.querySelector( ".input-hint" ).value;
+                    if( ! hint || hints.has( hint ) ) hint = parseInt( Math.random() * 99999 );
+                    hints.add( hint );
+                    imageUploaders.push({
+                        uniqueName: hint,
+                        path
+                    });
+                }
+
+                for( const imageUploader of imageUploaders ) {
+                    //use controls to set the host and port of our uploader apicall
+                    const { uniqueName, path } = imageUploader;
+                    //add the control that makes a node-link-destination with the hint code on it
+                    apiFlowTemplate.controls.push(
+                        {
+                            "controlName": uniqueName + "-control-input",
+                            "controlHint": uniqueName,
+                            "controlType": "image",
+                            "controlValue": "",
+                            "controlLayer": null,
+                            "controlPath": [
+                                uniqueName + "-upload-apicall",
+                                "api",
+                                "image"
+                            ]
+                        },
+                    );
+                    apiFlowTemplate.controls.push(
+                        //load the host from settings variable
+                        {
+                            "controlName": "ComfyHost",
+                            "controlType": "apiFlowVariable",
+                            "variableKey": "ComfyHost",
+                            "controlValue": "localhost",
+                            "controlPath": [
+                                uniqueName + "-upload-apicall",
+                                "host"
+                            ]
+                        },
+                        //load the port from settings variable
+                        {
+                            "controlName": "ComfyPort",
+                            "controlType": "apiFlowVariable",
+                            "variableKey": "ComfyPort",
+                            "controlValue": 8188,
+                            "controlPath": [
+                                uniqueName + "-upload-apicall",
+                                "port"
+                            ]
+                        }
+                    );
+                    //add an apicall to upload the image as a binary file
+                    //this apicall returns the new name of the uploaded image
+                    apiFlowTemplate.apiCalls.push(
+                        {
+                            "apiCallName": uniqueName + "-upload-apicall",
+                            "results": [
+                                {
+                                    "resultName": "image-filename",
+                                    "resultType": "string",
+                                    "resultPath": [
+                                        "name"
+                                    ]
+                                }
+                            ],
+                            "host": "localhost",
+                            "port": 8188,
+                            "apiPath": "/upload/image",
+                            "method": "POST",
+                            "dataFormat": "FORM",
+                            "convertDataImages": true,
+                            "api": {
+                                "image": ""
+                            }
+                        }
+                    );
+                    //add a control to retrieve the name of our uploaded image so we can use it as a node input
+                    apiFlowTemplate.controls.push(
+                        {
+                            "controlName": uniqueName + "-image-filename",
+                            "controlType": "api-result",
+                            "resultPath": [
+                                uniqueName + "-upload-apicall",
+                                "image-filename"
+                            ],
+                            "controlPath": [
+                                "controlValue"
+                            ],
+                            "controlValue": "to overwrite with uploadname"
+                        }
+                    );
+                    //add a control to install that filename in the slot in our prompt
+                    apiFlowTemplate.controls.push(
+                        {
+                            "controlName": uniqueName + "-prompt-filename",
+                            "controlType": "string-compose",
+                            "composePaths": [
+                                "",
+                                [
+                                    uniqueName + "-image-filename",
+                                    "controlValue"
+                                ]
+                            ],
+                            "controlPath": [
+                                "main-prompt",
+                                "api",
+                                "prompt",
+                                ...path
+                                //imageInputNodeNumber,"inputs","image"
+                            ]
+                        },
+                    );
+                }
+
+                const uiControlsElements = controlsElements.filter( e => (e.controlType !== "--none--" && e.controlType !== "image" && e.controlType !== "output" ) );
+                for( const element of uiControlsElements ) {
+                    const { controlType, path, value } = element;
+                    const jsonBuilder = buildControlJSONs[ controlType ];
+                    console.log( "Building type ", controlType, " path ", path, " value ", value );
+                    apiFlowTemplate.controls.push( jsonBuilder( element, path, value ) );
+                }
+                
+                //set the localhost and port of our main prompt apicall
+                apiFlowTemplate.controls.push(
+                    {
+                        "controlName": "ComfyHost",
+                        "controlType": "apiFlowVariable",
+                        "variableKey": "ComfyHost",
+                        "controlValue": "localhost",
+                        "controlPath": [
+                            "main-prompt",
+                            "host"
+                        ]
+                    },
+                    {
+                        "controlName": "ComfyPort",
+                        "controlType": "apiFlowVariable",
+                        "variableKey": "ComfyPort",
+                        "controlValue": 8188,
+                        "controlPath": [
+                            "main-prompt",
+                            "port"
+                        ]
+                    }
+                );
+                //we don't make any changes to our imported workflow prompt.
+                //all changes are made dynamically at generation time via our in-app controls
+                apiFlowTemplate.apiCalls.push( {
+                    "apiCallName": "main-prompt",
+                    "results": [
+                        {
+                        "resultName": "prompt_id",
+                        "resultType": "string",
+                        "resultPath": [
+                            "prompt_id"
+                        ]
+                        }
+                    ],
+                    "host": "localhost",
+                    "port": 8188,
+                    "apiPath": "/prompt",
+                    "method": "POST",
+                    "dataFormat": "JSON",
+                    "convertDataImages": false,
+                    "api": { "prompt": importedWorkflowPrompt }
+                } );
+                //load our resulting prompt call ID into a control so we can use it later
+                apiFlowTemplate.controls.push(
+                    {
+                        "controlName": "UID",
+                        "controlType": "api-result",
+                        "resultPath": [
+                            "main-prompt",
+                            "prompt_id"
+                        ],
+                        "controlPath": [
+                            "controlValue"
+                        ],
+                        "controlValue": "to overwrite"
+                    },
+                )
+
+                //retry until we get the generated image name
+                //one of my defined controls needs to be the output node, I guess?
+                const outputControl = controlsElements.find( e => e.controlType === "output" );
+                if( ! outputControl ) {
+                    alert( "Please declare the generated image output node." );
+                    return;
+                }
+
+                const outputNodeNumber = outputControl?.path?.[ 0 ];
+                apiFlowTemplate.controls.push(
+                    //install our prompt ID into the retry call's apipath
+                    {
+                        "controlName": "history-path",
+                        "controlType": "string-compose",
+                        "composePaths": [
+                            "/history/",
+                            [
+                                "UID",
+                                "controlValue"
+                            ]
+                        ],
+                        "controlPath": [
+                            "get-filename",
+                            "apiPath"
+                        ]
+                    },
+                    //install our prompt ID into the result-lookup path for the filename of the retry call
+                    {
+                        "controlName": "result-history-filename",
+                        "controlType": "string-compose",
+                        "composePaths": [
+                            "",
+                            [
+                                "UID",
+                                "controlValue"
+                            ]
+                        ],
+                        "controlPath": [
+                            "get-filename",
+                            "results",
+                            0,
+                            "resultPath",
+                            0
+                        ]
+                    },
+                    //install our prompt ID into the result-lookup path for the subfolder of the retry call
+                    {
+                        "controlName": "result-history-subfolder",
+                        "controlType": "string-compose",
+                        "composePaths": [
+                            "",
+                            [
+                                "UID",
+                                "controlValue"
+                            ]
+                        ],
+                        "controlPath": [
+                            "get-filename",
+                            "results",
+                            1,
+                            "resultPath",
+                            0
+                        ]
+                    },
+                );
+                //set the localhost and port of our retry apicall
+                apiFlowTemplate.controls.push(
+                    {
+                        "controlName": "ComfyHost",
+                        "controlType": "apiFlowVariable",
+                        "variableKey": "ComfyHost",
+                        "controlValue": "localhost",
+                        "controlPath": [
+                            "get-filename",
+                            "host"
+                        ]
+                    },
+                    {
+                        "controlName": "ComfyPort",
+                        "controlType": "apiFlowVariable",
+                        "variableKey": "ComfyPort",
+                        "controlValue": 8188,
+                        "controlPath": [
+                            "get-filename",
+                            "port"
+                        ]
+                    }
+                );
+                //get the filename generated by running our prompt (after some number of retries)
+                apiFlowTemplate.apiCalls.push( {
+                    "retryOnEmpty": true,
+                    "apiCallName": "get-filename",
+                    "results": [
+                        {
+                        "resultName": "image-filename",
+                        "resultType": "string",
+                        "resultPath": [
+                            "{UID for filename}",
+                            "outputs",
+                            outputNodeNumber,
+                            "images",
+                            0,
+                            "filename"
+                        ]
+                        },
+                        {
+                        "resultName": "image-subfolder",
+                        "resultType": "string",
+                        "resultPath": [
+                            "{UID for subfolder}",
+                            "outputs",
+                            outputNodeNumber,
+                            "images",
+                            0,
+                            "subfolder"
+                        ]
+                        }
+                    ],
+                    "host": "localhost",
+                    "port": 8188,
+                    "method": "GET",
+                    "dataFormat": null,
+                    "convertDataImages": false,
+                    "apiPath": "/history/{UID}"
+                } );
+
+                //fetch the generated image
+                apiFlowTemplate.controls.push(
+                    //load the returned filename from the retry call
+                    {
+                        "controlName": "filename",
+                        "controlType": "api-result",
+                        "resultPath": [
+                            "get-filename",
+                            "image-filename"
+                        ],
+                        "controlPath": [
+                            "controlValue"
+                        ],
+                        "controlValue": "to overwrite with filename"
+                    },
+                    //load the returned subfolder from the retry call
+                    {
+                        "controlName": "filefolder",
+                        "controlType": "api-result",
+                        "resultPath": [
+                            "get-filename",
+                            "image-subfolder"
+                        ],
+                        "controlPath": [
+                            "controlValue"
+                        ],
+                        "controlValue": ""
+                    },
+                    //compose them into the apipath for the file fetch
+                    {
+                        "controlName": "view-filename",
+                        "controlType": "string-compose",
+                        "composePaths": [
+                            "/view?filename=",
+                            [
+                            "filename",
+                            "controlValue"
+                            ],
+                            "&subfolder=",
+                            [
+                            "filefolder",
+                            "controlValue"
+                            ],
+                            "&type=output&rand=0.0923485734985"
+                        ],
+                        "controlPath": [
+                            "view",
+                            "apiPath"
+                        ]
+                    },
+                );
+                //set the host and port of our image-fetch call
+                apiFlowTemplate.controls.push(
+                    {
+                        "controlName": "ComfyHost",
+                        "controlType": "apiFlowVariable",
+                        "variableKey": "ComfyHost",
+                        "controlValue": "localhost",
+                        "controlPath": [
+                            "view",
+                            "host"
+                        ]
+                    },
+                    {
+                        "controlName": "ComfyPort",
+                        "controlType": "apiFlowVariable",
+                        "variableKey": "ComfyPort",
+                        "controlValue": 8188,
+                        "controlPath": [
+                            "view",
+                            "port"
+                        ]
+                    }
+                );
+                apiFlowTemplate.apiCalls.push( {
+                    "apiCallName": "view",
+                    "results": [
+                        {
+                        "resultName": "generated-image",
+                        "resultType": "file-image",
+                        "resultPath": "file"
+                        }
+                    ],
+                    "host": "localhost",
+                    "port": 8188,
+                    "method": "GET",
+                    "dataFormat": null,
+                    "convertDataImages": false,
+                    "apiPath": "/view?filename={FILENAME}"
+                } );
+
+                return apiFlowTemplate;
+            }
+            function exportAPIFlow() {
+                
+                const exportFile = buildAPIFlow();
+                if( ! exportFile ) return;
+                //const exportFileString = JSON.stringify( exportFile );
+                const exportKeys = [...Object.keys( exportFile )];
+                const exportLines = [];
+                for( const key of exportKeys ) {
+                    delveJSON( 1, [], key, exportFile, key === exportKeys.at(-1), exportLines );
+                }
+                console.log( exportLines );
+                const exportFileString = [
+                    "{",
+                    ...exportLines,
+                    "}"
+                ].join( "\n" );
+                
+                const apiFlowName = document.querySelector("#apiflow-name").value || "Custom APIFlow " + parseInt( Math.random() * 999999999 );
+
+                const a = document.createElement( "a" );
+                a.download = apiFlowName + ".json";
+                const b = new Blob( [exportFileString], { type: "application/json" } );
+                a.href = URL.createObjectURL( b );
+                document.body.appendChild( a );
+                a.click();
+                document.body.removeChild( a );
+                URL.revokeObjectURL( b );
+            }
+            window.onload = () => {
+                document.querySelector( "#import" ).onclick = importComfyWorkflowOrAPIFlow;
+                document.querySelector( "#export" ).onclick = exportAPIFlow;
+            }
+            function populateLinesFromWorkflow( workflow ) {
+                const lines = [];
+                const keys = [...Object.keys( workflow )];
+                for( const key of keys ) {
+                    delve( 0, [], key, workflow, key === keys.at(-1), lines );
+                }
+                const mainColumn = document.querySelector( "#main-column" );
+                mainColumn.innerHTML = "";
+                for( const [indent,line,path,value] of lines ) {
+                    const lineElement = document.createElement( "div" );
+                    lineElement.classList.add( "line" );
+                    const controlsElement = lineElement.appendChild(document.createElement( "div" ));
+                    controlsElement.classList.add( "controls", "empty" );
+                    controlsElement.textContent = "(click to add control)";
+                    const jsonElement = lineElement.appendChild(document.createElement( "div" ));
+                    jsonElement.classList.add( "json" );
+                    for( let i=0;i<indent;i++ ) {
+                        jsonElement.appendChild( document.createElement( "div" ) ).classList.add( "indent-spacer" );
+                    }
+                    const textContentElement = jsonElement.appendChild( document.createElement( "div" ) );
+                    textContentElement.innerHTML = line;
+                    if( path ) {
+                        lineElement.classList.add( "controllable" );
+                        lineElement.onclick = () => {
+                            lineElement.onclick = undefined;
+                            addControl( lineElement, path, value );
+                        }
+                    }
+                    mainColumn.appendChild( lineElement );
+                }
+            }
+            
+            //add control:
+            //name - string to show in user interface
+            //type - text | number | asset{list} | random-int | layer-input.<w|h>
+            const controlTypes = [
+                "--none--",
+                "image",
+                "output",
+                "text",
+                "number",
+                "asset",
+                "random",
+                "width",
+                "height",
+                "static",
+            ]
+            const buildControlJSONs = {
+                static: ( controlElement, path, value ) => {
+                    const controlName = "Static Control " + parseInt( Math.random() * 99999999 );
+                    const controlType = "static";
+                    const controlValue = controlElement.querySelector( ".input-default-value" ).value;
+                    const controlPath = [
+                        "main-prompt",
+                        "api",
+                        "prompt",
+                        ...path
+                    ];
+                    return { controlName, controlType, controlValue, controlPath };
+                },
+                text: ( controlElement, path, value ) => {
+                    const controlName = controlElement.querySelector( ".input-name" ).value;
+                    const controlType = "text";
+                    const controlValue = controlElement.querySelector( ".input-default-value" ).value;
+                    const controlPath = [
+                        "main-prompt",
+                        "api",
+                        "prompt",
+                        ...path
+                    ];
+                    return { controlName, controlType, controlValue, controlPath };
+                },
+                number: ( controlElement, path, value ) => {
+                    const controlName = controlElement.querySelector( ".input-name" ).value;
+                    const controlType = "number";
+                    const controlValue = controlElement.querySelector( ".input-default-value" ).value;
+                    const min = controlElement.querySelector( ".input-minimum" ).value;
+                    const max = controlElement.querySelector( ".input-maximum" ).value;
+                    const step = controlElement.querySelector( ".input-step" ).value;
+                    const controlPath = [
+                        "main-prompt",
+                        "api",
+                        "prompt",
+                        ...path
+                    ];
+                    return { controlName, controlType, controlValue, min, max, step, controlPath };
+                },
+                asset: ( controlElement, path, value ) => {
+                    const controlName = controlElement.querySelector( ".input-name" ).value;
+                    const controlType = "asset";
+                    const assetName = controlElement.querySelector( ".input-asset" ).selectedOptions[0].value;
+                    const controlValue = value;
+                    const controlPath = [
+                        "main-prompt",
+                        "api",
+                        "prompt",
+                        ...path
+                    ];
+                    return { controlName, controlType, controlValue, assetName, controlPath };
+                },
+                random: ( controlElement, path, value ) => {
+                    const controlName = controlElement.querySelector( ".input-name" ).value;
+                    const controlType = "randomInt";
+                    const controlValue = value;
+                    const min = controlElement.querySelector( ".input-minimum" ).value;
+                    const max = controlElement.querySelector( ".input-maximum" ).value;
+                    const step = 1;
+                    const controlPath = [
+                        "main-prompt",
+                        "api",
+                        "prompt",
+                        ...path
+                    ];
+                    return { controlName, controlType, controlValue, min, max, step, controlPath };
+                },
+                width: ( controlElement, path, value ) => {
+                    const controlName = "Width";
+                    const controlType = "layer-input";
+                    const controlValue = value;
+                    const layerPath = [ "w" ];
+                    const controlPath = [
+                        "main-prompt",
+                        "api",
+                        "prompt",
+                        ...path
+                    ];
+                    return { controlName, controlType, layerPath, controlValue, controlPath };
+                },
+                height: ( controlElement, path, value ) => {
+                    const controlName = "Height";
+                    const controlType = "layer-input";
+                    const controlValue = value;
+                    const layerPath = [ "w" ];
+                    const controlPath = [
+                        "main-prompt",
+                        "api",
+                        "prompt",
+                        ...path
+                    ];
+                    return { controlName, controlType, layerPath, controlValue, controlPath };
+                },
+            };
+            const buildControlElements = {
+                static: ( path, value ) => {
+                    return makeControl( "text", "static value", value, "input-default-value" );
+                },
+                text: ( path, value ) => {
+                    const name = path.at(-1);
+                    const elements = [];
+                    elements.push( makeControl( "text", "control name", name, "input-name" ) );
+                    elements.push( makeControl( "text", "default value", value, "input-default-value" ) );
+                    
+                    return elements;
+                },
+                number: ( path, value ) => {
+                    const elements = [];
+                    const name = path.at(-1);
+
+                    elements.push( makeControl( "text", "control name", name, "input-name" ) );
+                    elements.push( makeControl( "number", "default value", value*1 || 0, "input-default-value" ) );
+                    elements.push( makeControl( "number", "minimum", 0, "input-minimum" ) );
+                    elements.push( makeControl( "number", "maximum", 1, "input-maximum" ) );
+                    elements.push( makeControl( "number", "step", 0.1, "input-step" ) );
+
+                    return elements;
+                },
+                asset: ( path, value ) => {
+                    const name = path.at(-1);
+                    const elements = [];
+                    elements.push( makeControl( "text", "control name", name, "input-name" ) );
+                    //return a new dropdown
+                    {
+                        const div = document.createElement( "div" );
+                        div.classList.add( "labeled-input" );
+                        const labelElement = document.createElement( "span" );
+                        labelElement.textContent = "asset type:";
+                        div.appendChild( labelElement );
+                        const dropDown = document.createElement( "select" );
+                        dropDown.alt = "asset type";
+                        dropDown.title = "asset type";
+                        dropDown.classList.add( "input-asset" );
+                        const options = comfyAssets;
+                        dropDown.onchange = () => {}
+                        for( const value of options ) {
+                            const option = document.createElement( "option" );
+                            option.value = value;
+                            option.textContent = value;
+                            dropDown.appendChild( option );
+                        }
+                        div.appendChild( dropDown );
+                        elements.push( div );
+                    }
+                    return elements;
+                },
+                random: ( path, value ) => {
+                    const elements = [];
+                    const name = path.at(-1);
+
+                    elements.push( makeControl( "text", "control name", name, "input-name" ) );
+                    elements.push( makeControl( "number", "minimum", 0, "input-minimum" ) );
+                    elements[1].setAttribute( "step", 1 );
+                    elements.push( makeControl( "number", "maximum", 99999999, "input-maximum" ) );
+                    elements[2].setAttribute( "step", 1 );
+
+                    return elements;
+                },
+                width: () => ([]),
+                height: () => ([]),
+                image: () => {
+                    const elements = [];
+                    elements.push( makeControl( "text", "hint (5 letters max)", "i2i", "input-hint" ) );
+                    elements[0].children[1].setAttribute( "size", 5 );
+                    elements[0].children[1].setAttribute( "maxlength", 5 );
+                    return elements;
+                    //don't forget image input! That was the whole point of this thing!
+                },
+                output: () => ([]),
+            }
+            function makeControl( inputType, label, value, searchClass ) {
+                const div = document.createElement( "div" );
+                div.classList.add( "labeled-input" );
+                const labelElement = document.createElement( "span" );
+                labelElement.textContent = label + ":";
+                labelElement.classList.add( "control-label" );
+                div.appendChild( labelElement );
+                const input = document.createElement( "input" );
+                input.type = inputType;
+                if( inputType === "text" || inputType === "number" ) {
+                    input.placeholder = label;
+                }
+                input.alt = label;
+                input.title = label;
+                input.value = value;
+                input.classList.add( searchClass );
+                div.appendChild( input );
+                return div;
+            }
+            const comfyAssets = [
+                "Comfy Models",
+                "Comfy ControlNets",
+                "Comfy Samplers",
+                "Comfy Schedulers",
+                "Comfy VAEs",
+                "Comfy UNETs"
+            ];
+
+            function addControl( lineElement, path, value ) {
+                const dropDown = document.createElement( "select" );
+                const options = controlTypes;
+                dropDown.onchange = () => {
+                    const config = controlsElement.querySelector( ".config" );
+                    config.innerHTML = "";
+                    const controlType = dropDown.selectedOptions[0].value;
+                    if( controlType === "--none--" ) {
+                        controlsElement.controlType = "--none--";
+                        return;
+                    }
+                    controlsElement.controlType = controlType;
+                    for( const element of buildControlElements[ controlType ]( path, value ) ) {
+                        config.appendChild( element );
+                    }
+                }
+                for( const value of options ) {
+                    const option = document.createElement( "option" );
+                    option.value = value;
+                    option.textContent = value;
+                    dropDown.appendChild( option );
+                }
+                const controlsElement = lineElement.querySelector( ".controls" );
+                controlsElement.innerHTML = "";
+                const clearButton = document.createElement( "button" );
+                clearButton.textContent = "Clear Control";
+                clearButton.onclick = () => {
+                    console.log( "clearing" );
+                    lineElement.classList.remove( "controlled" );
+                    lineElement.classList.add( "controllable" );
+                    controlsElement.innerHTML = "(click to add control)";
+                    controlsElement.classList.add( "empty" );
+                    delete controlsElement.path;
+                    delete controlsElement.value;
+                    delete controlsElement.controlType;
+                    setTimeout(
+                        () => {
+                            lineElement.onclick = () => {
+                                lineElement.onclick = undefined;
+                                addControl( lineElement, path, value );
+                            }
+                        },
+                        300
+                    )
+                }
+                controlsElement.path = path;
+                controlsElement.value = value;
+                controlsElement.controlType = "--none--";
+                controlsElement.appendChild( clearButton );
+                controlsElement.appendChild( dropDown );
+                controlsElement.appendChild( document.createElement( "div" ) ).classList.add( "config" );
+                controlsElement.classList.remove( "empty" );
+                lineElement.classList.remove( "controllable" );
+                lineElement.classList.add( "controlled" );
+            }
+
+        </script>
+        <style>
+            body {
+                background-color: rgb(40,40,40);
+                --spacing: 0.25rem;
+                margin:1rem; padding:0;
+                font-family: sans-serif;
+            }
+            div {
+                border-radius: var(--spacing);
+                margin:0; padding:0;
+            }
+            button {
+                border-radius: var(--spacing);
+                border:0;
+                padding:var(--spacing);
+            }
+            input[type=text] {
+                border:0;
+                padding:var(--spacing) calc( 2 * var(--spacing));
+            }
+            #main-panel {
+                margin:0 auto;
+                width:calc( 100vw - 2rem );
+                border: 1px solid gray;
+                padding:var(--spacing);
+                box-sizing: border-box;
+            }
+            #top-row {
+                width:100%;
+                display: flex;
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: var(--spacing);
+                border:1px solid gray;
+                box-sizing: border-box;
+            }
+            #main-column {
+                width:100%;
+                display: flex;
+                flex-direction: column;
+                justify-content: flex-start;
+                align-items: stretch;
+                box-sizing: border-box;
+            }
+            .line {
+                width:100%;
+                box-sizing: border-box;
+                display: flex;
+                flex-direction: row;
+                justify-content: stretch;
+                align-items: stretch;
+                --controls-width: min(30rem,33%);
+                opacity: 0.5;
+            }
+            .line.controllable, .line.controlled {
+                opacity: 1;
+            }
+            .line.controllable:hover {
+                cursor: pointer;
+                background-color: rgb(60,60,60);
+            }
+            .line.controllable:hover .controls.empty {
+                color: rgb(128,128,128);
+            }
+            .controls.empty {
+                color: transparent;
+                border:1px solid transparent;
+            }
+            .controls {
+                min-height:1rem;
+                line-height: 1rem;
+                color: white;
+                width:var(--controls-width);
+                flex-shrink: 0;
+                flex-grow: 0;
+                padding:0 var(--spacing);
+                box-sizing: border-box;
+                text-align: center;
+                border:1px solid gray;
+            }
+            .config > .labeled-input {
+                display: block;
+            }
+            .controls > .config {
+                display:inline-block;
+                text-align: left;
+                padding: var(--spacing);
+            }
+            .controls input, .controls button {
+                height:1rem;
+                padding:0 var(--spacing);
+                display:inline-block;
+                margin:var(--spacing);
+                min-width: unset;
+            }
+            .control-label {
+                font-size: 0.8rem;
+            }
+            .json {
+                min-height:1rem;
+                line-height: 1rem;
+                width:calc( 100% - var(--controls-width) );
+                flex-shrink: 0;
+                flex-grow: 0;
+                font-family: monospace;
+                color: white;
+                background-color: rgba(120,120,120,0.5);
+                padding:var(--spacing);
+                box-sizing: border-box;
+                display: flex;
+                flex-direction: row;
+                justify-content: flex-start;
+                align-items: center;
+                border-radius: 0;
+            }
+            .json > .indent-spacer {
+                width:1rem;
+                height:100%;
+                border-left:1px dashed gray;
+                box-sizing: border-box;
+                border-radius: 0;
+            }
+            .json .key {
+                color:bisque;
+            }
+            .json .value {
+                color:lightblue;
+            }
+        </style>
+        <div id="main-panel">
+            <div id="top-row">
+                <button id="import">Import</button>
+                <input type="text" id="apiflow-name" value="My APIFlow Name"></button>
+                <button id="export">Export</button>
+            </div>
+            <div id="main-column">
+            </div>
+        </div>
+    </body>
+</html>
