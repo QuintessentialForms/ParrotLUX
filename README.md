@@ -2,7 +2,7 @@
     <img src="logo.jpg"> 
 </p>
 
-# ParrotLUX (Version: 2024.05.23-1-alpha)
+# ParrotLUX (Version: 2024.05.25-1-alpha)
 A Painting App for Open-Source AI
 
 This app is currently in the clean-up stages of Alpha version. Bugs are being fixed and minor missing features are being added. The beta version (publicly usable binary packages) will release soon. Some documentation has been added. Complete documentation, including tutorials and videos, will be added soon.
@@ -12,13 +12,17 @@ This app is currently in the clean-up stages of Alpha version. Bugs are being fi
 </p>
 
 # Cross-Platform
-This app has been tested in Chrome on: Android, *Windows 11, and Ubuntu.
+This app is supported in Chrome on: Android, Windows 11, and Ubuntu.
 
 <img src="os-support.png">
 
-(*Pen pressure is unavailable on Windows.)
-
 (It may also work on MacOS and iOS. Untested.)
+
+# New Features in Version 2024.05.25-1-alpha
+
+## Windows Pen Pressure
+
+<p align="center" width="100%">Pen pressure is now available in Windows (and was already available in Android and Linux). The app is now fully cross-platform across all features. Please ensure that your Windows pen-tablet drivers are up to date, and disable Windows Ink. ParrotLUX is not compatible with Windows Ink.</p>
 
 # New Features in Version 2024.05.23-1-alpha
 
